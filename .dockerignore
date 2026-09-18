@@ -1,0 +1,9 @@
+.git
+.idea
+.migration
+.env
+AGENTS*.md
+bin
+coverage.out
+*.log
+README.md
