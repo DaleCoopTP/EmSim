@@ -123,6 +123,25 @@ func resetSchema(t *testing.T, ctx context.Context, databaseURL string) {
 	}
 }
 
+// openTestPool opens and pings a pool against an already-migrated test
+// database. Other _test.go files in this package use it after their own
+// openTestDatabase + pgstore.Up, rather than repeating the open/ping
+// boilerplate TestPlatformTasksSchema above needs inline (it asserts
+// readiness before the schema exists, so it cannot use this helper for its
+// first pool).
+func openTestPool(t *testing.T, ctx context.Context, databaseURL string) *pgxpool.Pool {
+	t.Helper()
+	pool, err := pgstore.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	if err := pgstore.Ping(ctx, pool); err != nil {
+		t.Fatalf("ping PostgreSQL: %v", err)
+	}
+	return pool
+}
+
 func assertPostgreSQL16(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	var versionNumber int
