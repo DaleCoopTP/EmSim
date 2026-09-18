@@ -304,8 +304,8 @@ func newQueueTestRegistry(t *testing.T) *tasks.Registry {
 		t.Fatalf("new registry: %v", err)
 	}
 	for _, spec := range []tasks.Spec{
-		{Name: queueKindA, Pool: "a", MaxAttempts: 3, Lease: 90 * time.Second, RetryBase: time.Second, Priority: 10},
-		{Name: queueKindB, Pool: "b", MaxAttempts: 3, Lease: 90 * time.Second, RetryBase: time.Second, Priority: 10},
+		{Name: queueKindA, Pool: "a", MaxAttempts: 3, Lease: 90 * time.Second, RetryBase: 5 * time.Second, Priority: 10},
+		{Name: queueKindB, Pool: "b", MaxAttempts: 3, Lease: 90 * time.Second, RetryBase: 5 * time.Second, Priority: 10},
 	} {
 		if err := registry.Register(spec); err != nil {
 			t.Fatalf("register %s: %v", spec.Name, err)
