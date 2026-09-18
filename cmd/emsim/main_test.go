@@ -20,10 +20,15 @@ func TestRunRejectsMissingAndUnknownSubcommand(t *testing.T) {
 func TestRunDispatchesKnownSubcommands(t *testing.T) {
 	t.Parallel()
 
-	for _, command := range []string{"migrate", "api", "worker"} {
+	for _, command := range []string{"api", "worker"} {
 		if err := run(context.Background(), []string{command}); !errors.Is(err, errNotImplemented) {
 			t.Fatalf("run([%q]) error = %v, want errNotImplemented", command, err)
 		}
+	}
+	// migrate is implemented (migrate.go); dispatch reaches it and surfaces
+	// its own missing-subcommand error rather than errNotImplemented.
+	if err := run(context.Background(), []string{"migrate"}); !errors.Is(err, errMigrateCommandRequired) {
+		t.Fatalf(`run(["migrate"]) error = %v, want errMigrateCommandRequired`, err)
 	}
 }
 

@@ -50,12 +50,12 @@ func run(ctx context.Context, args []string) error {
 	}
 }
 
-// runMigrate, runAPI, and runWorker are filled in by later commits (platform
-// bootstrap, HTTP API, worker composition). They are wired here first so the
-// subcommand surface and its error handling are fixed before the bodies land.
-func runMigrate(_ context.Context, _ []string) error { return errNotImplemented }
-func runAPI(_ context.Context, _ []string) error     { return errNotImplemented }
-func runWorker(_ context.Context, _ []string) error  { return errNotImplemented }
+// runAPI and runWorker are filled in by later commits (HTTP API, worker
+// composition). They are wired here first so the subcommand surface and its
+// error handling are fixed before the bodies land. runMigrate lives in
+// migrate.go.
+func runAPI(_ context.Context, _ []string) error    { return errNotImplemented }
+func runWorker(_ context.Context, _ []string) error { return errNotImplemented }
 
 func errorCode(err error) string {
 	switch {
