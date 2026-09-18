@@ -1,0 +1,111 @@
+// Ported from orchestration-core@34290d74656bc594f8968ae17871dc997559b497
+// internal/config/worker.go; adapted: no Simulator/Client/Judge
+// InferenceAdapter — core's dialogue/judge roles each needed an LLM
+// transport configured; the open kind registry has no fixed set of roles
+// needing adapters (that comes with the training/assessment modules that
+// register kinds later). Instead there are three pool concurrencies —
+// short/llm/stt (RFC-001 §4.3, §11: "LLM_CONCURRENCY выбирается замерами
+// 1/2/4, не числом карточек") — validated unconditionally regardless of
+// Role, a deliberate simplification over core's role-conditional adapter
+// validation (ADR-001: no config surface unless a profile actually needs
+// it).
+package config
+
+import (
+	"errors"
+	"net"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"emsim/internal/platform/tasks"
+)
+
+var ErrInvalidWorkerConfiguration = errors.New("invalid worker configuration")
+
+type Worker struct {
+	DatabaseURL      string
+	Role             tasks.Role
+	WorkerID         string
+	PollInterval     time.Duration
+	DrainTimeout     time.Duration
+	AdminAddr        string
+	ShortConcurrency int
+	LLMConcurrency   int
+	STTConcurrency   int
+	LocalTestPolicy  string
+}
+
+func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker, error) {
+	if lookup == nil {
+		return Worker{}, ErrInvalidWorkerConfiguration
+	}
+	role, err := tasks.ParseRole(strings.TrimSpace(roleValue))
+	if err != nil {
+		return Worker{}, ErrInvalidWorkerConfiguration
+	}
+	poll, err := time.ParseDuration(strings.TrimSpace(lookup("WORKER_POLL_INTERVAL")))
+	if err != nil {
+		return Worker{}, ErrInvalidWorkerConfiguration
+	}
+	drain, err := time.ParseDuration(strings.TrimSpace(lookup("WORKER_DRAIN_TIMEOUT")))
+	if err != nil {
+		return Worker{}, ErrInvalidWorkerConfiguration
+	}
+	short, err := parsePoolSize(lookup("SHORT_CONCURRENCY"))
+	if err != nil {
+		return Worker{}, err
+	}
+	llm, err := parsePoolSize(lookup("LLM_CONCURRENCY"))
+	if err != nil {
+		return Worker{}, err
+	}
+	stt, err := parsePoolSize(lookup("STT_CONCURRENCY"))
+	if err != nil {
+		return Worker{}, err
+	}
+	config := Worker{
+		DatabaseURL: strings.TrimSpace(lookup("DATABASE_URL")), Role: role,
+		WorkerID: strings.TrimSpace(lookup("WORKER_ID")), PollInterval: poll, DrainTimeout: drain,
+		AdminAddr:        strings.TrimSpace(lookup("WORKER_ADMIN_LISTEN_ADDR")),
+		ShortConcurrency: short, LLMConcurrency: llm, STTConcurrency: stt,
+		LocalTestPolicy: strings.TrimSpace(lookup("WORKER_LOCAL_TEST_POLICY")),
+	}
+	if err := config.Validate(); err != nil {
+		return Worker{}, err
+	}
+	return config, nil
+}
+
+func parsePoolSize(value string) (int, error) {
+	size, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || size < 1 {
+		return 0, ErrInvalidWorkerConfiguration
+	}
+	return size, nil
+}
+
+func (c Worker) Validate() error {
+	if c.DatabaseURL == "" || c.WorkerID == "" || c.WorkerID != strings.TrimSpace(c.WorkerID) ||
+		len(c.WorkerID) > 256 || !utf8.ValidString(c.WorkerID) || c.PollInterval <= 0 || c.DrainTimeout <= 0 ||
+		!validWorkerListenAddress(c.AdminAddr) || c.ShortConcurrency < 1 || c.LLMConcurrency < 1 || c.STTConcurrency < 1 {
+		return ErrInvalidWorkerConfiguration
+	}
+	if _, err := tasks.ParseRole(string(c.Role)); err != nil {
+		return ErrInvalidWorkerConfiguration
+	}
+	if c.LocalTestPolicy != "" && c.LocalTestPolicy != "e2e-fast-v1" {
+		return ErrInvalidWorkerConfiguration
+	}
+	return nil
+}
+
+func validWorkerListenAddress(address string) bool {
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	value, err := strconv.ParseUint(port, 10, 16)
+	return err == nil && value > 0
+}
