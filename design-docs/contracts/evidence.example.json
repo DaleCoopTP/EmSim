@@ -1,0 +1,255 @@
+{
+  "schema": "emsim/evidence/v1",
+  "item_id": "019230a4-6b1e-7c0a-9a1f-3f2a1b2c3d4e",
+  "run_id": "019230a4-0000-7c0a-9a1f-000000000001",
+  "lesson_id": "019230a3-0000-7c0a-9a1f-000000000001",
+  "trainee_id": "0192309f-0000-7c0a-9a1f-000000000005",
+  "workstation_no": 5,
+  "scenario_version_id": "019230a0-0000-7c0a-9a1f-000000000011",
+  "scenario_digest": "c99d10d6a7938a23dd075f9881789b6475d4a939b15adbd6b18497595aedd3d1",
+  "target_service": "dds_district",
+  "spawned_from_item_id": null,
+  "timing": {
+    "open_s": 30,
+    "primary_s": 30,
+    "complete_s": 180,
+    "open_anchor": "offered_at",
+    "primary_anchor": "offered_at",
+    "complete_anchor": "primary_at"
+  },
+  "offered_at": "2026-09-17T10:00:00.000Z",
+  "opened_at": "2026-09-17T10:00:18.412Z",
+  "closed_at": "2026-09-17T10:03:07.900Z",
+  "close_reason": "completed",
+  "final_reaction": "completed",
+  "actions": [
+    {
+      "seq": 1,
+      "type": "open",
+      "payload": {},
+      "accepted": true,
+      "rejection": null,
+      "server_at": "2026-09-17T10:00:18.412Z",
+      "reaction_after": "received",
+      "action_id": "019230a4-0000-7000-8000-000000000001",
+      "log_seq": 1
+    },
+    {
+      "seq": 2,
+      "type": "set_status",
+      "payload": {
+        "status": "accepted",
+        "comment": "Принято, направлена аварийная бригада."
+      },
+      "accepted": true,
+      "rejection": null,
+      "server_at": "2026-09-17T10:00:41.100Z",
+      "reaction_after": "accepted",
+      "action_id": "019230a4-0000-7000-8000-000000000002",
+      "log_seq": 2
+    },
+    {
+      "seq": 3,
+      "type": "call_start",
+      "payload": {
+        "contact": "crew_leader"
+      },
+      "accepted": true,
+      "rejection": null,
+      "server_at": "2026-09-17T10:00:49.300Z",
+      "reaction_after": "accepted",
+      "action_id": "019230a4-0000-7000-8000-000000000003",
+      "log_seq": 3
+    },
+    {
+      "seq": 4,
+      "type": "call_end",
+      "payload": {
+        "call_id": "019230a5-0000-7c0a-9a1f-000000000031",
+        "accepted_by": "Сидоров, бригада 3",
+        "summary": "Затопление Свободы 63 к1 кв 112, горячая вода, бригада направлена",
+        "recording": {
+          "sha256": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
+          "size": 300000,
+          "mime": "audio/webm"
+        }
+      },
+      "accepted": true,
+      "rejection": null,
+      "server_at": "2026-09-17T10:01:14.800Z",
+      "reaction_after": "accepted",
+      "action_id": "019230a4-0000-7000-8000-000000000004",
+      "log_seq": 4
+    },
+    {
+      "seq": 4,
+      "type": "set_status",
+      "payload": {
+        "status": "arrived"
+      },
+      "accepted": false,
+      "rejection": "transition_not_allowed",
+      "server_at": "2026-09-17T10:01:20.010Z",
+      "reaction_after": "accepted",
+      "action_id": "019230a4-0000-7000-8000-000000000005",
+      "log_seq": 5
+    },
+    {
+      "seq": 5,
+      "type": "set_status",
+      "payload": {
+        "status": "responding"
+      },
+      "accepted": true,
+      "rejection": null,
+      "server_at": "2026-09-17T10:01:33.500Z",
+      "reaction_after": "responding",
+      "action_id": "019230a4-0000-7000-8000-000000000006",
+      "log_seq": 6
+    },
+    {
+      "seq": 6,
+      "type": "set_status",
+      "payload": {
+        "status": "arrived"
+      },
+      "accepted": true,
+      "rejection": null,
+      "server_at": "2026-09-17T10:02:20.100Z",
+      "reaction_after": "arrived",
+      "action_id": "019230a4-0000-7000-8000-000000000007",
+      "log_seq": 7
+    },
+    {
+      "seq": 7,
+      "type": "set_status",
+      "payload": {
+        "status": "working"
+      },
+      "accepted": true,
+      "rejection": null,
+      "server_at": "2026-09-17T10:02:25.000Z",
+      "reaction_after": "working",
+      "action_id": "019230a4-0000-7000-8000-000000000008",
+      "log_seq": 8
+    },
+    {
+      "seq": 8,
+      "type": "set_status",
+      "payload": {
+        "status": "completed",
+        "comment": "Стояк перекрыт, течь устранена. Свободы 63 к1."
+      },
+      "accepted": true,
+      "rejection": null,
+      "server_at": "2026-09-17T10:03:07.900Z",
+      "reaction_after": "completed",
+      "action_id": "019230a4-0000-7000-8000-000000000009",
+      "log_seq": 9
+    },
+    {
+      "seq": 9,
+      "type": "close",
+      "payload": {},
+      "accepted": true,
+      "rejection": null,
+      "server_at": "2026-09-17T10:03:07.900Z",
+      "reaction_after": "completed",
+      "action_id": "019230a4-0000-7000-8000-000000000010",
+      "log_seq": 10
+    }
+  ],
+  "events": [
+    {
+      "key": "e1",
+      "state": "delivered",
+      "due_at": "2026-09-17T10:01:21.100Z",
+      "delivered_at": "2026-09-17T10:01:21.400Z",
+      "late": false,
+      "skip_reason": null,
+      "anchor_at": "2026-09-17T10:00:41.100Z"
+    },
+    {
+      "key": "e2",
+      "state": "delivered",
+      "due_at": "2026-09-17T10:02:11.100Z",
+      "delivered_at": "2026-09-17T10:02:11.300Z",
+      "late": false,
+      "skip_reason": null,
+      "anchor_at": "2026-09-17T10:00:41.100Z"
+    },
+    {
+      "key": "e3",
+      "state": "delivered",
+      "due_at": "2026-09-17T10:02:21.100Z",
+      "delivered_at": "2026-09-17T10:02:21.500Z",
+      "late": false,
+      "skip_reason": null,
+      "anchor_at": "2026-09-17T10:00:41.100Z"
+    },
+    {
+      "key": "e4",
+      "state": "skipped",
+      "due_at": "2026-09-17T10:03:11.100Z",
+      "delivered_at": null,
+      "late": false,
+      "skip_reason": "item_closed",
+      "anchor_at": "2026-09-17T10:00:41.100Z"
+    }
+  ],
+  "calls": [
+    {
+      "call_id": "019230a5-0000-7c0a-9a1f-000000000031",
+      "contact_key": "crew_leader",
+      "started_at": "2026-09-17T10:00:49.300Z",
+      "ended_at": "2026-09-17T10:01:14.800Z",
+      "recording_sha256": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
+      "reaction_at_call": "accepted",
+      "accepted_by": "Сидоров, бригада 3",
+      "summary": "Затопление Свободы 63 к1 кв 112, горячая вода, бригада направлена",
+      "recording_size": 300000,
+      "recording_mime": "audio/webm",
+      "recording_upload_deadline_at": "2026-09-17T10:05:07.900Z"
+    }
+  ],
+  "comments": [
+    {
+      "seq": 2,
+      "text": "Принято, направлена аварийная бригада.",
+      "with_status": "accepted"
+    },
+    {
+      "seq": 8,
+      "text": "Стояк перекрыт, течь устранена. Свободы 63 к1.",
+      "with_status": "completed"
+    }
+  ],
+  "derived": {
+    "open_seconds": 18.4,
+    "primary_seconds": 41.1,
+    "total_seconds": 187.9,
+    "primary_status": "accepted",
+    "chain": [
+      "received",
+      "accepted",
+      "responding",
+      "arrived",
+      "working",
+      "completed"
+    ],
+    "rejected_transitions": 1,
+    "comment_count": 2,
+    "call_count": 1,
+    "work_seconds": 146.8
+  },
+  "cutoff_log_seq": 10,
+  "primary_at": "2026-09-17T10:00:41.100Z",
+  "deadlines": {
+    "open_at": "2026-09-17T10:00:30Z",
+    "primary_at": "2026-09-17T10:00:30Z",
+    "complete_at": "2026-09-17T10:03:41.100Z"
+  },
+  "interruption": null,
+  "exercise_type": "dds_processing",
+  "interruptions": []
+}

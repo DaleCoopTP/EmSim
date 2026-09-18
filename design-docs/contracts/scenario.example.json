@@ -1,0 +1,213 @@
+{
+  "schema": "emsim/scenario/v1",
+  "target_service": "dds_district",
+  "card": {
+    "number": "2409170231",
+    "registered_at_offset_s": -45,
+    "applicant": {
+      "name": "Кузнецова Ирина Павловна",
+      "phone": "+79161234567"
+    },
+    "address": {
+      "district": "Северное Тушино",
+      "street": "ул. Свободы",
+      "house": "63",
+      "building": "1",
+      "entrance": "2",
+      "floor": "7",
+      "flat": "112",
+      "text": "ул. Свободы, д. 63, к. 1, под. 2, эт. 7, кв. 112"
+    },
+    "incident": {
+      "type_code": "ЖКХ-03-02",
+      "type_name": "Затопление квартиры сверху",
+      "features": {
+        "источник": "квартира выше",
+        "горячая вода": true,
+        "электричество отключено": false
+      },
+      "description": "Заявитель сообщает, что с потолка в кухне и коридоре течёт горячая вода, соседи сверху дверь не открывают. Течь усиливается.",
+      "victims": 0,
+      "danger": "риск замыкания проводки"
+    },
+    "notification_list": [
+      {
+        "service": "dds_district",
+        "status": "added",
+        "mine": true
+      },
+      {
+        "service": "uk",
+        "status": "added"
+      }
+    ]
+  },
+  "contacts": [
+    {
+      "key": "crew_leader",
+      "label": "Руководитель аварийной бригады",
+      "number": "201",
+      "voice": "male_calm",
+      "phrases": {
+        "greeting": "Слушаю вас",
+        "ack": "Информация принята"
+      }
+    },
+    {
+      "key": "shift_chief",
+      "label": "Начальник смены ДДС",
+      "number": "100",
+      "voice": "male_strict",
+      "phrases": {
+        "greeting": "Слушаю",
+        "ack": "Понял, принято"
+      }
+    },
+    {
+      "key": "uk_dispatch",
+      "label": "Диспетчер УК",
+      "number": "305",
+      "voice": "female_neutral",
+      "phrases": {
+        "greeting": "Диспетчерская, слушаю вас",
+        "ack": "Приняла, передам"
+      }
+    }
+  ],
+  "events": [
+    {
+      "key": "e1",
+      "at_s": 40,
+      "since": "accepted",
+      "status_in": [
+        "accepted"
+      ],
+      "delivery": "phone_incoming",
+      "from": "crew_leader",
+      "text": "Бригада выехала на Свободы 63, корпус 1.",
+      "expects": {
+        "status": "responding",
+        "within_s": 30,
+        "action": "set_status"
+      }
+    },
+    {
+      "key": "e2",
+      "at_s": 90,
+      "since": "accepted",
+      "status_in": [
+        "responding"
+      ],
+      "delivery": "phone_incoming",
+      "from": "crew_leader",
+      "text": "Прибыли на место. Поднимаемся на восьмой этаж, стояк перекрываем.",
+      "expects": {
+        "status": "arrived",
+        "within_s": 30,
+        "action": "set_status"
+      }
+    },
+    {
+      "key": "e3",
+      "at_s": 100,
+      "since": "accepted",
+      "status_in": [
+        "accepted",
+        "responding",
+        "arrived",
+        "working"
+      ],
+      "delivery": "spawn_card",
+      "from": "line_112",
+      "text": "Новая карточка",
+      "voice": false,
+      "spawn": {
+        "kind": "duplicate",
+        "variation": "Звонит сосед из кв. 116 по тому же адресу, вода в подъезде"
+      },
+      "expects": {
+        "action": "refuse_duplicate",
+        "within_s": 60
+      }
+    },
+    {
+      "key": "e4",
+      "at_s": 150,
+      "since": "accepted",
+      "status_in": [
+        "arrived",
+        "working"
+      ],
+      "delivery": "phone_incoming",
+      "from": "crew_leader",
+      "text": "Стояк перекрыт, течь устранена, повреждений проводки нет. Работы завершены.",
+      "expects": {
+        "status": "completed",
+        "within_s": 40,
+        "action": "set_status"
+      }
+    }
+  ],
+  "reference": {
+    "primary_decision": {
+      "status": "accepted",
+      "comment_required": false,
+      "comment_must_mention": []
+    },
+    "expected_chain": [
+      "responding",
+      "arrived",
+      "working",
+      "completed"
+    ],
+    "call": {
+      "required": true,
+      "to": "crew_leader",
+      "must_mention": [
+        "address",
+        "incident_type",
+        "measures"
+      ],
+      "before_status": "responding"
+    },
+    "guide_refs": [
+      "памятка стр. 22 «Принята»",
+      "памятка стр. 28 нарушение 5 (дубль)"
+    ],
+    "notes": "Профильное для районной ДДС; дубль из кв. 116 должен быть отклонён с комментарием «дубль карточки 2409170231».",
+    "scoring": {
+      "weights": {
+        "S_SEQUENCE": 20
+      },
+      "critical": [
+        "D_PRIMARY"
+      ],
+      "disabled": [],
+      "note": "Пострадавших нет — искажение адреса не критично; важнее полная цепочка статусов по докладам бригады"
+    }
+  },
+  "hints": [
+    {
+      "step": "open",
+      "text": "Откройте карточку двойным щелчком в списке. Норматив — 30 секунд с момента поступления.",
+      "guide_ref": "стр. 21"
+    },
+    {
+      "step": "primary",
+      "text": "Проверьте адрес и тип: это ваша территория и ваш профиль? Если да — «Принята».",
+      "guide_ref": "стр. 22"
+    },
+    {
+      "step": "call",
+      "text": "Доложите руководителю бригады: адрес, что случилось, что нужно сделать.",
+      "guide_ref": "стр. 24"
+    }
+  ],
+  "generation": {
+    "model": "t-lite-2.1-8b-q4",
+    "prompt_version": "gen-v3",
+    "classifier_code": "ЖКХ-03-02"
+  },
+  "difficulty": 4,
+  "exercise_type": "dds_processing"
+}

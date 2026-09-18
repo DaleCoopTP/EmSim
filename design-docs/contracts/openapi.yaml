@@ -1,0 +1,1626 @@
+openapi: 3.1.0
+info:
+  title: EmSim API
+  version: 1.0.0-draft
+  description: |
+    REST/JSON API тренажёра диспетчера ДДС (RFC-001 §5).
+    Аутентификация — cookie `emsim_session` (ADR-008). Все ответы несут `X-Request-ID`
+    и `Cache-Control: no-store`. Ошибки — единый конверт `Error`.
+    Push — Server-Sent Events (ADR-007): `/my/stream`, `/lessons/{lessonId}/stream`; формат событий — `sse-events.schema.json`.
+servers:
+  - url: /api/v1
+
+tags:
+  - name: auth
+  - name: admin
+  - name: content
+  - name: lessons
+  - name: trainee
+  - name: assessment
+  - name: reports
+  - name: tasks
+
+security:
+  - cookie: []
+
+paths:
+  # ------------------------------------------------------------ auth
+  /auth/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: Вход по логину и паролю
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login, password]
+              properties:
+                login: { type: string, maxLength: 64 }
+                password: { type: string, maxLength: 256 }
+                workstation_no: { type: integer, minimum: 1, description: Номер РМ для обучаемого; если РМ привязано к IP — игнорируется }
+      responses:
+        '200':
+          description: Сессия создана; cookie установлена
+          content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Завершить сессию
+      responses:
+        '204': { description: Сессия удалена }
+  /me:
+    get:
+      tags: [auth]
+      summary: Текущий пользователь, роль, РМ
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ------------------------------------------------------------ admin
+  /admin/users:
+    get:
+      tags: [admin]
+      summary: Список пользователей
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/User' } }, total: { type: integer } } } } } }
+    post:
+      tags: [admin]
+      summary: Создать пользователя
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UserCreate' } } } }
+      responses:
+        '201': { description: Создан, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Validation' }
+  /admin/users/{userId}:
+    parameters: [ { $ref: '#/components/parameters/UserId' } ]
+    patch:
+      tags: [admin]
+      summary: Изменить пользователя (ФИО, роль, служба, активность, пароль)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UserPatch' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /admin/workstations:
+    get:
+      tags: [admin]
+      summary: Рабочие места
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Workstation' } } } } }
+    put:
+      tags: [admin]
+      summary: Заменить список рабочих мест
+      requestBody: { required: true, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Workstation' } } } } }
+      responses:
+        '200': { description: OK }
+  /admin/import/classifier:
+    post:
+      tags: [admin]
+      summary: Импорт классификатора (XLSX) — фоновая задача
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, required: [file], properties: { file: { type: string, format: binary } } }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /admin/import/tickets:
+    post:
+      tags: [admin]
+      summary: Импорт билетов (zip/docx/txt) — фоновая задача
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, required: [file], properties: { file: { type: string, format: binary } } }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /admin/backup:
+    post:
+      tags: [admin]
+      summary: Запустить backup (pg_dump + blobs) — фоновая задача
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /admin/status:
+    get:
+      tags: [admin]
+      summary: Состояние системы
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  db_schema_version: { type: integer }
+                  tasks: { type: object, additionalProperties: { type: object, additionalProperties: { type: integer } }, description: kind → status → count }
+                  models: { type: object, properties: { llm: { type: string }, stt: { type: string }, tts: { type: string } } }
+                  disk_free_bytes: { type: integer }
+                  last_backup_at: { type: string, format: date-time, nullable: true }
+
+  # ------------------------------------------------------------ content
+  /services:
+    get:
+      tags: [content]
+      summary: Справочник служб и их workflow
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Service' } } } } }
+  /scenarios:
+    get:
+      tags: [content]
+      summary: Список сценариев
+      parameters:
+        - { name: service, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [draft, approved, archived] } }
+        - { name: difficulty_min, in: query, schema: { type: integer, minimum: 1, maximum: 10 } }
+        - { name: difficulty_max, in: query, schema: { type: integer, minimum: 1, maximum: 10 } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/ScenarioSummary' } }, total: { type: integer } } } } } }
+    post:
+      tags: [content]
+      summary: Создать сценарий вручную (версия 1, draft)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScenarioCreate' } } } }
+      responses:
+        '201': { description: Создан, content: { application/json: { schema: { $ref: '#/components/schemas/Scenario' } } } }
+        '422': { $ref: '#/components/responses/Validation' }
+  /scenarios/generate:
+    post:
+      tags: [content]
+      summary: Сгенерировать сценарии локальной LLM — фоновые задачи
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service, difficulty, count]
+              properties:
+                service: { type: string }
+                categories: { type: array, items: { type: string }, description: коды типов классификатора или групп }
+                difficulty: { type: integer, minimum: 1, maximum: 10 }
+                count: { type: integer, minimum: 1, maximum: 20 }
+                ticket_ids: { type: array, items: { type: string, format: uuid } }
+                with_events: { type: boolean, default: true }
+      responses:
+        '202': { description: Задачи поставлены, content: { application/json: { schema: { type: object, properties: { task_ids: { type: array, items: { type: string, format: uuid } } } } } } }
+  /scenarios/{scenarioId}:
+    parameters: [ { $ref: '#/components/parameters/ScenarioId' } ]
+    get:
+      tags: [content]
+      summary: Сценарий с текущей версией (эталон виден только преподавателю)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scenario' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [content]
+      summary: Правка — создаёт новую draft-версию
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScenarioBody' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scenario' } } } }
+        '422': { $ref: '#/components/responses/Validation' }
+    delete:
+      tags: [content]
+      summary: Архивировать (не удаляет версии, на которые ссылаются карточки)
+      responses:
+        '204': { description: Архивирован }
+  /scenarios/{scenarioId}/versions:
+    parameters: [ { $ref: '#/components/parameters/ScenarioId' } ]
+    get:
+      tags: [content]
+      summary: Версии сценария
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScenarioVersionSummary' } } } } }
+  /scenarios/{scenarioId}/regenerate:
+    parameters: [ { $ref: '#/components/parameters/ScenarioId' } ]
+    post:
+      tags: [content]
+      summary: Перегенерировать по комментарию преподавателя — фоновая задача
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [comment], properties: { comment: { type: string, maxLength: 2000 }, keep: { type: array, items: { type: string, enum: [card, events, reference] } } } } } } }
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+  /scenarios/{scenarioId}/approve:
+    parameters: [ { $ref: '#/components/parameters/ScenarioId' } ]
+    post:
+      tags: [content]
+      summary: Утвердить текущую draft-версию; ставит задачу озвучки
+      responses:
+        '200': { description: Утверждено, content: { application/json: { schema: { $ref: '#/components/schemas/Scenario' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Validation' }
+  /scenarios/{scenarioId}/preview:
+    parameters: [ { $ref: '#/components/parameters/ScenarioId' } ]
+    get:
+      tags: [content]
+      summary: Как увидит карточку обучаемый (без эталона) + эталон отдельно
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { card: { $ref: '#/components/schemas/CardView' }, reference: { type: object } } } } } }
+
+  # ------------------------------------------------------------ lessons (instructor)
+  /lessons:
+    get:
+      tags: [lessons]
+      summary: Занятия преподавателя
+      parameters: [ { name: state, in: query, schema: { type: string, enum: [draft, running, stopped, finished] } } ]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Lesson' } } } } }
+    post:
+      tags: [lessons]
+      summary: Создать занятие (draft)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LessonCreate' } } } }
+      responses:
+        '201': { description: Создано, content: { application/json: { schema: { $ref: '#/components/schemas/Lesson' } } } }
+  /lessons/{lessonId}:
+    parameters: [ { $ref: '#/components/parameters/LessonId' } ]
+    get:
+      tags: [lessons]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Lesson' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /lessons/{lessonId}/assignments:
+    parameters: [ { $ref: '#/components/parameters/LessonId' } ]
+    put:
+      tags: [lessons]
+      summary: Назначить сценарии на рабочие места (галочки)
+      requestBody: { required: true, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Assignment' } } } } }
+      responses:
+        '200': { description: OK }
+        '409': { description: Занятие уже запущено, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /lessons/{lessonId}/start:
+    parameters: [ { $ref: '#/components/parameters/LessonId' } ]
+    post:
+      tags: [lessons]
+      summary: Старт; фиксирует timing и rubric_version; предлагает первые карточки
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Lesson' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /lessons/{lessonId}/stop:
+    parameters: [ { $ref: '#/components/parameters/LessonId' } ]
+    post:
+      tags: [lessons]
+      summary: Стоп; барьер для поздних команд; закрытие карточек — фоновая задача
+      requestBody: { content: { application/json: { schema: { type: object, properties: { reason: { type: string, maxLength: 500 } } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Lesson' } } } }
+  /lessons/{lessonId}/monitor:
+    parameters: [ { $ref: '#/components/parameters/LessonId' } ]
+    get:
+      tags: [lessons]
+      summary: Снапшот монитора при уже открытом и буферизуемом SSE-потоке
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Monitor' } } } }
+  /lessons/{lessonId}/stream:
+    parameters: [ { $ref: '#/components/parameters/LessonId' } ]
+    get:
+      tags: [lessons]
+      summary: SSE-поток событий занятия (преподаватель)
+      parameters:
+        - { name: Last-Event-ID, in: header, schema: { type: string }, description: Автоматический reconnect; cursor формата epoch:counter }
+        - { name: cursor, in: query, schema: { type: string }, description: Сохранённый cursor для нового EventSource; при наличии заголовка приоритет у Last-Event-ID }
+      responses:
+        '200': { description: text/event-stream, content: { text/event-stream: { schema: { type: string } } } }
+  /lessons/{lessonId}/runs/{runId}/actions:
+    parameters: [ { $ref: '#/components/parameters/LessonId' }, { name: runId, in: path, required: true, schema: { type: string, format: uuid } } ]
+    get:
+      tags: [lessons]
+      summary: Лента действий обучаемого (для монитора и разбора)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Action' } } } } }
+
+  # ------------------------------------------------------------ trainee
+  /my/run:
+    get:
+      tags: [trainee]
+      summary: Текущий прогон обучаемого
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MyRun' } } } }
+        '204': { description: Нет активного занятия }
+  /my/items:
+    get:
+      tags: [trainee]
+      summary: Список карточек в текущем прогоне (как список в АРМ-112)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ItemSummary' } } } } }
+  /my/stream:
+    get:
+      tags: [trainee]
+      summary: SSE-инвалидации обучаемого
+      description: stream.ready → клиент буферизует → GET my/run, весь my/items и открытые карточки → применяет invalidations. resync повторяет процедуру; неизвестный epoch не считается восстановленной доставкой.
+      parameters:
+        - { name: Last-Event-ID, in: header, schema: { type: string }, description: Автоматический reconnect; cursor формата epoch:counter }
+        - { name: cursor, in: query, schema: { type: string }, description: Сохранённый cursor для нового EventSource; при наличии заголовка приоритет у Last-Event-ID }
+      responses:
+        '200': { description: text/event-stream, content: { text/event-stream: { schema: { type: string } } } }
+  /my/results:
+    get:
+      tags: [trainee]
+      summary: Результаты обучаемого по занятиям
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ItemResult' } } } } }
+  /my/progress:
+    get:
+      tags: [trainee]
+      summary: "Прогресс: уровень, средний балл, типичные ошибки, рекомендация"
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Progress' } } } }
+  /items/{itemId}:
+    parameters: [ { $ref: '#/components/parameters/ItemId' } ]
+    get:
+      tags: [trainee]
+      summary: Карточка целиком (обучаемому — без эталона; преподавателю — с ним)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Item' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /items/{itemId}/actions:
+    parameters: [ { $ref: '#/components/parameters/ItemId' } ]
+    post:
+      tags: [trainee]
+      summary: Команда обучаемого (идемпотентная, ADR-004/014)
+      description: После авторизации replay проверяется до running/closed. Тело command_id неизменно. control_report разрешён после закрытия и не меняет evidence. Отказ сохраняет исходный HTTP-статус при replay.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Command' } } } }
+      responses:
+        '200':
+          description: Исходная квитанция; outcome сохраняется, replayed=true при повторе
+          content: { application/json: { schema: { $ref: '#/components/schemas/Receipt' } } }
+        '409':
+          description: stale_seq | lesson_stopped | item_closed — Receipt; command_id_conflict — Error
+          content: { application/json: { schema: { oneOf: [{ $ref: '#/components/schemas/Receipt' }, { $ref: '#/components/schemas/Error' }] } } }
+        '422':
+          description: transition_not_allowed | comment_required | invalid_payload
+          content: { application/json: { schema: { $ref: '#/components/schemas/Receipt' } } }
+  /items/{itemId}/calls/{callId}/recording:
+    parameters: [ { $ref: '#/components/parameters/ItemId' }, { name: callId, in: path, required: true, schema: { type: string, format: uuid } } ]
+    put:
+      tags: [trainee]
+      summary: Загрузить ранее объявленную в call_end запись (≤ 10 МБ)
+      description: Hash, размер и MIME должны совпасть с манифестом. При закрытии фиксируется upload deadline. Повтор принятого файла успешен даже после срока; замена запрещена. Новый файл после срока отклоняется. STT начинается только после закрытия item.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, required: [file], properties: { file: { type: string, format: binary } } }
+      responses:
+        '204': { description: Файл принят или уже был принят; STT ставится после закрытия item }
+        '409': { description: recording_conflict | recording_deadline_passed, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '413': { description: Слишком большой файл, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /items/{itemId}/assessment:
+    parameters: [ { $ref: '#/components/parameters/ItemId' } ]
+    get:
+      tags: [assessment]
+      summary: Правила, итоговая оценка и история; последняя expert, иначе единственная auto
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { automatic_state: { type: string, enum: [waiting, pending, leased, done, failed, dead_letter, cancelled], description: Состояние автоматической задачи; ручная оценка доступна независимо от него }, final: { oneOf: [{ $ref: '#/components/schemas/Assessment' }, { type: 'null' }] }, revisions: { type: array, items: { $ref: '#/components/schemas/Assessment' } } } } } } }
+        '404': { description: Карточка не найдена или ещё не закрыта, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /items/{itemId}/assessment/revisions:
+    parameters: [ { $ref: '#/components/parameters/ItemId' } ]
+    post:
+      tags: [assessment]
+      summary: Ручное исправление преподавателя (становится итоговым)
+      description: Доступно после закрытия даже без auto/input. base_revision=0 при отсутствии оценки; первая expert имеет revision=2. Под item lock проверяется база, незавершённая evaluate отменяется, новая ревизия и основание рекомендаций фиксируются атомарно. Поздняя auto запрещена.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AssessmentRevision' } } } }
+      responses:
+        '201': { description: Создана, content: { application/json: { schema: { $ref: '#/components/schemas/Assessment' } } } }
+        '409': { description: stale_revision, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { $ref: '#/components/responses/Validation' }
+  # ------------------------------------------------------------ reports
+  /lessons/{lessonId}/report:
+    parameters: [ { $ref: '#/components/parameters/LessonId' } ]
+    get:
+      tags: [reports]
+      summary: Отчёт по занятию (ФИО, РМ, балл, время, ошибки, уровень) + агрегаты
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/LessonReport' } } } }
+  /lessons/{lessonId}/report.csv:
+    parameters: [ { $ref: '#/components/parameters/LessonId' } ]
+    get:
+      tags: [reports]
+      summary: То же в CSV (UTF-8 BOM, `;`)
+      responses:
+        '200': { description: OK, content: { text/csv: { schema: { type: string } } } }
+  /users/{userId}/progress:
+    parameters: [ { $ref: '#/components/parameters/UserId' } ]
+    get:
+      tags: [reports]
+      summary: Прогресс обучаемого (преподаватель)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Progress' } } } }
+  /users/{userId}/recommendation:
+    parameters: [ { $ref: '#/components/parameters/UserId' } ]
+    get:
+      tags: [assessment]
+      summary: Актуальная рекомендация уровня
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Recommendation' } } } }
+    post:
+      tags: [assessment]
+      summary: Применить актуальную рекомендацию (сменить уровень обучаемого)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recommendation_id, basis_version]
+              properties:
+                recommendation_id: { type: string, format: uuid }
+                basis_version: { type: integer, minimum: 0 }
+      description: Application use case блокирует users → trainee_assessment_state; проверяет id, basis_version и уровень. Порты auth/assessment атомарно меняют уровень и версию основания; иначе 409 stale_recommendation.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /groups/progress:
+    get:
+      tags: [reports]
+      summary: Сводка по группе — распределение баллов, типичные ошибки, лидеры/отстающие
+      parameters: [ { name: lesson_ids, in: query, schema: { type: array, items: { type: string, format: uuid } }, style: form, explode: false } ]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/GroupProgress' } } } }
+
+  # ------------------------------------------------------------ tasks
+  /tasks/{taskId}:
+    parameters: [ { name: taskId, in: path, required: true, schema: { type: string, format: uuid } } ]
+    get:
+      tags: [tasks]
+      summary: Статус фоновой задачи
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /admin/tasks/{taskId}/retry:
+    parameters: [ { name: taskId, in: path, required: true, schema: { type: string, format: uuid } } ]
+    post:
+      tags: [tasks]
+      summary: Продолжить failed/dead_letter задачу с тем же id
+      description: Повтор запрещён для done/cancelled и оценок с уже существующей auto/expert. Для failed/dead_letter без оценки сохранить id/dedup/token; при sealed input увеличить бюджет и вернуть pending, при ошибке подготовки без input вернуть waiting. Нового автопересчёта нет.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+
+components:
+  securitySchemes:
+    cookie:
+      type: apiKey
+      in: cookie
+      name: emsim_session
+
+  parameters:
+    Page: { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+    PageSize: { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+    UserId: { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+    ScenarioId: { name: scenarioId, in: path, required: true, schema: { type: string, format: uuid } }
+    LessonId: { name: lessonId, in: path, required: true, schema: { type: string, format: uuid } }
+    ItemId: { name: itemId, in: path, required: true, schema: { type: string, format: uuid } }
+
+  responses:
+    Accepted:
+      description: Задача поставлена
+      content: { application/json: { schema: { type: object, required: [task_id], properties: { task_id: { type: string, format: uuid } } } } }
+    Unauthorized: { description: Не аутентифицирован, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Forbidden: { description: Нет прав или чужой ресурс, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound: { description: Не найдено, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Conflict: { description: Конфликт состояния, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Validation: { description: Ошибка валидации, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    RateLimited: { description: Слишком много попыток, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error, request_id]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation]
+            message: { type: string }
+            details: { type: object, additionalProperties: true }
+        request_id: { type: string }
+
+    Role: { type: string, enum: [admin, instructor, trainee] }
+    Level: { type: string, enum: [easy, medium, hard] }
+    ReactionStatus:
+      type: string
+      enum: [added, received, accepted, not_accepted, responding, arrived, working, completed, refused, completed_without_team]
+
+    Me:
+      type: object
+      required: [user, session_expires_at]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        workstation: { $ref: '#/components/schemas/Workstation' }
+        session_expires_at: { type: string, format: date-time }
+    User:
+      type: object
+      required: [id, login, full_name, role, level, active]
+      properties:
+        id: { type: string, format: uuid }
+        login: { type: string }
+        full_name: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+        service_code: { type: string, nullable: true }
+        level: { $ref: '#/components/schemas/Level' }
+        active: { type: boolean }
+    UserCreate:
+      type: object
+      required: [login, password, full_name, role]
+      properties:
+        login: { type: string, pattern: '^[a-z0-9._-]{3,64}$' }
+        password: { type: string, minLength: 8, maxLength: 256 }
+        full_name: { type: string, maxLength: 200 }
+        role: { $ref: '#/components/schemas/Role' }
+        service_code: { type: string }
+        level: { $ref: '#/components/schemas/Level' }
+    UserPatch:
+      type: object
+      properties:
+        password: { type: string, minLength: 8 }
+        full_name: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+        service_code: { type: string, nullable: true }
+        level: { $ref: '#/components/schemas/Level' }
+        active: { type: boolean }
+    Workstation:
+      type: object
+      required: [number]
+      properties:
+        id: { type: string, format: uuid, readOnly: true }
+        number: { type: integer, minimum: 1 }
+        label: { type: string }
+        ip_address: { type: string, nullable: true }
+        active: { type: boolean, default: true }
+
+    Service:
+      type: object
+      required: [code, name, workflow]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        workflow:
+          type: object
+          description: Переходы и правила службы; UI и сервер читают одно и то же
+          properties:
+            transitions: { type: object, additionalProperties: { type: array, items: { $ref: '#/components/schemas/ReactionStatus' } } }
+            comment_required: { type: array, items: { $ref: '#/components/schemas/ReactionStatus' } }
+            terminal: { type: array, items: { $ref: '#/components/schemas/ReactionStatus' } }
+            contacts: { type: array, items: { $ref: '#/components/schemas/Contact' } }
+
+    Contact:
+      type: object
+      required: [key, label, number]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        number: { type: string, description: Что набирает обучаемый }
+        voice: { type: string, description: Ключ голоса (пол/интонация) }
+
+    ScenarioSummary:
+      type: object
+      required: [id, title, target_service, difficulty, status, origin, version]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        target_service: { type: string }
+        difficulty: { type: integer, minimum: 1, maximum: 10 }
+        status: { type: string, enum: [draft, approved, archived] }
+        origin: { type: string, enum: [manual, ticket, generated] }
+        version: { type: integer }
+        has_events: { type: boolean }
+        has_voice: { type: boolean }
+        updated_at: { type: string, format: date-time }
+    Scenario:
+      allOf:
+        - $ref: '#/components/schemas/ScenarioSummary'
+        - type: object
+          required: [body]
+          properties:
+            body: { $ref: '#/components/schemas/ScenarioBody' }
+            version_id: { type: string, format: uuid }
+            digest: { type: string, description: hex sha256 }
+    ScenarioCreate:
+      type: object
+      required: [title, target_service, difficulty, body]
+      properties:
+        title: { type: string, maxLength: 200 }
+        target_service: { type: string }
+        difficulty: { type: integer, minimum: 1, maximum: 10 }
+        ticket_id: { type: string, format: uuid }
+        body: { $ref: '#/components/schemas/ScenarioBody' }
+    ExerciseType:
+      type: string
+      const: dds_processing
+      description: Первый этап — ДДС. operator112_intake добавляется отдельным контрактом после определения процесса 112.
+    ScenarioBody:
+      type: object
+      required: [exercise_type]
+      properties:
+        exercise_type: { $ref: '#/components/schemas/ExerciseType' }
+      description: Полная схема — contracts/scenario.schema.json (exercise_type, card, events, reference, contacts)
+      additionalProperties: true
+    ScenarioVersionSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+        status:
+          type: string
+          enum:
+          - draft
+          - approved
+          - superseded
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        approved_at:
+          type: string
+          format: date-time
+          nullable: true
+        digest:
+          type: string
+        difficulty:
+          type: integer
+          minimum: 1
+          maximum: 10
+
+    CardView:
+      type: object
+      description: Карточка так, как её видит обучаемый (без эталона)
+      required: [number, registered_at, address, incident, notification_list]
+      properties:
+        number: { type: string }
+        registered_at: { type: string, format: date-time }
+        applicant: { type: object, properties: { name: { type: string }, phone: { type: string } } }
+        address: { type: object, additionalProperties: true }
+        incident: { type: object, properties: { type_code: { type: string }, type_name: { type: string }, features: { type: object }, description: { type: string } } }
+        notification_list:
+          type: array
+          items:
+            type: object
+            properties:
+              service: { type: string }
+              status: { $ref: '#/components/schemas/ReactionStatus' }
+              mine: { type: boolean, description: Служба обучаемого }
+        contacts: { type: array, items: { $ref: '#/components/schemas/Contact' } }
+
+    LessonCreate:
+      type: object
+      required: [title, mode, level, exercise_type]
+      properties:
+        exercise_type: { $ref: '#/components/schemas/ExerciseType' }
+        title: { type: string, maxLength: 200 }
+        mode: { type: string, enum: [intro, training] }
+        level: { $ref: '#/components/schemas/Level' }
+        timing:
+          type: object
+          properties:
+            open_s: { type: integer, default: 30 }
+            primary_s: { type: integer, default: 30 }
+            complete_s: { type: integer, default: 180 }
+            spawn_every_s: { type: integer, nullable: true, description: hard — интервал новых карточек }
+    Lesson:
+      allOf:
+      - $ref: '#/components/schemas/LessonCreate'
+      - type: object
+        required:
+        - id
+        - state
+        - epoch
+        properties:
+          id:
+            type: string
+            format: uuid
+          state:
+            type: string
+            enum:
+            - draft
+            - running
+            - stopped
+            - finished
+          epoch:
+            type: integer
+          rubric_version:
+            type: string
+          assignments:
+            type: array
+            items:
+              $ref: '#/components/schemas/Assignment'
+          started_at:
+            type: string
+            format: date-time
+            nullable: true
+          stopped_at:
+            type: string
+            format: date-time
+            nullable: true
+          pending_assessments:
+            type: integer
+
+    Assignment:
+      type: object
+      required: [workstation_no, scenario_version_ids]
+      properties:
+        workstation_no: { type: integer }
+        user_id: { type: string, format: uuid, nullable: true }
+        scenario_version_ids: { type: array, minItems: 1, items: { type: string, format: uuid } }
+
+    Monitor:
+      type: object
+      required: [lesson, rows, server_time]
+      properties:
+        lesson: { $ref: '#/components/schemas/Lesson' }
+        server_time: { type: string, format: date-time }
+        last_event_id: { type: string }
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              workstation_no: { type: integer }
+              user: { $ref: '#/components/schemas/User' }
+              run_id: { type: string, format: uuid }
+              online: { type: boolean }
+              current_item: { $ref: '#/components/schemas/ItemSummary' }
+              queue_left: { type: integer }
+              done: { type: integer }
+              last_action: { $ref: '#/components/schemas/Action' }
+
+    MyRun:
+      type: object
+      required: [run_id, lesson, current_item_id, queue_left, exercise_type]
+      properties:
+        exercise_type: { $ref: '#/components/schemas/ExerciseType' }
+        run_id: { type: string, format: uuid }
+        lesson: { $ref: '#/components/schemas/Lesson' }
+        current_item_id: { type: string, format: uuid, nullable: true }
+        queue_left: { type: integer }
+        server_time: { type: string, format: date-time }
+    ItemSummary:
+      type: object
+      required:
+      - id
+      - state
+      - reaction
+      - seq
+      - card_number
+      - offered_at
+      - deadlines
+      - interruptions
+      properties:
+        id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum:
+          - offered
+          - opened
+          - in_progress
+          - closed
+          - interrupted
+        reaction:
+          $ref: '#/components/schemas/ReactionStatus'
+        seq:
+          type: integer
+        card_number:
+          type: string
+        incident_type:
+          type: string
+        address_short:
+          type: string
+        offered_at:
+          type: string
+          format: date-time
+        opened_at:
+          type: string
+          format: date-time
+          nullable: true
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+        deadlines:
+          $ref: '#/components/schemas/Deadlines'
+        assessment_status:
+          type: string
+          enum:
+          - pending
+          - ready
+          - needs_review
+          - unavailable
+          nullable: true
+        score:
+          type: number
+          nullable: true
+        primary_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        interruptions:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - recovery_id
+            - cause
+            - detected_at
+            properties:
+              recovery_id:
+                type: string
+                format: uuid
+              cause:
+                const: server_restart
+              detected_at:
+                type: string
+                format: date-time
+
+    Deadlines:
+      type: object
+      description: 'Серверные сроки: open/primary от offered_at, complete от первого primary_at. Не сдвигаются после сбоя; interruptions
+        исключает timing из оценки.'
+      properties:
+        open_at:
+          type: string
+          format: date-time
+        primary_at:
+          type: string
+          format: date-time
+        complete_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Item:
+      allOf:
+        - $ref: '#/components/schemas/ItemSummary'
+        - type: object
+          required: [card, actions, events, calls, server_time]
+          properties:
+            card: { $ref: '#/components/schemas/CardView' }
+            actions: { type: array, items: { $ref: '#/components/schemas/Action' } }
+            events: { type: array, items: { $ref: '#/components/schemas/DeliveredEvent' } }
+            calls: { type: array, items: { $ref: '#/components/schemas/Call' } }
+            comments: { type: array, items: { type: object, properties: { seq: { type: integer }, text: { type: string }, at: { type: string, format: date-time } } } }
+            hints: { type: array, items: { type: string }, description: intro-режим }
+            reference: { type: object, description: Только преподавателю }
+            server_time: { type: string, format: date-time }
+
+    Command:
+      type: object
+      additionalProperties: false
+      required:
+      - command_id
+      - expected_seq
+      - type
+      - payload
+      properties:
+        command_id: &id001
+          type: string
+          format: uuid
+        expected_seq:
+          type: integer
+          minimum: 0
+        type:
+          type: string
+          enum:
+          - open
+          - close
+          - set_status
+          - add_comment
+          - call_start
+          - call_end
+          - control_report
+        payload:
+          type: object
+        client_at:
+          type: string
+          format: date-time
+      oneOf:
+      - properties:
+          type:
+            const: open
+          payload:
+            type: object
+            additionalProperties: false
+            required: []
+            properties: {}
+      - properties:
+          type:
+            const: close
+          payload:
+            type: object
+            additionalProperties: false
+            required: []
+            properties: {}
+        description: Явное закрытие после терминального статуса при обязательных комментариях и без активного звонка. set_status
+          сам не закрывает; превышение норматива не закрывает.
+      - properties:
+          type:
+            const: set_status
+          payload:
+            type: object
+            additionalProperties: false
+            required:
+            - status
+            properties:
+              status:
+                $ref: '#/components/schemas/ReactionStatus'
+              comment:
+                type: string
+      - properties:
+          type:
+            const: add_comment
+          payload:
+            type: object
+            additionalProperties: false
+            required:
+            - text
+            properties:
+              text:
+                type: string
+      - properties:
+          type:
+            const: call_start
+          payload:
+            type: object
+            additionalProperties: false
+            required:
+            - contact
+            properties:
+              contact:
+                type: string
+                minLength: 1
+      - properties:
+          type:
+            const: call_end
+          payload:
+            type: object
+            additionalProperties: false
+            required:
+            - call_id
+            - accepted_by
+            - summary
+            - recording
+            properties:
+              call_id: *id001
+              accepted_by:
+                type: string
+              summary:
+                type: string
+              recording:
+                oneOf:
+                - type: 'null'
+                - type: object
+                  additionalProperties: false
+                  required:
+                  - sha256
+                  - size
+                  - mime
+                  properties:
+                    sha256:
+                      type: string
+                      pattern: ^[0-9a-f]{64}$
+                    size:
+                      type: integer
+                      minimum: 1
+                      maximum: 10485760
+                    mime:
+                      enum:
+                      - audio/webm
+                      - audio/ogg
+                      - audio/wav
+      - properties:
+          type:
+            const: control_report
+          payload:
+            type: object
+            additionalProperties: false
+            required:
+            - text
+            properties:
+              text:
+                type: string
+                minLength: 1
+
+    Receipt:
+      type: object
+      required:
+      - command_id
+      - outcome
+      - seq
+      - reaction
+      - item_state
+      - server_at
+      - replayed
+      - action_id
+      - log_seq
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        outcome:
+          type: string
+          enum:
+          - applied
+          - rejected
+        seq:
+          type: integer
+        reaction:
+          $ref: '#/components/schemas/ReactionStatus'
+        item_state:
+          type: string
+        server_at:
+          type: string
+          format: date-time
+        deadlines:
+          $ref: '#/components/schemas/Deadlines'
+        call_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: для call_start
+        next_item_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: после закрытия
+        error_code:
+          type: string
+          nullable: true
+        request_id:
+          type: string
+        replayed:
+          type: boolean
+          description: Повтор исходной квитанции с тем же HTTP/outcome; не новое действие
+        action_id:
+          type: string
+          format: uuid
+        log_seq:
+          type: integer
+          minimum: 1
+
+    Action:
+      type: object
+      required:
+      - id
+      - seq
+      - type
+      - accepted
+      - server_at
+      - log_seq
+      properties:
+        id:
+          type: string
+          format: uuid
+        seq:
+          type: integer
+        type:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        accepted:
+          type: boolean
+        rejection:
+          type: string
+          nullable: true
+        server_at:
+          type: string
+          format: date-time
+        log_seq:
+          type: integer
+          minimum: 1
+
+    DeliveredEvent:
+      type: object
+      required: [key, delivery, delivered_at]
+      properties:
+        key: { type: string }
+        delivery: { type: string, enum: [notice, phone_incoming, spawn_card] }
+        from: { type: string }
+        text: { type: string }
+        voice_url: { type: string, nullable: true }
+        delivered_at: { type: string, format: date-time }
+        late: { type: boolean }
+    Call:
+      type: object
+      required:
+      - id
+      - contact_key
+      - started_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        contact_key:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        accepted_by:
+          type: string
+          nullable: true
+          description: «Кто принял»
+        summary:
+          type: string
+          nullable: true
+          description: «Суть сообщения»
+        has_recording:
+          type: boolean
+        stt_state:
+          type: string
+          enum:
+          - pending
+          - ready
+          - failed
+          - missing
+        transcript:
+          type: string
+          nullable: true
+          description: Только преподавателю и после оценки — обучаемому; текст из assessment_inputs, до seal — из удерживаемого
+            STT tasks.result. Нет изменяемого transcript в calls.
+        recording_sha256:
+          type:
+          - string
+          - 'null'
+          pattern: ^[0-9a-f]{64}$
+        recording_upload_deadline_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        recording_state:
+          enum:
+          - absent
+          - awaiting
+          - ready
+          - expired
+
+    Assessment:
+      type: object
+      required:
+      - id
+      - item_id
+      - revision
+      - kind
+      - status
+      - rubric_version
+      - criteria
+      - critical_errors
+      - created_at
+      - input_id
+      properties:
+        id:
+          type: string
+          format: uuid
+        item_id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+        kind:
+          type: string
+          enum:
+          - auto
+          - expert
+        status:
+          type: string
+          enum:
+          - ready
+          - needs_review
+          - unavailable
+        rubric_version:
+          type: string
+        rubric_effective:
+          type: object
+          additionalProperties: true
+          description: Слитая рубрика кейса (ADR-013)
+        score:
+          type:
+          - number
+          - 'null'
+          minimum: 0
+          maximum: 100
+          description: Число только для ready; needs_review/unavailable — null без перенормировки unavailable.
+        passed:
+          type:
+          - boolean
+          - 'null'
+        criteria:
+          type: array
+          items:
+            $ref: '#/components/schemas/CriterionResult'
+        critical_errors:
+          type: array
+          items:
+            type: string
+        feedback:
+          type: array
+          items:
+            type: object
+            properties:
+              criterion_id:
+                type: string
+              severity:
+                type: string
+                enum:
+                - info
+                - warning
+                - critical
+              text:
+                type: string
+              guide_ref:
+                type: string
+        model:
+          type: string
+          nullable: true
+        created_by:
+          type: string
+          format: uuid
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        input_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: У expert без автооценки может отсутствовать; основание — evidence и rubric_effective.
+        base_revision:
+          type:
+          - integer
+          - 'null'
+      allOf:
+      - if:
+          properties:
+            status:
+              const: ready
+          required:
+          - status
+        then:
+          required:
+          - score
+          - passed
+          properties:
+            score:
+              type: number
+            passed:
+              type: boolean
+        else:
+          required:
+          - score
+          - passed
+          properties:
+            score:
+              type: 'null'
+            passed:
+              type: 'null'
+
+    CriterionResult:
+      type: object
+      required:
+      - id
+      - status
+      - weight
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+          - met
+          - partial
+          - not_met
+          - not_applicable
+          - unavailable
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+          nullable: true
+        weight:
+          type: number
+        critical:
+          type: boolean
+        evidence_refs:
+          type: array
+          items:
+            type: string
+          description: action:<action_id> | event:<key> | call:<id> | text:<field>:<from>-<to>
+        explanation:
+          type: string
+
+    AssessmentRevision:
+      type: object
+      required:
+      - reason
+      - criteria
+      - base_revision
+      properties:
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 2000
+        criteria:
+          type: array
+          items:
+            $ref: '#/components/schemas/CriterionResult'
+          description: При base_revision=0 полный набор применимых критериев обязателен; иначе допускаются поправки, остальные
+            копируются из текущей ревизии. Все unavailable должны быть разрешены преподавателем.
+        score_override:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 100
+        base_revision:
+          type: integer
+          minimum: 0
+          description: Текущая итоговая ревизия или 0 при отсутствии оценки; первая expert тогда revision=2 (номер 1 зарезервирован
+            auto).
+
+    ItemResult:
+      type: object
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        lesson_id:
+          type: string
+          format: uuid
+        lesson_title:
+          type: string
+        card_number:
+          type: string
+        difficulty:
+          type: integer
+        closed_at:
+          type: string
+          format: date-time
+        total_seconds:
+          type: number
+        score:
+          type: number
+          nullable: true
+        passed:
+          type: boolean
+          nullable: true
+        critical_errors:
+          type: array
+          items:
+            type: string
+        assessment_status:
+          type: string
+        work_seconds:
+          type:
+          - number
+          - 'null'
+          description: Активное время от primary_at; total_seconds — от offered_at
+        level_at_start:
+          $ref: '#/components/schemas/Level'
+        interruptions:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - recovery_id
+            - cause
+            - detected_at
+            properties:
+              recovery_id:
+                type: string
+                format: uuid
+              cause:
+                const: server_restart
+              detected_at:
+                type: string
+                format: date-time
+
+    Progress:
+      type: object
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        items_total: { type: integer }
+        avg_score: { type: number, nullable: true }
+        by_lesson: { type: array, items: { type: object, properties: { lesson_id: { type: string, format: uuid }, title: { type: string }, date: { type: string, format: date-time }, avg_score: { type: number }, items: { type: integer } } } }
+        error_frequency: { type: array, items: { type: object, properties: { criterion_id: { type: string }, count: { type: integer }, guide_ref: { type: string } } } }
+        recommendation: { $ref: '#/components/schemas/Recommendation' }
+    Recommendation:
+      type: object
+      required:
+      - current_level
+      - recommended_level
+      - policy_version
+      - computed_at
+      - id
+      - basis_version
+      properties:
+        current_level:
+          $ref: '#/components/schemas/Level'
+        recommended_level:
+          $ref: '#/components/schemas/Level'
+        basis:
+          type: object
+          additionalProperties: true
+          description: Конкретные итоговые assessment_id/revision и уровень прохождения; выдаётся только актуальная
+            basis_version
+        policy_version:
+          type: string
+        computed_at:
+          type: string
+          format: date-time
+        applied_at:
+          type: string
+          format: date-time
+          nullable: true
+        id:
+          type: string
+          format: uuid
+        basis_version:
+          type: integer
+          minimum: 0
+
+    LessonReport:
+      type: object
+      properties:
+        lesson:
+          $ref: '#/components/schemas/Lesson'
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              full_name:
+                type: string
+              workstation_no:
+                type: integer
+              level:
+                $ref: '#/components/schemas/Level'
+              items:
+                type: integer
+              avg_score:
+                type: number
+                nullable: true
+              passed:
+                type: integer
+              avg_open_seconds:
+                type: number
+              avg_total_seconds:
+                type: number
+              timing_violations:
+                type: integer
+              grammar_errors:
+                type: integer
+              critical_errors:
+                type: array
+                items:
+                  type: string
+              pending_assessments:
+                type: integer
+              recommendation:
+                $ref: '#/components/schemas/Recommendation'
+              avg_work_seconds:
+                type:
+                - number
+                - 'null'
+        aggregates:
+          type: object
+          properties:
+            avg_score:
+              type: number
+            score_histogram:
+              type: array
+              items:
+                type: object
+                properties:
+                  bucket:
+                    type: string
+                  count:
+                    type: integer
+            top_errors:
+              type: array
+              items:
+                type: object
+                properties:
+                  criterion_id:
+                    type: string
+                  count:
+                    type: integer
+
+    GroupProgress:
+      type: object
+      properties:
+        users: { type: array, items: { type: object, properties: { user: { $ref: '#/components/schemas/User' }, avg_score: { type: number }, trend: { type: number }, items: { type: integer } } } }
+        leaders: { type: array, items: { type: string, format: uuid } }
+        lagging: { type: array, items: { type: string, format: uuid } }
+        top_errors: { type: array, items: { type: object, properties: { criterion_id: { type: string }, count: { type: integer } } } }
+
+    Task:
+      type: object
+      required:
+      - id
+      - kind
+      - status
+      - attempts
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+        scope_type:
+          type: string
+        scope_id:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          type: string
+          enum:
+          - waiting
+          - pending
+          - leased
+          - done
+          - failed
+          - dead_letter
+          - cancelled
+        attempts:
+          type: integer
+        max_attempts:
+          type: integer
+        last_error_code:
+          type: string
+          nullable: true
+        result:
+          type: object
+          nullable: true
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        terminal_at:
+          type: string
+          format: date-time
+          nullable: true
+        wait_until:
+          type:
+          - string
+          - 'null'
+          format: date-time
+          description: Следующая проверка coordinator; не общий deadline очереди STT.
+        wait_reason:
+          type:
+          - string
+          - 'null'
+        priority:
+          type: integer
+          minimum: 0
+        dependency_task_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+

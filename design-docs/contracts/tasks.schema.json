@@ -1,0 +1,654 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emsim.local/schemas/tasks/v1",
+  "title": "Task kinds v1",
+  "description": "Реестр задач. В worker отдельный короткий coordinator каждые 2 с проверяет waiting и отложенные советы. Не отдельный kind и не LISTEN. priority: evaluate=100, generation=50, advice=10; claim среди due задач по priority DESC. STT task results удерживаются по dependency_task_ids до sealed input или отмены оценки.",
+  "type": "object",
+  "required": [
+    "kind",
+    "scope_type",
+    "payload"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string"
+    },
+    "scope_type": {
+      "type": "string",
+      "enum": [
+        "scenario",
+        "item",
+        "lesson",
+        "call",
+        "system",
+        "user"
+      ]
+    },
+    "scope_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "oneOf": [
+    {
+      "title": "scenario.generate",
+      "description": "Сгенерировать один черновик сценария. lease 10 мин, max_attempts 3, retry base 30 с. Результат: scenarios(draft)+scenario_versions(v1).",
+      "properties": {
+        "kind": {
+          "const": "scenario.generate"
+        },
+        "scope_type": {
+          "const": "scenario"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "service",
+            "difficulty",
+            "requested_by",
+            "prompt_version"
+          ],
+          "properties": {
+            "service": {
+              "type": "string"
+            },
+            "categories": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "difficulty": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            },
+            "ticket_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "with_events": {
+              "type": "boolean"
+            },
+            "requested_by": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "prompt_version": {
+              "type": "string"
+            },
+            "seed": {
+              "type": "integer"
+            }
+          }
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "scenario_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "version_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "model": {
+              "type": "string"
+            },
+            "tokens": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "scenario.regenerate",
+      "description": "Перегенерация по комментарию преподавателя; новая draft-версия. lease 10 мин.",
+      "properties": {
+        "kind": {
+          "const": "scenario.regenerate"
+        },
+        "scope_type": {
+          "const": "scenario"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "scenario_id",
+            "base_version_id",
+            "comment",
+            "requested_by"
+          ],
+          "properties": {
+            "scenario_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "base_version_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "comment": {
+              "type": "string"
+            },
+            "keep": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "card",
+                  "events",
+                  "reference"
+                ]
+              }
+            },
+            "requested_by": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "voice.render",
+      "description": "Озвучить фразы контактов и события утверждённой версии. lease 5 мин. Идемпотентно по (version, key): существующие voice_assets не перерисовываются.",
+      "properties": {
+        "kind": {
+          "const": "voice.render"
+        },
+        "scope_type": {
+          "const": "scenario"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "scenario_version_id"
+          ],
+          "properties": {
+            "scenario_version_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "voices": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "voice key → piper model"
+            }
+          }
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "rendered": {
+              "type": "integer"
+            },
+            "skipped": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "stt.transcribe",
+      "description": "Только после close и загрузки объявленного hash. Текст/digest/hash/model/parameters сохраняются в tasks.result + done атомарно с fencing; done не меняется. Результат удерживается до копирования в assessment_inputs/отмены оценки. Ошибка/исчерпание попыток терминальны, coordinator видит их polling. Таймаут попытки по замерам W0; очередь не ограничена общим окном 180 с.",
+      "properties": {
+        "kind": {
+          "const": "stt.transcribe"
+        },
+        "scope_type": {
+          "const": "call"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "call_id",
+            "item_id",
+            "blob_id",
+            "recording_sha256"
+          ],
+          "properties": {
+            "call_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "item_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "blob_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "language": {
+              "type": "string",
+              "default": "ru"
+            },
+            "recording_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "result": {
+          "type": "object",
+          "required": [
+            "text",
+            "digest",
+            "recording_sha256",
+            "model",
+            "parameters"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "recording_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "model": {
+              "type": "string"
+            },
+            "parameters": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "assessment.evaluate",
+      "description": "Close ставит waiting без input_id; coordinator ждёт файл до upload deadline и терминальный STT, вычисляет правила и атомарно сохраняет единственный assessment_inputs + pending. wait_until — следующая проверка, не deadline STT; waiting не расходует attempts. Ошибка подготовки → failed без auto, ручная оценка доступна. Claim/inference только с sealed input. Исчерпание попыток handler/reaper → auto rev=1 needs_review с NULL score/passed + failed/dead_letter атомарно. Если expert уже создана — cancelled, auto не пишется. Retry после любой оценки запрещён; одна auto на item, priority=100.",
+      "properties": {
+        "kind": {
+          "const": "assessment.evaluate"
+        },
+        "scope_type": {
+          "const": "item"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "item_id",
+            "evidence_digest",
+            "rubric_version"
+          ],
+          "properties": {
+            "item_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "evidence_digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "rubric_version": {
+              "type": "string"
+            },
+            "requested_by": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "input_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid",
+              "description": "Обязательно до pending/claim. Может отсутствовать в waiting, при failed подготовки и при cancelled до seal."
+            }
+          }
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "assessment_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "status": {
+              "type": "string"
+            },
+            "score": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "llm_ms": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "lesson.close",
+      "description": "Короткий пул: после stop закрыть items с closed_at=stopped_at и cutoff=items.stop_cutoff_log_seq; отменить события; evidence; evaluate waiting только training. Intro без оценки. Interrupted исключён из рекомендации. Повтор докрывает остаток.",
+      "properties": {
+        "kind": {
+          "const": "lesson.close"
+        },
+        "scope_type": {
+          "const": "lesson"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "lesson_id",
+            "epoch"
+          ],
+          "properties": {
+            "lesson_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "epoch": {
+              "type": "integer"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "interrupted": {
+              "type": "integer"
+            },
+            "runs_finished": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "classifier.import",
+      "description": "Импорт XLSX (3-строчная шапка, колонки служб). lease 5 мин. Upsert по code.",
+      "properties": {
+        "kind": {
+          "const": "classifier.import"
+        },
+        "scope_type": {
+          "const": "system"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "blob_id",
+            "requested_by"
+          ],
+          "properties": {
+            "blob_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "requested_by": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "inserted": {
+              "type": "integer"
+            },
+            "updated": {
+              "type": "integer"
+            },
+            "skipped": {
+              "type": "integer"
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "tickets.import",
+      "properties": {
+        "kind": {
+          "const": "tickets.import"
+        },
+        "scope_type": {
+          "const": "system"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "blob_id",
+            "requested_by"
+          ],
+          "properties": {
+            "blob_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "requested_by": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "recommendation.compute",
+      "description": "После новой итоговой оценки/смены уровня. Короткий пул, lease 1 мин. dedup recommendation.compute:<user_id>:<exercise_type>:<basis_version>:<policy_version>. Под блокировкой trainee_assessment_state проверить актуальность basis_version перед публикацией; устаревшая задача ничего не публикует.",
+      "properties": {
+        "kind": {
+          "const": "recommendation.compute"
+        },
+        "scope_type": {
+          "const": "user"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "user_id",
+            "policy_version",
+            "basis_version",
+            "exercise_type"
+          ],
+          "properties": {
+            "user_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "policy_version": {
+              "type": "string"
+            },
+            "basis_version": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "exercise_type": {
+              "const": "dds_processing"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "advice.generate",
+      "description": "priority=10. Coordinator после advice_due_at (5 с без изменений) ставит задачу для текущего basis_version. dedup advice.generate:<user_id>:<exercise_type>:<basis_version>:<prompt_version>. Перед LLM и перед finalize проверить версию trainee_assessment_state; устаревшая задача cancelled без публикации. Только агрегаты; новые версии не блокируются старым done.",
+      "properties": {
+        "kind": {
+          "const": "advice.generate"
+        },
+        "scope_type": {
+          "const": "user"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "user_id",
+            "prompt_version",
+            "basis_version",
+            "exercise_type"
+          ],
+          "properties": {
+            "user_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "prompt_version": {
+              "type": "string"
+            },
+            "basis_version": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "exercise_type": {
+              "const": "dds_processing"
+            }
+          }
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "chars": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "report.build",
+      "description": "Собрать PDF отчёта занятия в blobs. lease 2 мин.",
+      "properties": {
+        "kind": {
+          "const": "report.build"
+        },
+        "scope_type": {
+          "const": "lesson"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "lesson_id",
+            "format",
+            "requested_by"
+          ],
+          "properties": {
+            "lesson_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "pdf"
+              ]
+            },
+            "requested_by": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "blob_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "backup.run",
+      "description": "pg_dump + blobs, lease 30 мин. Автоматический запуск не реже одного раза в сутки и ручной запуск; расширенный протокол restore вне согласованной правки.",
+      "properties": {
+        "kind": {
+          "const": "backup.run"
+        },
+        "scope_type": {
+          "const": "system"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "requested_by": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          }
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "bytes": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "audit.prune",
+      "description": "Удалить audit_log старше 180 дней, sessions с истёкшим сроком, терминальные tasks старше 30 дней. lease 5 мин.",
+      "properties": {
+        "kind": {
+          "const": "audit.prune"
+        },
+        "scope_type": {
+          "const": "system"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "audit_days": {
+              "type": "integer",
+              "default": 180
+            },
+            "tasks_days": {
+              "type": "integer",
+              "default": 30
+            }
+          }
+        }
+      }
+    }
+  ]
+}

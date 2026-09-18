@@ -1,0 +1,494 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emsim.local/schemas/sse-events/v1",
+  "title": "SSE events v1",
+  "description": "Инвалидирующие уведомления. id=<stream_epoch>:<counter>, epoch меняется при рестарте/потере LISTEN. NOTIFY в транзакции. Буфер 1000 — ускорение, не durable delivery. Сначала stream.ready и буферизация, затем snapshot, затем применение инвалидирований; resync повторяет цикл.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/item_offered"
+    },
+    {
+      "$ref": "#/$defs/item_updated"
+    },
+    {
+      "$ref": "#/$defs/event_delivered"
+    },
+    {
+      "$ref": "#/$defs/assessment_ready"
+    },
+    {
+      "$ref": "#/$defs/lesson_started"
+    },
+    {
+      "$ref": "#/$defs/lesson_stopped"
+    },
+    {
+      "$ref": "#/$defs/lesson_finished"
+    },
+    {
+      "$ref": "#/$defs/monitor_row"
+    },
+    {
+      "$ref": "#/$defs/scenario_ready"
+    },
+    {
+      "$ref": "#/$defs/task_done"
+    },
+    {
+      "$ref": "#/$defs/resync"
+    },
+    {
+      "$ref": "#/$defs/stream_ready"
+    }
+  ],
+  "$defs": {
+    "base": {
+      "type": "object",
+      "required": [
+        "type",
+        "at"
+      ],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Серверное время события"
+        },
+        "lesson_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "item_offered": {
+      "description": "Обучаемому: новая карточка в списке. Монитору: то же с workstation_no.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "item.offered"
+            },
+            "item_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "run_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "workstation_no": {
+              "type": "integer"
+            },
+            "card_number": {
+              "type": "string"
+            },
+            "incident_type": {
+              "type": "string"
+            },
+            "address_short": {
+              "type": "string"
+            },
+            "deadlines": {
+              "type": "object"
+            },
+            "spawned_from": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "item_id",
+            "run_id",
+            "card_number",
+            "deadlines"
+          ]
+        }
+      ]
+    },
+    "item_updated": {
+      "description": "После принятой команды. Монитору — по всем РМ; обучаемому — по своим (для второй вкладки).",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "item.updated"
+            },
+            "item_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "run_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "workstation_no": {
+              "type": "integer"
+            },
+            "seq": {
+              "type": "integer"
+            },
+            "state": {
+              "type": "string"
+            },
+            "reaction": {
+              "type": "string"
+            },
+            "action_type": {
+              "type": "string"
+            },
+            "accepted": {
+              "type": "boolean"
+            },
+            "deadlines": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "item_id",
+            "seq",
+            "state",
+            "reaction",
+            "action_type",
+            "accepted"
+          ]
+        }
+      ]
+    },
+    "event_delivered": {
+      "description": "Обучаемому: событие сценария (сообщение бригады, входящее). spawn_card приходит как item.offered.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "event.delivered"
+            },
+            "item_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "key": {
+              "type": "string"
+            },
+            "delivery": {
+              "type": "string",
+              "enum": [
+                "notice",
+                "phone_incoming"
+              ]
+            },
+            "from": {
+              "type": "string"
+            },
+            "from_label": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "voice_url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "late": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "item_id",
+            "key",
+            "delivery",
+            "text"
+          ]
+        }
+      ]
+    },
+    "assessment_ready": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "assessment.ready"
+            },
+            "item_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "run_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "revision": {
+              "type": "integer"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "expert"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "ready",
+                "needs_review",
+                "unavailable"
+              ]
+            },
+            "score": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "critical_errors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "item_id",
+            "revision",
+            "kind",
+            "status"
+          ]
+        }
+      ]
+    },
+    "lesson_started": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "lesson.started"
+            },
+            "epoch": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "lesson_id"
+          ]
+        }
+      ]
+    },
+    "lesson_stopped": {
+      "description": "Новые учебные команды запрещены; исходные receipt повторяются. Неподтверждённая команда остаётся в localStorage; ранее заявленный файл можно догрузить из памяти живой вкладки до deadline.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "lesson.stopped"
+            },
+            "epoch": {
+              "type": "integer"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "lesson_id",
+            "epoch"
+          ]
+        }
+      ]
+    },
+    "lesson_finished": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "lesson.finished"
+            },
+            "pending_assessments": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "lesson_id"
+          ]
+        }
+      ]
+    },
+    "monitor_row": {
+      "description": "Монитору: онлайн/оффлайн обучаемого (SSE-соединение открылось/закрылось).",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "monitor.presence"
+            },
+            "run_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "workstation_no": {
+              "type": "integer"
+            },
+            "online": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "run_id",
+            "online"
+          ]
+        }
+      ]
+    },
+    "scenario_ready": {
+      "description": "Преподавателю (на его личный поток): черновик сгенерирован / озвучен.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "scenario.ready"
+            },
+            "scenario_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "version": {
+              "type": "integer"
+            },
+            "stage": {
+              "type": "string",
+              "enum": [
+                "generated",
+                "regenerated",
+                "voiced"
+              ]
+            },
+            "task_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "scenario_id",
+            "stage"
+          ]
+        }
+      ]
+    },
+    "task_done": {
+      "description": "Инициатору задачи: терминальный статус. Technical retry не создаёт новый доменный результат.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "task.done"
+            },
+            "task_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "done",
+                "failed",
+                "dead_letter"
+              ]
+            },
+            "result": {
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "task_id",
+            "kind",
+            "status"
+          ]
+        }
+      ]
+    },
+    "resync": {
+      "description": "Всегда при неизвестном cursor, смене epoch, переполнении буфера или восстановлении LISTEN. Клиент буферизует поток, перечитывает весь snapshot и применяет накопленные invalidations. Не HTTP 204.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "resync"
+            }
+          }
+        }
+      ]
+    },
+    "stream_ready": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "stream.ready"
+            },
+            "cursor": {
+              "type": "string"
+            },
+            "stream_epoch": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "cursor",
+            "stream_epoch"
+          ]
+        }
+      ]
+    }
+  }
+}

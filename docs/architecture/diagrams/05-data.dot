@@ -1,0 +1,41 @@
+digraph G {
+graph [rankdir=TB, newrank=true, bgcolor="white", pad=0.28, nodesep=0.4, ranksep=0.65, splines=polyline, fontname="Arial", fontsize=17, compound=true];
+node [shape=box, style="rounded,filled", fillcolor="#f3f6fa", color="#aebdce", penwidth=1.2, fontname="Arial", fontsize=15, margin="0.2,0.14", fontcolor="#17304d"];
+edge [color="#6b829b", arrowsize=0.8, penwidth=1.4, fontname="Arial", fontsize=12, fontcolor="#405974"];
+user [label="User\nid · role grants"];
+lesson [label="Lesson\nowner · state · epoch"];
+assignment [label="Assignment\noperator · service profile"];
+scenario [label="Published versions\nscenario · rubric · EKП · workflow"];
+pool [label="Source pool\napproved CardTemplateVersion\nsource + provenance + seed"];
+run [label="TrainingRun\nversion · epoch · event_seq\nstate · snapshot_id",fillcolor="#173e69",fontcolor="white",color="#173e69"];
+snapshot [label="RunSnapshot\nimmutable manifest + digest",fillcolor="#e8f4ef",color="#79aa93",fontcolor="#204e3a"];
+item [label="RunItem\nordinal · source · state",fillcolor="#173e69",fontcolor="white",color="#173e69"];
+conversation [label="Conversation + messages\npending_turn · disclosure\nтекст / audio refs"];
+card [label="IncidentCard\nполя · признаки\nсписок служб"];
+reactions [label="ServiceReaction 0..N\nservice · status\nappend-only history"];
+events [label="Actions / events / receipts\ncommand_id · accepted\nrun_id + sequence",fillcolor="#e8f4ef",color="#79aa93",fontcolor="#204e3a"];
+evidence [label="EvidenceManifest\ncutoff · coverage · digest",fillcolor="#e8f4ef",color="#79aa93",fontcolor="#204e3a"];
+assessment [label="Assessment + revisions\ncriteria · nullable score\nautomatic / expert",fillcolor="#173e69",fontcolor="white",color="#173e69"];
+result [label="RunResult + progress\nrevision-aware projection",fillcolor="#e8f4ef",color="#79aa93",fontcolor="#204e3a"];
+tasks [label="ExecutionTask\nscope + kind + dedup_key\nlease token · status",fillcolor="#eee9fb",color="#8a74b3",fontcolor="#443567"];
+{rank=same;user;lesson;scenario;}
+{rank=same;assignment;pool;snapshot;}
+{rank=same;conversation;card;events;}
+{rank=same;assessment;tasks;}
+user -> assignment [label="1 → N",style=solid];
+lesson -> assignment [label="1 → N",style=solid];
+assignment -> run [label="1 → N attempts",style=solid];
+scenario -> snapshot [label="frozen",style=solid];
+snapshot -> run [label="1 → 1",style=solid];
+pool -> item [label="selected version",style=solid];
+run -> item [label="1 → N",style=solid];
+item -> conversation [label="0..1",style=solid];
+item -> card [label="1",style=solid];
+card -> reactions [label="0..N",style=solid];
+run -> events [label="1 → N",style=solid];
+events -> evidence [label="sealed",style=solid];
+card -> evidence [label="snapshot",style=solid];
+evidence -> assessment [label="1 → N revisions",style=solid];
+assessment -> result [label="projection",style=solid];
+tasks -> assessment [label="execute",style=solid];
+}

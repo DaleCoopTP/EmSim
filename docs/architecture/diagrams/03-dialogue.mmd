@@ -1,0 +1,27 @@
+sequenceDiagram
+  actor O as Оператор
+  participant UI as Browser + IndexedDB
+  participant API as Training API
+  participant DB as PostgreSQL
+  participant W as Turn worker
+  participant L as Local CallerSimulator
+  O->>UI: Реплика / заполнение карточки
+  UI->>UI: Сохранить command_id и intent
+  UI->>API: POST command, expected_version, epoch
+  API->>DB: BEGIN; lesson SHARE; run UPDATE; dedup
+  API->>DB: Message/action + audit + event + turn task + receipt
+  API->>DB: COMMIT
+  API-->>UI: ACK(version, sequence)
+  W->>DB: Claim task, lease token; read frozen input
+  W->>L: Generate one turn (вне DB transaction)
+  L-->>W: Text + disclosed fact IDs
+  W->>DB: BEGIN; check lesson/run epoch + turn + lease
+  alt Ещё активен и lease актуален
+    W->>DB: Message + task done + event + outbox; COMMIT
+    DB-->>API: Wakeup hint / poll
+    API-->>UI: SSE persisted event(sequence)
+    UI-->>O: Реплика заявителя
+  else Stop или lease lost
+    W->>DB: Rollback effect; cancel/reconcile
+  end
+  Note over W,L: Во время ожидания человека worker свободен

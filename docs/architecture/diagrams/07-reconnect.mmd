@@ -1,0 +1,25 @@
+sequenceDiagram
+  participant UI as Browser + local buffer
+  participant API as Any API replica
+  participant DB as PostgreSQL
+  UI->>API: Command X
+  API->>DB: Commit X + receipt
+  API--xUI: ACK потерян
+  Note over UI,API: Обрыв 5 / 15 / 30 секунд
+  UI->>UI: Сохранить новые intents локально
+  UI->>API: Re-auth if needed; reconnect(run, lastSeq)
+  API->>DB: Authorize + snapshot + receipts
+  API-->>UI: Snapshot, run state, event frontier
+  UI->>API: Повтор Command X с тем же ID
+  API->>DB: Read receipt after authorization
+  API-->>UI: Original result; replayed=true
+  UI->>API: Следующий неподтверждённый intent Y
+  alt Run активен, версия согласована
+    API->>DB: Apply Y atomically
+    API-->>UI: ACK
+  else Run sealed / конфликт
+    API->>DB: Preserve recovered input, no score mutation
+    API-->>UI: recovered_only / conflict + current version
+  end
+  UI->>API: SSE after current per-run sequence
+  API-->>UI: Persisted events, duplicates deduplicated

@@ -1,0 +1,25 @@
+flowchart TB
+  I[Identity & Access<br/>роль + принадлежность ресурса]
+  C[Curriculum<br/>сценарии · рубрики · материалы]
+  K[Catalog<br/>ЕКП · службы · карточки-источники]
+  T[Teaching<br/>занятие · назначения · start / stop]
+  R[Training — core domain<br/>run · item · диалог · карточка · реакции]
+  A[Assessment — core domain<br/>правила · semantic judge · экспертная ревизия]
+  P[Reporting<br/>история · прогресс · отчёты]
+  X[Execution kernel из core<br/>tasks · leases · fencing · recovery]
+  O[Operations<br/>аудит · backup · конфигурация]
+  C -->|PublishedScenario + Rubric| T
+  K -->|Frozen source pool| T
+  T -->|LessonPlan + Assignment| R
+  C -->|Immutable snapshot| R
+  R -->|RunEvidenceV1| A
+  A -->|AssessmentResultV1| P
+  R -->|Кандидат карточки + approval| K
+  I -.-> T
+  I -.-> R
+  I -.-> A
+  X -.-> R
+  X -.-> A
+  T -.-> O
+  R -.-> O
+  A -.-> O

@@ -1,0 +1,39 @@
+digraph G {
+graph [rankdir=TB, newrank=true, bgcolor="white", pad=0.28, nodesep=0.4, ranksep=0.65, splines=polyline, fontname="Arial", fontsize=17, compound=true];
+node [shape=box, style="rounded,filled", fillcolor="#f3f6fa", color="#aebdce", penwidth=1.2, fontname="Arial", fontsize=15, margin="0.2,0.14", fontcolor="#17304d"];
+edge [color="#6b829b", arrowsize=0.8, penwidth=1.4, fontname="Arial", fontsize=12, fontcolor="#405974"];
+subgraph cluster_lan {label="ЛОКАЛЬНЫЙ УЧЕБНЫЙ КОНТУР · без runtime internet";color="#9bb2ca";style=rounded;
+browser [label="АРМ: Windows 10/11 · Ubuntu 20.04+\nChrome · Firefox · Яндекс.Браузер\nIndexedDB + local audio buffer"];
+phone [label="IP-телефон\nлокальный SIP-TLS / SRTP"];
+proxy [label="Reverse proxy / LB\nHTTPS · local CA"];
+api [label="API replicas × N\nHTTP commands + SSE\nstateless application processes",fillcolor="#173e69",fontcolor="white",color="#173e69"];
+sip [label="Asterisk / SIP\nWebRTC DTLS-SRTP\nтолько учебный dialplan"];
+media [label="Media gateway replicas\nSTT/TTS bridge · chunks\ncall / playback epochs",fillcolor="#173e69",fontcolor="white",color="#173e69"];
+workers [label="Worker replicas\ninteractive · assessment\ncontent · report · maintenance",fillcolor="#eee9fb",color="#8a74b3",fontcolor="#443567"];
+db [label="PostgreSQL primary + sync standby\nTLS · single writable primary\nquorum / fencing для HA",fillcolor="#e8f4ef",color="#79aa93",fontcolor="#204e3a"];
+infer [label="Локальный inference\ncaller · judge · STT · TTS\nCPU profile / GPU acceleration\nglobal quotas + reserve"];
+objects [label="Local object storage\nаудио · материалы · reports\nimmutable versions",fillcolor="#e8f4ef",color="#79aa93",fontcolor="#204e3a"];
+backup [label="Независимый backup node\ndaily DB + WAL + blobs\nrestore manifests",fillcolor="#e8f4ef",color="#79aa93",fontcolor="#204e3a"];
+ops [label="Local IAM · monitoring\nops-agent · audit · alerts\noffline update bundle"];
+{rank=same;browser;phone;}
+{rank=same;proxy;sip;}
+{rank=same;api;media;}
+{rank=same;workers;infer;}
+{rank=same;db;objects;}
+{rank=same;backup;ops;}
+browser -> proxy [label="HTTPS",style=solid];
+proxy -> api [label="TLS",style=solid];
+phone -> sip [label="SIP-TLS / SRTP",style=solid];
+browser -> sip [label="WSS + WebRTC",style=solid];
+sip -> media [label="protected media",style=solid];
+media -> infer [label="local streaming",style=solid];
+api -> db [label="TLS",style=solid];
+workers -> db [label="tasks / data, TLS",style=solid];
+workers -> infer [label="HTTPS, bounded",style=solid];
+media -> objects [label="chunks",style=solid];
+db -> backup [label="daily + WAL",style=solid];
+objects -> backup [label="versioned copy",style=solid];
+ops -> api [label="readiness / config",style=solid];
+api -> workers [label="durable DB tasks",style=solid];
+}
+}

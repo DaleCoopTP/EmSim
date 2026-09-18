@@ -1,0 +1,551 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emsim.local/schemas/evidence/v1",
+  "title": "ItemEvidence v1",
+  "description": "Неизменяемый снимок на closed_at и cutoff_log_seq. Поздние действия/control_report не добавляются. Производные входы STT фиксируются в assessment_inputs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "item_id",
+    "run_id",
+    "lesson_id",
+    "trainee_id",
+    "workstation_no",
+    "scenario_version_id",
+    "scenario_digest",
+    "target_service",
+    "timing",
+    "offered_at",
+    "opened_at",
+    "closed_at",
+    "close_reason",
+    "final_reaction",
+    "actions",
+    "events",
+    "calls",
+    "cutoff_log_seq",
+    "primary_at",
+    "deadlines",
+    "derived",
+    "exercise_type",
+    "interruptions"
+  ],
+  "properties": {
+    "schema": {
+      "const": "emsim/evidence/v1"
+    },
+    "item_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "lesson_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "trainee_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "workstation_no": {
+      "type": "integer"
+    },
+    "scenario_version_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "scenario_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "target_service": {
+      "type": "string"
+    },
+    "spawned_from_item_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "timing": {
+      "type": "object",
+      "required": [
+        "open_s",
+        "primary_s",
+        "complete_s",
+        "open_anchor",
+        "primary_anchor",
+        "complete_anchor"
+      ],
+      "properties": {
+        "open_s": {
+          "type": "integer"
+        },
+        "primary_s": {
+          "type": "integer"
+        },
+        "complete_s": {
+          "type": "integer"
+        },
+        "open_anchor": {
+          "const": "offered_at"
+        },
+        "primary_anchor": {
+          "const": "offered_at"
+        },
+        "complete_anchor": {
+          "const": "primary_at"
+        }
+      }
+    },
+    "offered_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "opened_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "closed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "close_reason": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "refused",
+        "interrupted"
+      ]
+    },
+    "final_reaction": {
+      "type": "string"
+    },
+    "actions": {
+      "type": "array",
+      "description": "Все авторизованные попытки до cutoff_log_seq, строго в порядке log_seq; ссылки на отдельные действия — action_id, не seq.",
+      "items": {
+        "type": "object",
+        "required": [
+          "seq",
+          "type",
+          "accepted",
+          "server_at",
+          "action_id",
+          "log_seq"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object"
+          },
+          "accepted": {
+            "type": "boolean"
+          },
+          "rejection": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "server_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reaction_after": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "action_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "log_seq": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "state",
+          "due_at",
+          "anchor_at",
+          "delivered_at",
+          "skip_reason"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "delivered",
+              "skipped"
+            ]
+          },
+          "due_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "delivered_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "late": {
+            "type": "boolean"
+          },
+          "skip_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "anchor_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "const": "delivered"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "delivered_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "skip_reason": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "const": "skipped"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "delivered_at": {
+                  "type": "null"
+                },
+                "skip_reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "const": "scheduled"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "delivered_at": {
+                  "type": "null"
+                },
+                "skip_reason": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "calls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "call_id",
+          "contact_key",
+          "started_at",
+          "recording_sha256",
+          "recording_size",
+          "recording_mime",
+          "recording_upload_deadline_at"
+        ],
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "contact_key": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "recording_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "Hash, объявленный в call_end; может ещё ожидать загрузки. Не доказательство получения файла сервером."
+          },
+          "reaction_at_call": {
+            "type": "string",
+            "description": "Статус карточки в момент звонка"
+          },
+          "accepted_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "«Кто принял» — из отработки"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "«Суть сообщения» — из отработки"
+          },
+          "recording_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 10485760
+          },
+          "recording_mime": {
+            "enum": [
+              "audio/webm",
+              "audio/ogg",
+              "audio/wav",
+              null
+            ]
+          },
+          "recording_upload_deadline_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "comments": {
+      "type": "array",
+      "description": "Тексты комментариев в порядке ввода (дублируют payload действий — для удобства judge)",
+      "items": {
+        "type": "object",
+        "required": [
+          "seq",
+          "text"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          },
+          "with_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "derived": {
+      "type": "object",
+      "description": "Фактические серверные интервалы без компенсации пауз. Если interruptions непуст, timing-критерии not_applicable. Stop использует stopped_at.",
+      "properties": {
+        "open_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "primary_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "total_seconds": {
+          "type": "number"
+        },
+        "primary_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "chain": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Принятые статусы по порядку"
+        },
+        "rejected_transitions": {
+          "type": "integer"
+        },
+        "comment_count": {
+          "type": "integer"
+        },
+        "call_count": {
+          "type": "integer"
+        },
+        "work_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Фактический интервал от первого primary_at до closed_at. При interruption временной критерий not_applicable, паузы не вычитаются."
+        }
+      },
+      "required": [
+        "open_seconds",
+        "primary_seconds",
+        "work_seconds",
+        "total_seconds"
+      ]
+    },
+    "cutoff_log_seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "primary_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "deadlines": {
+      "type": "object",
+      "required": [
+        "open_at",
+        "primary_at",
+        "complete_at"
+      ],
+      "properties": {
+        "open_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "primary_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "complete_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      }
+    },
+    "interruption": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "stopped_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "unreached_events": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "exercise_type": {
+      "type": "string",
+      "const": "dds_processing",
+      "description": "Тип упражнения. В первой поставке поддерживается ДДС; operator112_intake получит отдельный контракт позднее."
+    },
+    "interruptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "recovery_id",
+          "cause",
+          "detected_at"
+        ],
+        "properties": {
+          "recovery_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "cause": {
+            "const": "server_restart"
+          },
+          "detected_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}

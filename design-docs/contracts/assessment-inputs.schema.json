@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emsim.local/schemas/assessment-inputs/v1",
+  "title": "Sealed assessment inputs v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "item_id",
+    "evidence_digest",
+    "rubric_version",
+    "rubric_effective",
+    "transcripts",
+    "judge",
+    "semantic_input",
+    "exercise_type",
+    "rule_results"
+  ],
+  "properties": {
+    "schema": {
+      "const": "emsim/assessment-inputs/v1"
+    },
+    "item_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "evidence_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "rubric_version": {
+      "type": "string"
+    },
+    "rubric_effective": {
+      "type": "object"
+    },
+    "transcripts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "call_id",
+          "recording_sha256",
+          "state"
+        ],
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "recording_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "missing",
+              "failed"
+            ]
+          },
+          "transcript_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "source_task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "model": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "object"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "const": "ready"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "text",
+                "source_task_id",
+                "model",
+                "parameters",
+                "transcript_digest"
+              ],
+              "properties": {
+                "recording_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "enum": [
+                    "missing",
+                    "failed"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "reason"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "judge": {
+      "type": "object",
+      "required": [
+        "model",
+        "prompt_versions",
+        "parameters"
+      ],
+      "properties": {
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prompt_versions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "parameters": {
+          "type": "object"
+        }
+      }
+    },
+    "semantic_input": {
+      "type": "object",
+      "description": "Точный подготовленный JSON входа judge; повтор использует те же данные, а не живые calls."
+    },
+    "exercise_type": {
+      "type": "string",
+      "const": "dds_processing",
+      "description": "Тип упражнения. В первой поставке поддерживается ДДС; operator112_intake получит отдельный контракт позднее."
+    },
+    "rule_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "met",
+              "partial",
+              "not_met",
+              "not_applicable",
+              "unavailable"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

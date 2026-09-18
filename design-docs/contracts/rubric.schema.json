@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emsim.local/schemas/rubric/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "version",
+    "exercise_type",
+    "pass_threshold",
+    "critical_cap",
+    "criteria"
+  ],
+  "properties": {
+    "schema": {
+      "const": "emsim/rubric/v1"
+    },
+    "id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+/rubric-v[1-9][0-9]*$"
+    },
+    "exercise_type": {
+      "const": "dds_processing"
+    },
+    "pass_threshold": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "critical_cap": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "kind",
+          "weight",
+          "critical",
+          "params"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]+$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "deterministic",
+              "llm"
+            ]
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0
+          },
+          "critical": {
+            "type": "boolean"
+          },
+          "critical_when": {
+            "enum": [
+              "refused_profile_incident"
+            ]
+          },
+          "rule": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "comments",
+                "call_summary",
+                "call_transcript"
+              ]
+            }
+          },
+          "params": {
+            "type": "object"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "deterministic"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "rule"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "prompt"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "sources"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "llm"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "prompt",
+                "sources"
+              ],
+              "not": {
+                "required": [
+                  "rule"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,173 @@
+{
+  "schema": "emsim/rubric/v1",
+  "id": "dds_default",
+  "version": "dds/rubric-v1",
+  "pass_threshold": 70,
+  "critical_cap": 40,
+  "criteria": [
+    {
+      "id": "T_OPEN",
+      "title": "Открыл карточку в норматив",
+      "weight": 10,
+      "params": {
+        "anchor": "offered_at",
+        "partial_until_s": 60,
+        "limit_key": "open_s"
+      },
+      "kind": "deterministic",
+      "critical": false,
+      "rule": "t_open"
+    },
+    {
+      "id": "T_PRIMARY",
+      "title": "Первичный статус в норматив",
+      "weight": 10,
+      "params": {
+        "anchor": "offered_at",
+        "partial_until_s": 90,
+        "limit_key": "primary_s"
+      },
+      "kind": "deterministic",
+      "critical": false,
+      "rule": "t_primary"
+    },
+    {
+      "id": "T_COMPLETE",
+      "title": "Отработал карточку в норматив",
+      "weight": 10,
+      "params": {
+        "anchor": "primary_at",
+        "partial_until_s": 300,
+        "limit_key": "complete_s"
+      },
+      "kind": "deterministic",
+      "critical": false,
+      "rule": "t_complete"
+    },
+    {
+      "id": "D_PRIMARY",
+      "title": "Первичное решение совпадает с эталоном",
+      "weight": 25,
+      "kind": "deterministic",
+      "critical": false,
+      "critical_when": "refused_profile_incident",
+      "rule": "d_primary",
+      "params": {}
+    },
+    {
+      "id": "D_COMMENT_REQUIRED",
+      "title": "Комментарий есть там, где обязателен",
+      "weight": 10,
+      "kind": "deterministic",
+      "critical": false,
+      "rule": "d_comment_required",
+      "params": {}
+    },
+    {
+      "id": "D_COMMENT_CONTENT",
+      "title": "Комментарий полный: причина, куда передано, уточнения",
+      "weight": 10,
+      "params": {},
+      "kind": "llm",
+      "critical": false,
+      "prompt": "comment-v2",
+      "sources": [
+        "comments"
+      ]
+    },
+    {
+      "id": "S_SEQUENCE",
+      "title": "Статусы отражают события с места",
+      "weight": 10,
+      "kind": "deterministic",
+      "critical": false,
+      "rule": "s_sequence",
+      "params": {}
+    },
+    {
+      "id": "C_CALL_MADE",
+      "title": "Доклад сделан, когда требовался",
+      "weight": 5,
+      "kind": "deterministic",
+      "critical": false,
+      "rule": "c_call_made",
+      "params": {
+        "applicable_when": "reference.call.required"
+      }
+    },
+    {
+      "id": "C_CALL_CONTENT",
+      "title": "Устный доклад содержит требуемые сведения",
+      "weight": 5,
+      "params": {
+        "applicable_when": "reference.call.required"
+      },
+      "kind": "llm",
+      "critical": false,
+      "prompt": "call-v1",
+      "sources": [
+        "call_transcript"
+      ]
+    },
+    {
+      "id": "G_GRAMMAR",
+      "title": "Грамматика письменных комментариев и отработки",
+      "weight": 5,
+      "params": {},
+      "kind": "llm",
+      "critical": false,
+      "prompt": "grammar-v1",
+      "sources": [
+        "comments",
+        "call_summary"
+      ]
+    },
+    {
+      "id": "C_CALL_LOG",
+      "title": "Заполнены Кто принял и Суть сообщения",
+      "kind": "deterministic",
+      "rule": "call_log_required",
+      "weight": 5,
+      "critical": false,
+      "params": {
+        "applicable_when": "reference.call.required"
+      }
+    },
+    {
+      "id": "C_CALL_LOG_CONTENT",
+      "title": "Письменная отработка содержит требуемые сведения",
+      "kind": "llm",
+      "prompt": "call-log-v1",
+      "sources": [
+        "call_summary"
+      ],
+      "weight": 5,
+      "critical": false,
+      "params": {
+        "applicable_when": "reference.call.required"
+      }
+    },
+    {
+      "id": "G_ADDRESS",
+      "title": "В письменных сообщениях не искажён адрес",
+      "kind": "deterministic",
+      "rule": "address_components",
+      "weight": 5,
+      "critical": false,
+      "params": {
+        "fields": [
+          "comments",
+          "call_summary"
+        ],
+        "compare": [
+          "street",
+          "house",
+          "building",
+          "apartment"
+        ],
+        "ambiguous": "unavailable"
+      }
+    }
+  ],
+  "exercise_type": "dds_processing"
+}

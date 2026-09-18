@@ -1,0 +1,76 @@
+classDiagram
+  class Lesson {
+    +LessonId id
+    +UserId instructorId
+    +LessonState state
+    +Epoch interactionEpoch
+    +LessonPlanSnapshot plan
+    +Start()
+    +RequestStop(reason)
+  }
+  class Assignment {
+    +UserId operatorId
+    +ServiceProfileId serviceProfile
+    +AttemptPolicy attempts
+  }
+  class TrainingRun {
+    +RunId id
+    +RunState state
+    +Version version
+    +Epoch interactionEpoch
+    +uint64 eventSequence
+    +Apply(command)
+    +OfferNextCard()
+    +Seal(cutoff)
+  }
+  class RunItem {
+    +ItemId id
+    +RunMode mode
+    +ItemState state
+    +SourceVersion source
+    +Submit()
+  }
+  class IncidentCard {
+    +Address address
+    +FeatureSet features
+    +string description
+    +NotificationList services
+  }
+  class ServiceReaction {
+    +ServiceId service
+    +ReactionStatus status
+    +Record(status, comment)
+  }
+  class Conversation {
+    +TurnId pendingTurnId
+    +Epoch conversationEpoch
+    +DisclosureState disclosed
+  }
+  class RunEvidence {
+    +Digest digest
+    +uint64 cutoffSequence
+    +Coverage coverage
+  }
+  class Assessment {
+    +EvidenceRef evidence
+    +RubricSnapshot rubric
+    +AssessmentState state
+    +ScoreBreakdown criteria
+    +PublishRevision()
+  }
+  class ExecutionTask {
+    +ScopeId scope
+    +TaskKind kind
+    +string dedupKey
+    +uint64 leaseToken
+  }
+  Lesson "1" --> "1..*" Assignment : assigns
+  Assignment "1" --> "0..*" TrainingRun : attempts
+  TrainingRun "1" *-- "1..*" RunItem : serial active item
+  RunItem "1" *-- "1" IncidentCard
+  IncidentCard "1" *-- "0..*" ServiceReaction
+  RunItem "1" *-- "0..1" Conversation
+  TrainingRun "1" --> "1..*" RunEvidence : seals
+  RunEvidence "1" --> "0..*" Assessment : immutable input
+  ExecutionTask ..> TrainingRun : technical owner only
+  ExecutionTask ..> Assessment : executes handler

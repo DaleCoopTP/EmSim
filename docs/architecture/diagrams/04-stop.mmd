@@ -1,0 +1,22 @@
+sequenceDiagram
+  actor I as Преподаватель
+  participant API as Teaching API
+  participant DB as PostgreSQL barrier
+  participant W as Turn worker
+  participant M as Maintenance + media
+  participant A as Assessment
+  W->>W: Inference начат вне транзакции
+  I->>API: StopLesson(command_id, reason)
+  API->>DB: BEGIN; lesson FOR UPDATE
+  API->>DB: state=stopping; epoch++; audit; close job
+  API->>DB: COMMIT — точка остановки
+  API-->>I: Stop effective; closing runs
+  W->>DB: CommitTurn: lesson FOR SHARE + epoch check
+  DB-->>W: Denied: lesson stopped / stale epoch
+  M->>DB: Seal each run, cutoff, interrupted item
+  M->>DB: Cancel interaction tasks; retain evidence; terminal run
+  M->>M: Stop bridge/playback by epoch
+  M->>DB: Ensure missing assessment jobs; lesson finished
+  DB-->>A: Immutable evidence
+  A->>DB: Result / needs_review / unavailable
+  Note over DB,A: Judge не удерживает занятие открытым
