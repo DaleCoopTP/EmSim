@@ -1,0 +1,88 @@
+name: emsim
+
+# "demo" profile (RFC-001 §4.3): everything on one machine, one worker
+# process running every pool (short/llm/stt) plus maintenance
+# (reaper + sampler) via --role=all — unlike orchestration-core's compose,
+# which ran a separate container per Kind/role, this port has one worker
+# process by design (ADR-001). llm/stt/caddy are added once the inference
+# clients exist.
+
+x-database-url: &database-url postgres://emsim:${POSTGRES_PASSWORD:-local-only-postgres-password}@postgres:5432/emsim?sslmode=disable
+
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    environment:
+      POSTGRES_DB: emsim
+      POSTGRES_USER: emsim
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-only-postgres-password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U emsim -d emsim"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+  migrate:
+    image: emsim:local
+    build:
+      context: .
+    command: ["migrate", "up"]
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: emsim:local
+    command: ["api"]
+    environment:
+      DATABASE_URL: *database-url
+      API_LISTEN_ADDR: 0.0.0.0:8080
+      ADMIN_LISTEN_ADDR: 0.0.0.0:8081
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+      - "127.0.0.1:${API_ADMIN_PORT:-8081}:8081"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/readyz"]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+      start_period: 2s
+
+  worker:
+    image: emsim:local
+    command: ["worker", "--role=all"]
+    environment:
+      DATABASE_URL: *database-url
+      WORKER_ID: compose-worker
+      WORKER_POLL_INTERVAL: 250ms
+      WORKER_DRAIN_TIMEOUT: 10s
+      WORKER_ADMIN_LISTEN_ADDR: 0.0.0.0:8081
+      SHORT_CONCURRENCY: 4
+      LLM_CONCURRENCY: 1
+      STT_CONCURRENCY: 1
+    ports:
+      - "127.0.0.1:${WORKER_ADMIN_PORT:-8082}:8081"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 25s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/readyz"]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+      start_period: 2s
+
+volumes:
+  postgres-data:

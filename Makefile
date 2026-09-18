@@ -1,4 +1,4 @@
-.PHONY: format-check build test test-integration vet staticcheck verify verify-integration
+.PHONY: format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build
 
 GO_FILES := $(shell git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do test -f "$$file" && printf '%s\n' "$$file"; done)
 
@@ -23,3 +23,9 @@ staticcheck:
 verify: format-check build test vet staticcheck
 
 verify-integration: verify test-integration
+
+compose-config:
+	docker compose config --quiet
+
+compose-build: compose-config
+	docker compose build

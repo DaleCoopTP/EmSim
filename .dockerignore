@@ -7,3 +7,9 @@ bin
 coverage.out
 *.log
 README.md
+docs
+design-docs
+orchestration-core-main
+tmp
+*.pdf
+*.xlsx

@@ -23,6 +23,8 @@ jobs:
         run: go mod download
       - name: Verify
         run: make verify
+      - name: Compose configuration
+        run: make compose-config
 
   integration:
     runs-on: ubuntu-latest
