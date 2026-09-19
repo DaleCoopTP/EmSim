@@ -40,6 +40,8 @@ const fieldLabels: Record<string, string> = {
   service_code: "служба",
   number: "номер РМ",
   workstation_no: "номер РМ",
+  difficulty_min: "сложность от",
+  difficulty_max: "сложность до",
 };
 
 function fieldLabel(field: string): string {

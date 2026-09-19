@@ -402,3 +402,28 @@ Open issues / risks:
 
 Next:
 - C6 — `web/src/routes/instructor/` catalogue list + detail view (IncidentCard, Эталон, События, Звонки, Версии), reusing `CardPreview`/`ScenarioReference`.
+
+## 2026-09-19T23:47:24+03:00 — Claude — slice 2 C6 (instructor scenario catalogue UI)
+
+Status: completed
+Slice: 2 (`slice-2-plan.md`, C6) — instructor-facing catalogue UI on top of C4's read API; no backend changes.
+
+Changed:
+- `web/src/api/content.ts`: extended with `Scenario`/`ScenarioSummary`/`ScenarioVersionSummary`/`CardPreview`/`ScenarioReference`/`ContactPreview` types and `useScenarios(filter)` (GET /scenarios, service/status/difficulty_min/max/page/page_size), `useScenario(id)`, `useScenarioVersions(id)`, `useScenarioPreview(id)`.
+- `web/src/format.ts` (new): `formatDateTime`, `formatOffset` (renders `registered_at_offset_s` as "За N с до выдачи" per the plan).
+- `web/src/labels.ts` (new): Russian labels for `ReactionStatus`, applicant status, scenario/version status — shared so `IncidentCard` and the detail route don't duplicate the maps.
+- `web/src/components/IncidentCard.tsx` (new): renders `CardPreview` (number/time, applicant, address, incident+features, notification list, phones, contacts) — pure presentational, no action controls, explicitly meant for slice 3 to reuse for the trainee's live card around the same component.
+- `web/src/routes/instructor/ScenarioCatalogue.tsx` (new): `/instructor/scenarios` — service/status/difficulty filters (status defaults to `approved`), table, pagination, loading/empty/error states (mirrors `admin/Users.tsx`'s shape).
+- `web/src/routes/instructor/ScenarioDetail.tsx` (new): `/instructor/scenarios/:scenarioId` — scenario meta, `IncidentCard`, and four blocks: Эталон (primary decision, field corrections rendered as "current → expected" using the preview card's own address, the pilot_goal notice, guide refs/notes), События (`has_events` from the scenario summary), Звонки (`reference.call`, resolving `call.to` against the preview's contacts), Версии (`/versions`, digest truncated). No JSON view, no edit/approve controls, per the plan.
+- `web/src/App.tsx`: new `RequireAuth roles={["instructor"]}` route group for the two paths above. `web/src/components/Layout.tsx`: instructor nav link. `web/src/routes/Home.tsx`: instructor home now links to the catalogue. `web/src/api/errors.ts`: field labels for `difficulty_min`/`difficulty_max`. `web/src/index.css`: minimal styles for the filter form, the incident card, and generic `dl/dt/dd` layout (was unstyled everywhere, including the existing trainee home screen).
+
+Validation:
+- `cd web && npm run check` (tsc), `npm run lint` (oxlint), `npm run build` — all clean; `npm run generate:api` confirmed the OpenAPI contract needed no changes (C4 already added every schema this UI uses).
+- `make verify` (staticcheck included) — clean; unaffected since no Go files changed.
+- Manual browser walkthrough against a throwaway PostgreSQL container + the freshly built binary (migrate → bootstrap-admin → import seed → api, an instructor and an admin user created via the admin API): catalogue lists both pilot scenarios with the approved-status default filter; pilot-tree-01's detail shows "Первичное решение: Принять" with no "Исправления" section; pilot-tree-02 shows the ЮАР→ЮАО correction, the "Пилот: цель — принятие карточки..." notice, "Событий нет.", "Не требуются.", and a one-row Версии table; an admin navigating to `/instructor/scenarios` directly is redirected to their own home (RequireAuth's existing role guard); an unknown scenario id resolves to "Не найдено." (correct, just slow — TanStack Query's default 3-retry backoff on the 404, a pre-existing app-wide default this change did not introduce or need to override).
+
+Open issues / risks:
+- None new. This closes slice-planning.md §3's C1–C6. Only C7 (compose/seed wiring, README, final acceptance pass) remains for slice 2.
+
+Next:
+- C7 — Dockerfile/.dockerignore for `design-docs/contracts` + `seed/`, compose one-shot `seed` service, `make seed`, README update, final `make verify`/`make test-integration`/`docker compose up --build` acceptance pass.

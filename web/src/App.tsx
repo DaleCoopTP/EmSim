@@ -5,6 +5,8 @@ import { RequireAuth } from "./components/RequireAuth";
 import { UsersRoute } from "./routes/admin/Users";
 import { WorkstationsRoute } from "./routes/admin/Workstations";
 import { HomeRoute } from "./routes/Home";
+import { ScenarioCatalogueRoute } from "./routes/instructor/ScenarioCatalogue";
+import { ScenarioDetailRoute } from "./routes/instructor/ScenarioDetail";
 import { LoginRoute } from "./routes/Login";
 
 // A fresh QueryClient per app instance, not per render (App itself only
@@ -31,6 +33,12 @@ export default function App() {
             <Route element={<Layout />}>
               <Route path="/admin/users" element={<UsersRoute />} />
               <Route path="/admin/workstations" element={<WorkstationsRoute />} />
+            </Route>
+          </Route>
+          <Route element={<RequireAuth roles={["instructor"]} />}>
+            <Route element={<Layout />}>
+              <Route path="/instructor/scenarios" element={<ScenarioCatalogueRoute />} />
+              <Route path="/instructor/scenarios/:scenarioId" element={<ScenarioDetailRoute />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

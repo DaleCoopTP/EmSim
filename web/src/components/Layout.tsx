@@ -9,8 +9,9 @@ const roleLabels: Record<Me["user"]["role"], string> = {
 };
 
 // Shared chrome for every signed-in screen: who is signed in, role
-// navigation (admin only, in slice 1), and "Выйти". The Me comes from
-// RequireAuth's Outlet context, so no screen fetches it twice.
+// navigation (admin and instructor so far; trainee has nothing to
+// navigate to until slice 3's lessons exist), and "Выйти". The Me comes
+// from RequireAuth's Outlet context, so no screen fetches it twice.
 export function Layout() {
   const me = useOutletContext<Me>();
   const logout = useLogout();
@@ -28,6 +29,11 @@ export function Layout() {
           <nav>
             <NavLink to="/admin/users">Пользователи</NavLink>
             <NavLink to="/admin/workstations">Рабочие места</NavLink>
+          </nav>
+        )}
+        {me.user.role === "instructor" && (
+          <nav>
+            <NavLink to="/instructor/scenarios">Сценарии</NavLink>
           </nav>
         )}
         <span className="layout-user">
