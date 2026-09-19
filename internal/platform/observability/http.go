@@ -8,15 +8,10 @@
 // recorder (Flusher/Hijacker/Pusher/ReaderFrom capability preservation,
 // needed for SSE) is unchanged.
 //
-// RouteNamer now takes the *http.Request instead of its raw path: every
-// caller serves through an http.ServeMux (admin.go, and from
-// internal/platform/httpapi onward the public API too), and the enhanced
-// stdlib mux (Go 1.22+) records the pattern that matched on r.Pattern
-// before it invokes the handler — that mutation is visible here once
-// next.ServeHTTP returns, because r is the same *http.Request all the way
-// down. A matched pattern is already a low-cardinality label (it is the
-// registered route, e.g. "GET /api/v1/items/{id}", never the raw path with
-// its concrete id); an unmatched request leaves r.Pattern empty.
+// RouteNamer runs before the handler. A nested ServeMux may clone the request
+// before setting Request.Pattern, so reading Pattern afterward loses the
+// inner route and collapses metrics to "unknown". PatternRouteNamer asks the
+// owning mux which registered pattern will match instead.
 package observability
 
 import (
@@ -25,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -35,22 +31,24 @@ type RouteNamer func(r *http.Request) string
 func InstrumentHTTP(next http.Handler, metrics *Metrics, logger Logger, routeName RouteNamer) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
+		route := routeName(r)
 		writer, recorder := newResponseRecorder(w)
 		next.ServeHTTP(writer, r)
-		route := routeName(r)
 		method := r.Method
 		if !validMethod(method) {
 			method = "OTHER"
 		}
 		class := strconv.Itoa(recorder.status/100) + "xx"
 		metrics.ObserveHTTP(route, method, class, time.Since(started).Seconds())
-		logger.Operation(r.Context(), 0, "http_request", class, recorder.Header().Get("X-Request-ID"), "")
+		if !isProbeRoute(route) || recorder.status >= http.StatusInternalServerError {
+			logger.Operation(r.Context(), 0, "http_request", class, recorder.Header().Get("X-Request-ID"), "")
+		}
 	})
 }
 
 // AdminRouteNamer names the three routes admin.go serves.
 func AdminRouteNamer(r *http.Request) string {
-	switch r.Pattern {
+	switch r.URL.Path {
 	case "/healthz":
 		return "health"
 	case "/readyz":
@@ -62,15 +60,47 @@ func AdminRouteNamer(r *http.Request) string {
 	}
 }
 
-// PatternRouteNamer is the default RouteNamer for a caller that has no
-// friendlier names to give its routes: it reports the ServeMux pattern
-// that matched (e.g. "POST /api/v1/auth/login"), or "unknown" for a
-// request no registered pattern matched.
-func PatternRouteNamer(r *http.Request) string {
-	if r.Pattern == "" {
+// PatternRouteNamer returns a RouteNamer backed by mux's registered patterns.
+// Labels contain only the pattern, never concrete path IDs.
+func PatternRouteNamer(mux *http.ServeMux) RouteNamer {
+	return func(r *http.Request) string {
+		_, pattern := mux.Handler(r)
+		return routeLabel(pattern)
+	}
+}
+
+func routeLabel(pattern string) string {
+	if _, path, ok := strings.Cut(pattern, " "); ok {
+		pattern = path
+	}
+	pattern = strings.Trim(pattern, "/")
+	if pattern == "" {
 		return "unknown"
 	}
-	return r.Pattern
+	var label strings.Builder
+	lastUnderscore := false
+	for _, character := range strings.ToLower(pattern) {
+		isLetter := character >= 'a' && character <= 'z'
+		isDigit := character >= '0' && character <= '9'
+		if isLetter || isDigit {
+			label.WriteRune(character)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore && label.Len() > 0 {
+			label.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	result := strings.Trim(label.String(), "_")
+	if !validRoute(result) {
+		return "unknown"
+	}
+	return result
+}
+
+func isProbeRoute(route string) bool {
+	return route == "health" || route == "ready" || route == "metrics"
 }
 
 type responseRecorder struct {

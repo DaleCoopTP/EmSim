@@ -53,7 +53,7 @@ func runBootstrapAdmin(ctx context.Context, args []string) error {
 
 	authStore := authpg.NewStore(pool)
 	// ttl is unused: BootstrapAdmin never creates a session.
-	authService := auth.NewService(authStore, 0, nil)
+	authService := auth.NewService(authStore, auth.NewPasswordIdentityProvider(authStore), 0, nil)
 	_, err = authService.BootstrapAdmin(ctx, login, password)
 	return err
 }

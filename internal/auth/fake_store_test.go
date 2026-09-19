@@ -40,6 +40,8 @@ type fakeStore struct {
 	// a storage error unrelated to the input's own shape.
 	failInsertSession bool
 	failInsertUser    bool
+	failDeleteSession bool
+	failAuditRecord   bool
 }
 
 func newFakeStore() *fakeStore {
@@ -342,6 +344,9 @@ func (f *fakeStore) TouchSession(_ context.Context, _ pgx.Tx, id []byte, staleAf
 }
 
 func (f *fakeStore) DeleteSession(_ context.Context, _ pgx.Tx, id []byte) error {
+	if f.failDeleteSession {
+		return ErrStorage
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.sessions, string(id))
@@ -360,6 +365,9 @@ func (f *fakeStore) DeleteUserSessions(_ context.Context, _ pgx.Tx, userID uuid.
 }
 
 func (f *fakeStore) AuditRecord(_ context.Context, _ pgx.Tx, entry audit.Entry) error {
+	if f.failAuditRecord {
+		return ErrStorage
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.auditEntries = append(f.auditEntries, entry)

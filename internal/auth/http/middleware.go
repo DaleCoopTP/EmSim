@@ -26,7 +26,7 @@ type authenticator interface {
 // session answers 401 directly, so a handler behind this middleware never
 // has to check for a missing Principal itself — only PrincipalFromContext,
 // which is safe to treat as always-present there.
-func SessionMiddleware(service authenticator) func(http.Handler) http.Handler {
+func SessionMiddleware(service authenticator, cookieSecure bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := sessionTokenFromRequest(r)
@@ -38,6 +38,13 @@ func SessionMiddleware(service authenticator) func(http.Handler) http.Handler {
 			if err != nil {
 				httpapi.WriteError(w, r, httpapi.CodeUnauthorized, "authentication required", nil)
 				return
+			}
+			// Authenticate may have extended the server-side sliding expiry.
+			// Mirror the authoritative expiry into the browser cookie; otherwise
+			// the browser would discard a still-valid renewed session at the
+			// original login deadline.
+			if !principal.SessionExpiresAt.IsZero() {
+				SetSessionCookie(w, token, principal.SessionExpiresAt, cookieSecure)
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, principal)))
 		})

@@ -37,6 +37,7 @@ type fakeService struct {
 	loggedOut        bool
 	logoutTokens     []string
 	logoutRequestIDs []string
+	logoutErr        error
 
 	meResult auth.Me
 	meErr    error
@@ -78,12 +79,15 @@ func (f *fakeService) Login(_ context.Context, req auth.LoginRequest, _ string) 
 	return f.loginResult, f.loginErr
 }
 
-func (f *fakeService) Logout(_ context.Context, token, requestID string) {
+func (f *fakeService) Logout(_ context.Context, token, requestID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.logoutTokens = append(f.logoutTokens, token)
 	f.logoutRequestIDs = append(f.logoutRequestIDs, requestID)
-	f.loggedOut = true
+	if f.logoutErr == nil {
+		f.loggedOut = true
+	}
+	return f.logoutErr
 }
 
 func (f *fakeService) Authenticate(_ context.Context, token string) (auth.Principal, error) {
@@ -146,7 +150,7 @@ func newTestHandlers(svc *fakeService, cookieSecure bool) (*Handlers, *http.Serv
 
 func newTestAdminMux(svc *fakeService) *http.ServeMux {
 	mux := httpapi.NewMux()
-	NewAdminHandlers(svc).Register(mux)
+	NewAdminHandlers(svc, true).Register(mux)
 	return mux
 }
 
@@ -345,6 +349,21 @@ func TestLogoutCallsServiceWithCookieTokenAndRequestID(t *testing.T) {
 	}
 }
 
+func TestLogoutReturns500AndKeepsCookieWhenRevocationFails(t *testing.T) {
+	svc := &fakeService{logoutErr: auth.ErrStorage}
+	_, mux := newTestHandlers(svc, true)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	r.AddCookie(&http.Cookie{Name: CookieName, Value: "session-not-revoked"})
+	response := httptest.NewRecorder()
+	wrapped(mux).ServeHTTP(response, r)
+
+	assertErrorEnvelope(t, response, http.StatusInternalServerError, "internal_error")
+	if cookies := response.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("cookies = %v, failed logout must not clear the browser cookie", cookies)
+	}
+}
+
 func TestMeRequiresAuthenticationWithout401(t *testing.T) {
 	svc := &fakeService{}
 	_, mux := newTestHandlers(svc, true)
@@ -365,6 +384,31 @@ func TestMeRejectsInvalidCookie(t *testing.T) {
 	wrapped(mux).ServeHTTP(response, r)
 
 	assertErrorEnvelope(t, response, http.StatusUnauthorized, "unauthorized")
+}
+
+func TestMeRefreshesCookieToAuthoritativeSessionExpiry(t *testing.T) {
+	expiresAt := time.Now().Add(10 * time.Hour).UTC().Truncate(time.Second)
+	me := sampleMe()
+	me.SessionExpiresAt = expiresAt
+	svc := &fakeService{
+		validToken: "renewed-token",
+		principal:  auth.Principal{UserID: me.User.ID, Role: me.User.Role, SessionExpiresAt: expiresAt},
+		meResult:   me,
+	}
+	_, mux := newTestHandlers(svc, true)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	r.AddCookie(&http.Cookie{Name: CookieName, Value: "renewed-token"})
+	response := httptest.NewRecorder()
+	wrapper := wrapped(mux)
+	wrapper.ServeHTTP(response, r)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Value != "renewed-token" || !cookies[0].Expires.Equal(expiresAt) {
+		t.Fatalf("cookies = %v, want renewed session cookie expiring at %v", cookies, expiresAt)
+	}
 }
 
 func TestLoginThenReplayMeThenLogoutThen401(t *testing.T) {

@@ -82,7 +82,7 @@ func (m *Metrics) SetReady(role string, ready bool) {
 }
 
 func (m *Metrics) ObserveHTTP(route, method, statusClass string, seconds float64) {
-	if m == nil || !validLabel(route) || !validMethod(method) || !validStatusClass(statusClass) {
+	if m == nil || !validRoute(route) || !validMethod(method) || !validStatusClass(statusClass) {
 		return
 	}
 	m.requests.WithLabelValues(m.process, route, method, statusClass).Inc()
@@ -129,12 +129,14 @@ func (m *Metrics) ObserveHeartbeat(pool, outcome string) {
 
 var kindPattern = regexp.MustCompile(`^[a-z]+(\.[a-z_]+)+$`)
 var labelPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+var routePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,127}$`)
 
 func validProcess(value string) bool { return value == "api" || validRole(value) }
 func validRole(value string) bool {
 	return value == "worker" || value == "maintenance" || value == "all"
 }
 func validLabel(value string) bool { return labelPattern.MatchString(value) }
+func validRoute(value string) bool { return routePattern.MatchString(value) }
 func validKind(value string) bool  { return kindPattern.MatchString(value) }
 func validMethod(value string) bool {
 	switch value {

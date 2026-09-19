@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -73,7 +74,8 @@ func runAPI(ctx context.Context, args []string) error {
 	adminHandler := observability.InstrumentHTTP(
 		admin.AdminWithMetrics(readiness, metricRegistry), metrics, logger, observability.AdminRouteNamer,
 	)
-	publicHandler := observability.InstrumentHTTP(newPublicHandler(pool, processConfig), metrics, logger, observability.PatternRouteNamer)
+	publicRoutes, publicRouteName := newPublicHTTP(pool, processConfig)
+	publicHandler := observability.InstrumentHTTP(publicRoutes, metrics, logger, publicRouteName)
 	publicServer := &http.Server{Addr: processConfig.PublicAddr, Handler: publicHandler, ReadHeaderTimeout: 5 * time.Second}
 	adminServer := &http.Server{Addr: processConfig.AdminAddr, Handler: adminHandler, ReadHeaderTimeout: 5 * time.Second}
 
@@ -94,18 +96,30 @@ var errAPITakesNoArgs = errors.New("api subcommand takes no arguments")
 // module (content/training/assessment/reporting) adds its own three
 // lines here and calls its own Register on apiMux.
 func newPublicHandler(pool *pgxpool.Pool, cfg config.API) http.Handler {
+	handler, _ := newPublicHTTP(pool, cfg)
+	return handler
+}
+
+func newPublicHTTP(pool *pgxpool.Pool, cfg config.API) (http.Handler, observability.RouteNamer) {
 	apiMux := httpapi.NewMux()
 
 	authStore := authpg.NewStore(pool)
-	authService := auth.NewService(authStore, cfg.SessionTTL, nil)
+	authService := auth.NewService(authStore, auth.NewPasswordIdentityProvider(authStore), cfg.SessionTTL, nil)
 	authhttp.NewHandlers(authService, cfg.CookieSecure).Register(apiMux)
-	authhttp.NewAdminHandlers(authService).Register(apiMux)
+	authhttp.NewAdminHandlers(authService, cfg.CookieSecure).Register(apiMux)
 
 	root := http.NewServeMux()
 	root.Handle("/api/", apiMux)
 	root.Handle("/", newSPAHandler(web.DistFS))
 
-	return httpapi.WrapPublic(root)
+	apiRouteName := observability.PatternRouteNamer(apiMux)
+	routeName := func(r *http.Request) string {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			return apiRouteName(r)
+		}
+		return "spa"
+	}
+	return httpapi.WrapPublic(root), routeName
 }
 
 func apiSchemaReady(ctx context.Context, pool *pgxpool.Pool) bool {

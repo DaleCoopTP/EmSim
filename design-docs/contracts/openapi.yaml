@@ -54,15 +54,18 @@ paths:
     post:
       tags: [auth]
       summary: Завершить сессию
-      description: Всегда 204 и сбрасывает cookie, даже без сессии или с уже недействительной — logout идемпотентен и не раскрывает, была ли сессия действительной.
+      description: Возвращает 204 и сбрасывает cookie без сессии, с некорректной или уже недействительной сессией — logout идемпотентен и не раскрывает, была ли сессия действительной. Ошибка хранилища/аудита возвращает 500 и не сбрасывает cookie, чтобы клиент не получил ложное подтверждение отзыва сессии.
       responses:
         '204': { description: Сессия удалена (или отсутствовала) }
+        '500': { $ref: '#/components/responses/Internal' }
   /me:
     get:
       tags: [auth]
       summary: Текущий пользователь, роль, РМ
       responses:
-        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } }
+        '200':
+          description: OK; emsim_session переустановлена с актуальным серверным expires_at для sliding-session
+          content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   # ------------------------------------------------------------ admin
@@ -517,6 +520,7 @@ components:
     Conflict: { description: Конфликт состояния, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     Validation: { description: Ошибка валидации, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     RateLimited: { description: Слишком много попыток, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Internal: { description: Внутренняя ошибка, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   schemas:
     Error:
@@ -1631,4 +1635,3 @@ components:
           items:
             type: string
             format: uuid
-

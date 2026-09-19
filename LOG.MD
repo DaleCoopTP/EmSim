@@ -212,3 +212,33 @@ Open issues / risks:
 
 Next:
 - Slice 2 planning.
+
+## 2026-09-19T19:16:00+03:00 — Codex — first-slice review fixes (selected findings)
+
+Status: completed
+Slice: 1
+
+Changed:
+- Auth logout now propagates transactional storage/audit failures; HTTP returns `500 internal_error` and keeps the cookie when revocation was not confirmed. Invalid and already-missing sessions remain idempotent `204`.
+- Added the `auth.IdentityProvider` port with an injectable local Argon2id provider; production composition now selects it explicitly, preserving the LDAP/AD replacement seam from ADR-008.
+- Protected routes refresh `emsim_session` from the authoritative server-side expiry, completing sliding-session renewal in the browser.
+- Admin JSON parsing rejects top-level `null` and `null` for non-nullable patch fields; `PUT /admin/workstations` can no longer interpret `null` as an intentional empty replacement. OpenAPI reflects logout failure and cookie-renewal behavior.
+- Admin user editing remounts the form by user id, preventing state/password values from leaking into the next selected user.
+- HTTP metrics resolve registered inner-mux patterns before dispatch into bounded route slugs; successful health/readiness/metrics probes are no longer logged at INFO, while probe failures remain logged.
+- `make staticcheck` now fails if Staticcheck exits successfully after matching no packages.
+
+Decisions:
+- Per the task scope, concurrent last-admin/profile updates, role/workstation session invalidation, and best-effort rejected-login audit were intentionally left unchanged.
+
+Validation:
+- `make verify` — passed with writable isolated Go/Staticcheck caches.
+- `go test -race ./internal/auth/... ./internal/platform/observability ./cmd/emsim` — passed.
+- `make test-integration` — passed.
+- `python3 design-docs/contracts/check.py` — passed.
+- `make verify-web`, `npm run lint` — passed.
+
+Open issues / risks:
+- The three intentionally deferred review findings above remain open.
+
+Next:
+- Decide whether to schedule the deferred slice-1 hardening before starting slice 2.

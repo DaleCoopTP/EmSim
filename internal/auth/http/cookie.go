@@ -35,10 +35,10 @@ func SetSessionCookie(w http.ResponseWriter, token string, expiresAt time.Time, 
 	})
 }
 
-// ClearSessionCookie expires the cookie immediately. Logout calls this
-// unconditionally — even for a request with no cookie or an invalid one —
-// since a client that thinks it might be logged in should always end up
-// with no cookie after calling this endpoint.
+// ClearSessionCookie expires the cookie immediately after Logout has either
+// revoked the session or established that it was already absent. Storage
+// failures do not clear it, so the client cannot mistake a failed revocation
+// for success.
 func ClearSessionCookie(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,

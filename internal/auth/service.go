@@ -67,19 +67,23 @@ type Store interface {
 // (CreateUser, UpdateUser, ListUsers, ListWorkstations,
 // ReplaceWorkstations — see admin.go).
 type Service struct {
-	store   Store
-	limiter *LoginLimiter
-	ttl     time.Duration
+	store            Store
+	identityProvider IdentityProvider
+	limiter          *LoginLimiter
+	ttl              time.Duration
 }
 
 // NewService constructs a Service. ttl is the session lifetime (RFC-001
 // §9/ADR-008: 12h by default — internal/platform/config.API.SessionTTL);
 // limiter defaults to DefaultLoginLimiter (5/min) when nil.
-func NewService(store Store, ttl time.Duration, limiter *LoginLimiter) *Service {
+func NewService(store Store, identityProvider IdentityProvider, ttl time.Duration, limiter *LoginLimiter) *Service {
+	if identityProvider == nil {
+		identityProvider = NewPasswordIdentityProvider(store)
+	}
 	if limiter == nil {
 		limiter = DefaultLoginLimiter()
 	}
-	return &Service{store: store, limiter: limiter, ttl: ttl}
+	return &Service{store: store, identityProvider: identityProvider, limiter: limiter, ttl: ttl}
 }
 
 // LoginRequest is POST /auth/login's body (openapi.yaml).
@@ -162,35 +166,12 @@ func (s *Service) Login(ctx context.Context, req LoginRequest, requestID string)
 	return result, nil
 }
 
-// verifyCredentials resolves login+password (and, for a trainee, the
-// workstation) without writing anything. An unknown login still runs
-// VerifyPassword — against dummyHash — so its timing matches a known
-// login with a wrong password (password.go's dummyHash doc explains why).
+// verifyCredentials delegates login+password verification to the configured
+// IdentityProvider, then applies EmSim's local account and workstation rules.
 func (s *Service) verifyCredentials(ctx context.Context, req LoginRequest) (User, *Workstation, error) {
-	var user User
-	var found bool
-	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
-		u, err := s.store.UserByLogin(ctx, tx, req.Login)
-		if errors.Is(err, ErrNotFound) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		user, found = u, true
-		return nil
-	})
+	user, err := s.identityProvider.Authenticate(ctx, req.Login, req.Password)
 	if err != nil {
 		return User{}, nil, err
-	}
-
-	if !found {
-		_, _ = VerifyPassword(dummyHash, req.Password)
-		return User{}, nil, ErrInvalidCredentials
-	}
-	ok, err := VerifyPassword(user.PasswordHash, req.Password)
-	if err != nil || !ok {
-		return User{}, nil, ErrInvalidCredentials
 	}
 	if !user.Active {
 		return User{}, nil, ErrUserInactive
@@ -263,20 +244,23 @@ func (s *Service) auditRejectedLogin(ctx context.Context, actorID *uuid.UUID, ac
 	})
 }
 
-// Logout deletes the session token names (if any) and audits it. It never
-// fails the caller over an already-invalid or already-gone token — POST
-// /auth/logout is idempotent by contract (openapi.yaml: always 204).
-func (s *Service) Logout(ctx context.Context, token, requestID string) {
+// Logout deletes the named session (if any) and audits it. Malformed and
+// already-gone tokens remain idempotent success, while storage/audit failures
+// are returned so the HTTP layer cannot claim the session was revoked.
+func (s *Service) Logout(ctx context.Context, token, requestID string) error {
 	id, err := sessionIDFromToken(token)
 	if err != nil {
-		return
+		return nil
 	}
-	_ = s.store.WithTx(ctx, func(tx pgx.Tx) error {
+	return s.store.WithTx(ctx, func(tx pgx.Tx) error {
 		lookup, lookupErr := s.store.SessionByID(ctx, tx, id)
+		if lookupErr != nil && !errors.Is(lookupErr, ErrNotFound) {
+			return lookupErr
+		}
 		if err := s.store.DeleteSession(ctx, tx, id); err != nil {
 			return err
 		}
-		if lookupErr != nil {
+		if errors.Is(lookupErr, ErrNotFound) {
 			return nil
 		}
 		return s.store.AuditRecord(ctx, tx, audit.Entry{

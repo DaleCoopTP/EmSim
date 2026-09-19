@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,11 +33,12 @@ type adminService interface {
 // workstation management (the rest of /admin/* — import, backup, status,
 // task retry — belongs to later slices/modules).
 type AdminHandlers struct {
-	service adminService
+	service      adminService
+	cookieSecure bool
 }
 
-func NewAdminHandlers(service adminService) *AdminHandlers {
-	return &AdminHandlers{service: service}
+func NewAdminHandlers(service adminService, cookieSecure bool) *AdminHandlers {
+	return &AdminHandlers{service: service, cookieSecure: cookieSecure}
 }
 
 // Register adds this package's admin routes to mux, each behind
@@ -44,7 +46,7 @@ func NewAdminHandlers(service adminService) *AdminHandlers {
 // (only admin may reach the handler).
 func (h *AdminHandlers) Register(mux *http.ServeMux) {
 	protect := func(handler http.HandlerFunc) http.Handler {
-		return SessionMiddleware(h.service)(RequireRole(auth.GroupAdmin)(handler))
+		return SessionMiddleware(h.service, h.cookieSecure)(RequireRole(auth.GroupAdmin)(handler))
 	}
 	mux.Handle("GET /api/v1/admin/users", protect(h.listUsers))
 	mux.Handle("POST /api/v1/admin/users", protect(h.createUser))
@@ -114,6 +116,10 @@ func (h *AdminHandlers) patchUser(w http.ResponseWriter, r *http.Request) {
 		writeDecodeError(w, r, err)
 		return
 	}
+	if raw == nil {
+		httpapi.WriteError(w, r, httpapi.CodeInvalidRequest, "malformed request body", nil)
+		return
+	}
 	patch, err := parseUserPatch(raw)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.CodeInvalidRequest, "malformed request body", nil)
@@ -137,13 +143,15 @@ func (h *AdminHandlers) patchUser(w http.ResponseWriter, r *http.Request) {
 // distinguishable from the key being absent (leave it alone) — both would
 // decode to the same nil *string with a plain struct target. An explicit
 // null clears service_code (Patch's own empty-string convention); a
-// literal JSON null for any other field is not a valid shape for that
-// field and surfaces as a validation error downstream (json.Unmarshal of
-// null into a non-pointer string/bool leaves it at its zero value, which
-// Service's own validation then rejects where the field cannot be empty).
+// literal JSON null for any other field is rejected here before
+// json.Unmarshal can turn it into a destructive zero value (notably
+// active:null becoming false).
 func parseUserPatch(raw map[string]json.RawMessage) (auth.Patch, error) {
 	var patch auth.Patch
 	if v, ok := raw["password"]; ok {
+		if isJSONNull(v) {
+			return auth.Patch{}, errors.New("password must not be null")
+		}
 		var s string
 		if err := json.Unmarshal(v, &s); err != nil {
 			return auth.Patch{}, err
@@ -151,6 +159,9 @@ func parseUserPatch(raw map[string]json.RawMessage) (auth.Patch, error) {
 		patch.Password = &s
 	}
 	if v, ok := raw["full_name"]; ok {
+		if isJSONNull(v) {
+			return auth.Patch{}, errors.New("full_name must not be null")
+		}
 		var s string
 		if err := json.Unmarshal(v, &s); err != nil {
 			return auth.Patch{}, err
@@ -158,6 +169,9 @@ func parseUserPatch(raw map[string]json.RawMessage) (auth.Patch, error) {
 		patch.FullName = &s
 	}
 	if v, ok := raw["role"]; ok {
+		if isJSONNull(v) {
+			return auth.Patch{}, errors.New("role must not be null")
+		}
 		var s string
 		if err := json.Unmarshal(v, &s); err != nil {
 			return auth.Patch{}, err
@@ -166,7 +180,7 @@ func parseUserPatch(raw map[string]json.RawMessage) (auth.Patch, error) {
 		patch.Role = &role
 	}
 	if v, ok := raw["service_code"]; ok {
-		if string(v) == "null" {
+		if isJSONNull(v) {
 			empty := ""
 			patch.ServiceCode = &empty
 		} else {
@@ -178,6 +192,9 @@ func parseUserPatch(raw map[string]json.RawMessage) (auth.Patch, error) {
 		}
 	}
 	if v, ok := raw["active"]; ok {
+		if isJSONNull(v) {
+			return auth.Patch{}, errors.New("active must not be null")
+		}
 		var b bool
 		if err := json.Unmarshal(v, &b); err != nil {
 			return auth.Patch{}, err
@@ -185,6 +202,10 @@ func parseUserPatch(raw map[string]json.RawMessage) (auth.Patch, error) {
 		patch.Active = &b
 	}
 	return patch, nil
+}
+
+func isJSONNull(value json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(value), []byte("null"))
 }
 
 // writeUserMutationError maps CreateUser/UpdateUser/ReplaceWorkstations'
@@ -234,6 +255,10 @@ func (h *AdminHandlers) replaceWorkstations(w http.ResponseWriter, r *http.Reque
 	var body []workstationReplaceBody
 	if err := httpapi.DecodeJSON(r, 0, &body); err != nil {
 		writeDecodeError(w, r, err)
+		return
+	}
+	if body == nil {
+		httpapi.WriteError(w, r, httpapi.CodeInvalidRequest, "malformed request body", nil)
 		return
 	}
 	workstations := make([]auth.Workstation, len(body))

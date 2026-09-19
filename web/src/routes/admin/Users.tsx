@@ -26,7 +26,7 @@ export function UsersRoute() {
       </p>
 
       {editing === "new" && <CreateUserForm onDone={() => setEditing(null)} />}
-      {editing && editing !== "new" && <EditUserForm user={editing} onDone={() => setEditing(null)} />}
+      {editing && editing !== "new" && <EditUserForm key={editing.id} user={editing} onDone={() => setEditing(null)} />}
 
       {users.isPending && <p>Загрузка…</p>}
       {users.isError && <p className="error">{errorMessage(users.error)}</p>}

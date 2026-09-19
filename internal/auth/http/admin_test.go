@@ -216,6 +216,32 @@ func TestPatchUserExplicitNullServiceCodeMeansClear(t *testing.T) {
 	}
 }
 
+func TestPatchUserRejectsNullForNonNullableField(t *testing.T) {
+	svc := &fakeService{validToken: "tok", principal: adminPrincipal()}
+	mux := newTestAdminMux(svc)
+
+	response := httptest.NewRecorder()
+	wrapped(mux).ServeHTTP(response, authedAdminRequest(http.MethodPatch, "/api/v1/admin/users/"+uuid.New().String(), strings.NewReader(`{"active":null}`), "tok"))
+
+	assertErrorEnvelope(t, response, http.StatusBadRequest, "invalid_request")
+	if len(svc.updateUserCalls) != 0 {
+		t.Fatal("Service.UpdateUser was called for active:null")
+	}
+}
+
+func TestPatchUserRejectsNullBody(t *testing.T) {
+	svc := &fakeService{validToken: "tok", principal: adminPrincipal()}
+	mux := newTestAdminMux(svc)
+
+	response := httptest.NewRecorder()
+	wrapped(mux).ServeHTTP(response, authedAdminRequest(http.MethodPatch, "/api/v1/admin/users/"+uuid.New().String(), strings.NewReader(`null`), "tok"))
+
+	assertErrorEnvelope(t, response, http.StatusBadRequest, "invalid_request")
+	if len(svc.updateUserCalls) != 0 {
+		t.Fatal("Service.UpdateUser was called for a null body")
+	}
+}
+
 func TestPatchUserOmittedServiceCodeMeansNoChange(t *testing.T) {
 	svc := &fakeService{validToken: "tok", principal: adminPrincipal(), updateUserResult: sampleUser(auth.RoleAdmin)}
 	mux := newTestAdminMux(svc)
@@ -321,4 +347,17 @@ func TestReplaceWorkstationsMapsValidationErrorTo422(t *testing.T) {
 	wrapped(mux).ServeHTTP(response, authedAdminRequest(http.MethodPut, "/api/v1/admin/workstations", strings.NewReader(`[{"number":1,"label":"a"},{"number":1,"label":"b"}]`), "tok"))
 
 	assertErrorEnvelope(t, response, http.StatusUnprocessableEntity, "validation_failed")
+}
+
+func TestReplaceWorkstationsRejectsNullWithoutMutating(t *testing.T) {
+	svc := &fakeService{validToken: "tok", principal: adminPrincipal()}
+	mux := newTestAdminMux(svc)
+
+	response := httptest.NewRecorder()
+	wrapped(mux).ServeHTTP(response, authedAdminRequest(http.MethodPut, "/api/v1/admin/workstations", strings.NewReader(`null`), "tok"))
+
+	assertErrorEnvelope(t, response, http.StatusBadRequest, "invalid_request")
+	if len(svc.replaceWorkstationsCalls) != 0 {
+		t.Fatal("Service.ReplaceWorkstations was called for a null body")
+	}
 }

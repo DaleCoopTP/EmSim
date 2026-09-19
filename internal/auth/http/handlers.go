@@ -18,7 +18,7 @@ import (
 type service interface {
 	authenticator
 	Login(ctx context.Context, req auth.LoginRequest, requestID string) (auth.LoginResult, error)
-	Logout(ctx context.Context, token, requestID string)
+	Logout(ctx context.Context, token, requestID string) error
 	Me(ctx context.Context, principal auth.Principal) (auth.Me, error)
 }
 
@@ -38,7 +38,7 @@ func NewHandlers(service service, cookieSecure bool) *Handlers {
 func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	mux.HandleFunc("POST /api/v1/auth/logout", h.logout)
-	mux.Handle("GET /api/v1/me", SessionMiddleware(h.service)(http.HandlerFunc(h.me)))
+	mux.Handle("GET /api/v1/me", SessionMiddleware(h.service, h.cookieSecure)(http.HandlerFunc(h.me)))
 }
 
 type loginRequestBody struct {
@@ -68,7 +68,10 @@ func (h *Handlers) login(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) logout(w http.ResponseWriter, r *http.Request) {
 	if token := sessionTokenFromRequest(r); token != "" {
-		h.service.Logout(r.Context(), token, httpapi.RequestIDFromContext(r.Context()))
+		if err := h.service.Logout(r.Context(), token, httpapi.RequestIDFromContext(r.Context())); err != nil {
+			httpapi.WriteError(w, r, httpapi.CodeInternalError, "logout failed", nil)
+			return
+		}
 	}
 	ClearSessionCookie(w, h.cookieSecure)
 	w.WriteHeader(http.StatusNoContent)

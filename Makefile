@@ -18,7 +18,10 @@ vet:
 	go vet ./...
 
 staticcheck:
-	go tool staticcheck ./...
+	@output="$$(go tool staticcheck ./... 2>&1)"; status=$$?; \
+	if test -n "$$output"; then printf '%s\n' "$$output"; fi; \
+	if test $$status -ne 0; then exit $$status; fi; \
+	case "$$output" in *"matched no packages"*) exit 1;; esac
 
 verify: format-check build test vet staticcheck
 

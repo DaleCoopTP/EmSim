@@ -10,6 +10,18 @@ import (
 	"github.com/google/uuid"
 )
 
+type stubIdentityProvider struct {
+	user     User
+	err      error
+	login    string
+	password string
+}
+
+func (p *stubIdentityProvider) Authenticate(_ context.Context, login, password string) (User, error) {
+	p.login, p.password = login, password
+	return p.user, p.err
+}
+
 func testAdmin(login, password string) (User, string) {
 	hash, err := HashPassword(password, testParams)
 	if err != nil {
@@ -31,7 +43,7 @@ func testTrainee(login, password, serviceCode string) (User, string) {
 }
 
 func newTestService(store *fakeStore) *Service {
-	return NewService(store, time.Hour, NewLoginLimiter(5, time.Minute, nil))
+	return NewService(store, NewPasswordIdentityProvider(store), time.Hour, NewLoginLimiter(5, time.Minute, nil))
 }
 
 func TestServiceLoginSucceedsForAdminWithoutWorkstation(t *testing.T) {
@@ -59,6 +71,20 @@ func TestServiceLoginSucceedsForAdminWithoutWorkstation(t *testing.T) {
 	entries := store.auditEntriesByAction("auth.login")
 	if len(entries) != 1 || entries[0].Outcome != "ok" || entries[0].RequestID != "req-1" {
 		t.Fatalf("audit entries = %+v, want one ok entry with request_id=req-1", entries)
+	}
+}
+
+func TestServiceLoginUsesConfiguredIdentityProvider(t *testing.T) {
+	store := newFakeStore()
+	user, _ := testAdmin("federated-admin", "unused-local-password")
+	provider := &stubIdentityProvider{user: user}
+	service := NewService(store, provider, time.Hour, NewLoginLimiter(5, time.Minute, nil))
+
+	if _, err := service.Login(context.Background(), LoginRequest{Login: "external-login", Password: "external-secret"}, "req-idp"); err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	if provider.login != "external-login" || provider.password != "external-secret" {
+		t.Fatalf("IdentityProvider called with %q/%q", provider.login, provider.password)
 	}
 }
 
@@ -174,7 +200,7 @@ func TestServiceLoginRejectsInactiveWorkstation(t *testing.T) {
 
 func TestServiceLoginRateLimitsAfterMaxAttempts(t *testing.T) {
 	store := newFakeStore()
-	service := NewService(store, time.Hour, NewLoginLimiter(2, time.Minute, nil))
+	service := NewService(store, NewPasswordIdentityProvider(store), time.Hour, NewLoginLimiter(2, time.Minute, nil))
 	for i := 0; i < 2; i++ {
 		_, err := service.Login(context.Background(), LoginRequest{Login: "someone", Password: "wrong-password"}, "req-rl")
 		if !errors.Is(err, ErrInvalidCredentials) {
@@ -322,7 +348,9 @@ func TestServiceLogoutDeletesSessionAndAudits(t *testing.T) {
 		t.Fatalf("Login() error = %v", err)
 	}
 
-	service.Logout(context.Background(), result.Token, "req-15")
+	if err := service.Logout(context.Background(), result.Token, "req-15"); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
 
 	if _, err := service.Authenticate(context.Background(), result.Token); !errors.Is(err, ErrSessionInvalid) {
 		t.Fatalf("Authenticate() after Logout error = %v, want ErrSessionInvalid", err)
@@ -339,10 +367,34 @@ func TestServiceLogoutIsIdempotentForUnknownToken(t *testing.T) {
 	// Must not panic and must not record anything for a token that was
 	// never issued — logout is unconditionally idempotent (openapi.yaml:
 	// POST /auth/logout always 204).
-	service.Logout(context.Background(), "garbage-token", "req-16")
-	service.Logout(context.Background(), "", "req-17")
+	if err := service.Logout(context.Background(), "garbage-token", "req-16"); err != nil {
+		t.Fatalf("Logout(garbage) error = %v", err)
+	}
+	if err := service.Logout(context.Background(), "", "req-17"); err != nil {
+		t.Fatalf("Logout(empty) error = %v", err)
+	}
 	if entries := store.auditEntriesByAction("auth.logout"); len(entries) != 0 {
 		t.Fatalf("audit entries = %+v, want none for an unknown/empty token", entries)
+	}
+}
+
+func TestServiceLogoutReturnsStorageFailureAndRollsBackDeletion(t *testing.T) {
+	store := newFakeStore()
+	user, password := testAdmin("dispatcher-logout-failure", "correct-horse")
+	store.addUser(user)
+	service := newTestService(store)
+	result, err := service.Login(context.Background(), LoginRequest{Login: user.Login, Password: password}, "req-logout-login")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	store.failAuditRecord = true
+	if err := service.Logout(context.Background(), result.Token, "req-logout-failure"); !errors.Is(err, ErrStorage) {
+		t.Fatalf("Logout() error = %v, want ErrStorage", err)
+	}
+	store.failAuditRecord = false
+	if _, err := service.Authenticate(context.Background(), result.Token); err != nil {
+		t.Fatalf("session was not restored after failed logout transaction: %v", err)
 	}
 }
 
