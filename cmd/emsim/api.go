@@ -5,8 +5,10 @@
 // public-API middleware chain from internal/platform/httpapi (request id,
 // no-store, Origin check, JSON 404 envelope); content/training/
 // assessment/reporting register their own routes on the same mux in later
-// slices. ready() drops the profile registry check (no profiles were
-// ported, see docs/technical-discovery.md §3.5).
+// slices. It also serves the embedded SPA build (static.go, web/embed.go)
+// for everything outside "/api/" (ADR-009). ready() drops the profile
+// registry check (no profiles were ported, see docs/technical-discovery.md
+// §3.5).
 package main
 
 import (
@@ -28,6 +30,7 @@ import (
 	"emsim/internal/platform/httpapi"
 	"emsim/internal/platform/observability"
 	pgstore "emsim/internal/platform/postgres"
+	"emsim/web"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
@@ -81,23 +84,28 @@ func runAPI(ctx context.Context, args []string) error {
 
 var errAPITakesNoArgs = errors.New("api subcommand takes no arguments")
 
-// newPublicHandler composes every module's routes onto one mux, wrapped in
-// the shared public-API middleware chain (httpapi.WrapPublic: request id,
-// no-store, Origin check). Each module follows the same shape — a pgx
-// store, an application Service built on it, HTTP Handlers built on that
-// — composed here and nowhere else, matching CLAUDE.md's "composition
-// lives in cmd/emsim". A future module (content/training/assessment/
-// reporting) adds its own three lines here and calls its own Register on
-// the same mux.
+// newPublicHandler composes every module's routes onto one API mux,
+// mounts that under "/api/" alongside the embedded SPA build under "/"
+// (static.go), and wraps the result in the shared public-API middleware
+// chain (httpapi.WrapPublic: request id, no-store, Origin check). Each
+// module follows the same shape — a pgx store, an application Service
+// built on it, HTTP Handlers built on that — composed here and nowhere
+// else, matching CLAUDE.md's "composition lives in cmd/emsim". A future
+// module (content/training/assessment/reporting) adds its own three
+// lines here and calls its own Register on apiMux.
 func newPublicHandler(pool *pgxpool.Pool, cfg config.API) http.Handler {
-	mux := httpapi.NewMux()
+	apiMux := httpapi.NewMux()
 
 	authStore := authpg.NewStore(pool)
 	authService := auth.NewService(authStore, cfg.SessionTTL, nil)
-	authhttp.NewHandlers(authService, cfg.CookieSecure).Register(mux)
-	authhttp.NewAdminHandlers(authService).Register(mux)
+	authhttp.NewHandlers(authService, cfg.CookieSecure).Register(apiMux)
+	authhttp.NewAdminHandlers(authService).Register(apiMux)
 
-	return httpapi.WrapPublic(mux)
+	root := http.NewServeMux()
+	root.Handle("/api/", apiMux)
+	root.Handle("/", newSPAHandler(web.DistFS))
+
+	return httpapi.WrapPublic(root)
 }
 
 func apiSchemaReady(ctx context.Context, pool *pgxpool.Pool) bool {

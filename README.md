@@ -28,6 +28,11 @@ docker compose up --build
 запускается с `COOKIE_SECURE=false` — иначе браузер не отправлял бы cookie
 сессии обратно по обычному HTTP (ADR-008).
 
+`docker compose up --build` собирает и веб-клиент (`web/`, стадия
+`node:22-alpine` в `Dockerfile`) и встраивает его в бинарник `emsim`
+(`web/embed.go`, `//go:embed`) — `api` сам раздаёт SPA на всех путях вне
+`/api/`, отдельный веб-сервер не нужен (ADR-009).
+
 Вход администратора и создание рабочего места и обучаемого — curl-пример:
 
 ```bash
@@ -47,10 +52,18 @@ curl -b cookies.txt -s -X POST http://localhost:8080/api/v1/admin/users \
 ## Разработка
 
 ```bash
-make verify              # gofmt, build, go vet, go test, staticcheck
+make verify              # gofmt, build, go vet, go test, staticcheck (не требует Node)
 make test-integration    # очередь/recovery + запуск и crash recovery реального worker (PostgreSQL 16)
 make compose-config      # проверить compose.yaml без сборки образов
+make verify-web          # web/: npm ci, регенерация типов из openapi.yaml, tsc, vite build
 ```
+
+`go build`/`make verify` не требуют Node: `web/dist` несёт закоммиченный
+`.gitkeep`-плейсхолдер, так что `//go:embed all:dist` компилируется и без
+собранного SPA — `api` в этом случае отвечает на любой путь вне `/api/`
+тем же закрытым конвертом ошибок с понятным сообщением про
+`make web-build`. Разработка самого клиента — см. [`web/README.md`](web/README.md)
+(`npm run dev` на `:5173` с прокси `/api` на запущенный отдельно `emsim api`).
 
 `make test-integration` использует Docker (testcontainers). Без Docker —
 поднять локальный PostgreSQL 16 и передать `TEST_DATABASE_URL` (отдельная

@@ -1,0 +1,10 @@
+/* Minimal reset only — the ARM-112 visual pass (ADR-009) happens after
+   slice 7 (slice-planning.md §1), not here. */
+:root {
+  color-scheme: light;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+}

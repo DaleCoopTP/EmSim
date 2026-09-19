@@ -1,5 +1,13 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
+FROM node:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85 AS web-build
+WORKDIR /app
+COPY web/package.json web/package-lock.json web/
+RUN --mount=type=cache,target=/root/.npm cd web && npm ci
+COPY web web/
+COPY design-docs/contracts/openapi.yaml design-docs/contracts/openapi.yaml
+RUN cd web && npm run build
+
 FROM golang:1.26.6-alpine3.24@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS build
 WORKDIR /src
 
@@ -9,6 +17,8 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY migrations ./migrations
+COPY web/embed.go web/embed.go
+COPY --from=web-build /app/web/dist web/dist
 ARG TARGETOS
 ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod \

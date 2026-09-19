@@ -135,3 +135,32 @@ Open issues / risks:
 
 Next:
 - C8: SPA scaffold (Vite+React+TS, `openapi-typescript` types, `web/embed.go`, static+SPA-fallback serving from `api`), then C9: login and role-home/admin screens.
+
+## 2026-09-19T17:57:00+03:00 — Claude Sonnet 5 — web SPA scaffold, embedded and served
+
+Status: completed
+Slice: 1
+
+Changed:
+- `web/`: Vite + React 18 + TypeScript (strict) + react-router-dom + @tanstack/react-query scaffold; `npm run generate:api` runs `openapi-typescript` against `design-docs/contracts/openapi.yaml` into a gitignored `src/api/schema.d.ts`; `src/api/client.ts` (thin fetch wrapper: `credentials: include`, closed `Error` envelope → `ApiError`), `src/api/useMe.ts`, route skeleton (`/login`, `/`) with placeholder screens — real login/admin/trainee screens are C9.
+- `web/embed.go`: `//go:embed all:dist` behind a checked-in `web/dist/.gitkeep`, so `go build` never needs Node.
+- `cmd/emsim/static.go` (+`api.go`): `newSPAHandler` mounted at `/` next to the API mux at `/api/` — serves a real file as itself (hashed `assets/*` get `Cache-Control: public, max-age=31536000, immutable`), falls back to `index.html` for any other path (client-side routing), and returns the same closed JSON 404 envelope as the rest of the API when `web/dist` has no build yet.
+- `Dockerfile`: new `node:22-alpine` stage builds `web/dist` before the Go build stage copies it in; `.dockerignore` now allows `design-docs/contracts/openapi.yaml` through (needed by the web build) while still excluding the rest of `design-docs/`.
+- `Makefile` (`web-install`/`web-build`/`web-check`/`verify-web`), `.github/workflows/verify.yml` (new `web` job, Node 22).
+
+Decisions:
+- `TestPublicHandlerServesJSONNotFoundWithNoStoreAndRequestID` (`cmd/emsim/api_test.go`) was moved from a bare `/anything` path to `/api/v1/anything`: a path outside `/api/` now goes through the SPA handler, whose response depends on whether `web/dist` has actually been built (it embeds whatever is on disk at compile time) — a test must not depend on that. `static_test.go` covers the SPA handler's own build/no-build behavior deterministically against a fake `fs.FS`.
+- Verified against a real `docker compose up --build`: hashed asset caching, SPA fallback on `/login`, and the API's own 404 envelope on an unknown `/api/` path all behave as intended (manual check, not an automated test).
+
+Validation:
+- `make verify` — passed (Go side never touches Node).
+- `make verify-web` — passed (npm ci, type generation, `tsc -b`, `vite build`).
+- `make test-integration` — passed.
+- `python3 design-docs/contracts/check.py` — passed.
+- `docker compose up --build` — passed; manual curl/browser check of `/`, `/assets/*`, `/login`, `/api/v1/bogus`.
+
+Open issues / risks:
+- No actual login form or role screens yet (C9). Until then the SPA only proves the plumbing (routing, session round-trip via `useMe`, static serving).
+
+Next:
+- C9: login screen (`POST /auth/login`), role home screens (trainee: full name/service/workstation/"ожидайте назначения занятия"; admin: user + workstation management), client-side route protection via `useMe()`.

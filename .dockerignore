@@ -9,6 +9,7 @@ coverage.out
 README.md
 docs
 design-docs
+!design-docs/contracts/openapi.yaml
 orchestration-core-main
 tmp
 *.pdf

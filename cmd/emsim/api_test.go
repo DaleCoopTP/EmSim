@@ -44,9 +44,15 @@ func TestServeAPIShutsDownCleanlyOnContextCancel(t *testing.T) {
 	}
 }
 
+// The path is under /api/ (apiMux's own fallback), not a bare "/anything"
+// — a path outside /api/ goes to the SPA handler instead (static.go),
+// whose own response depends on whether web/dist has actually been built
+// (web/embed.go embeds whatever is on disk at compile time), which this
+// test must not depend on. static_test.go covers the SPA handler's own
+// not-built/fallback behavior deterministically via a fake fs.FS.
 func TestPublicHandlerServesJSONNotFoundWithNoStoreAndRequestID(t *testing.T) {
 	response := httptest.NewRecorder()
-	testPublicHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/anything", nil))
+	testPublicHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/anything", nil))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", response.Code)
 	}
@@ -70,5 +76,17 @@ func TestPublicHandlerServesJSONNotFoundWithNoStoreAndRequestID(t *testing.T) {
 	}
 	if body.RequestID != response.Header().Get(httpapi.RequestIDHeader) {
 		t.Fatalf("body request_id = %q, header = %q", body.RequestID, response.Header().Get(httpapi.RequestIDHeader))
+	}
+}
+
+// TestPublicHandlerRoutesAPIPrefixToTheAPIMux proves "/api/" reaches the
+// real auth routes rather than the SPA handler mounted at "/" (static.go)
+// — logout is the one auth endpoint safe to exercise against a nil pool:
+// with no session cookie on the request it never touches the database.
+func TestPublicHandlerRoutesAPIPrefixToTheAPIMux(t *testing.T) {
+	response := httptest.NewRecorder()
+	testPublicHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (proves /api/v1/auth/logout reached the real handler, not the SPA fallback)", response.Code)
 	}
 }
