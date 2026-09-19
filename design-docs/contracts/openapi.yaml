@@ -40,19 +40,23 @@ paths:
               properties:
                 login: { type: string, maxLength: 64 }
                 password: { type: string, maxLength: 256 }
-                workstation_no: { type: integer, minimum: 1, description: Номер РМ для обучаемого; если РМ привязано к IP — игнорируется }
+                workstation_no: { type: integer, minimum: 1, description: 'Номер РМ. Обязателен для обучаемого (иначе 422, details.field=workstation_no); для admin/instructor игнорируется. Привязка РМ к IP-адресу не реализована в этом срезе (slice-planning.md §2).' }
       responses:
         '200':
-          description: Сессия создана; cookie установлена
+          description: Сессия создана; cookie emsim_session установлена (ADR-008)
           content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422':
+          description: workstation_no отсутствует, неизвестен или соответствующее РМ неактивно — details.field=workstation_no, details.reason=required|unknown|inactive
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '429': { $ref: '#/components/responses/RateLimited' }
   /auth/logout:
     post:
       tags: [auth]
       summary: Завершить сессию
+      description: Всегда 204 и сбрасывает cookie, даже без сессии или с уже недействительной — logout идемпотентен и не раскрывает, была ли сессия действительной.
       responses:
-        '204': { description: Сессия удалена }
+        '204': { description: Сессия удалена (или отсутствовала) }
   /me:
     get:
       tags: [auth]
@@ -535,7 +539,7 @@ components:
       required: [user, session_expires_at]
       properties:
         user: { $ref: '#/components/schemas/User' }
-        workstation: { $ref: '#/components/schemas/Workstation' }
+        workstation: { $ref: '#/components/schemas/Workstation', nullable: true, description: Отсутствует у admin/instructor и у обучаемого без активного РМ в сессии }
         session_expires_at: { type: string, format: date-time }
     User:
       type: object

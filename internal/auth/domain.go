@@ -99,12 +99,38 @@ type Session struct {
 }
 
 // Principal is the authenticated identity a verified session resolves to
-// (internal/auth/http/middleware.go, added later in slice 1) — only what
-// authorization and ownership checks need, not the full User row.
+// (internal/auth/http/middleware.go) — what authorization and ownership
+// checks need on every request, not the full User row. SessionExpiresAt
+// is carried along too (Service.Authenticate already has it from the
+// SessionByID lookup that produced this Principal) purely so Service.Me
+// can answer GET /me's session_expires_at without a second session
+// lookup.
 type Principal struct {
-	UserID        uuid.UUID
-	Role          Role
-	WorkstationID *uuid.UUID
+	UserID           uuid.UUID
+	Role             Role
+	WorkstationID    *uuid.UUID
+	SessionExpiresAt time.Time
+}
+
+// Me is the read model behind openapi.yaml's Me schema — returned by both
+// POST /auth/login and GET /me.
+type Me struct {
+	User             User
+	Workstation      *Workstation
+	SessionExpiresAt time.Time
+}
+
+// SessionLookup is what the store's SessionByID returns: the session row
+// joined with its user and (if any) workstation, so Authenticate/Me get
+// everything they need in one round trip. It lives in this package (not
+// internal/auth/postgres) because Service — the consumer — declares its
+// own Store port here and cannot import its adapter without inverting the
+// dependency (CLAUDE.md: domain/application code stays independent of the
+// SQL adapter).
+type SessionLookup struct {
+	Session     Session
+	User        User
+	Workstation *Workstation
 }
 
 // NewUser is the input to creating a user (openapi.yaml UserCreate) — kept
@@ -156,12 +182,30 @@ var (
 	ErrWorkstationInactive = errors.New("workstation is inactive")
 	ErrLoginTaken          = errors.New("login is already taken")
 	ErrLastAdmin           = errors.New("cannot deactivate or demote the last active admin")
+	// ErrRateLimited is LoginLimiter's "no more attempts this window" —
+	// RFC-001 §9's "5 попыток/мин".
+	ErrRateLimited = errors.New("too many login attempts")
+	// ErrSessionInvalid covers a missing cookie, a malformed token, and a
+	// session the store could not find (which includes an expired one —
+	// SessionByID does not distinguish "expired" from "never existed", see
+	// internal/auth/postgres.Store.SessionByID).
+	ErrSessionInvalid = errors.New("session is invalid or expired")
 
 	// ErrValidation is what errors.Is matches against any *ValidationError
 	// — a caller that only needs to know "this was a validation problem"
 	// (to map it to httpapi.CodeValidationFailed, say) doesn't need to
 	// unwrap the field/reason first.
 	ErrValidation = errors.New("validation failed")
+
+	// ErrNotFound and ErrStorage are the two port-level errors every Store
+	// method (internal/auth/postgres.Store) returns instead of a raw
+	// database error: ErrNotFound for a lookup that matched no row,
+	// ErrStorage for anything else that went wrong at the database. They
+	// live here, not in the postgres package, because Service (the
+	// consumer of the Store port) needs to check for them without
+	// importing its own adapter.
+	ErrNotFound = errors.New("not found")
+	ErrStorage  = errors.New("storage failure")
 )
 
 // ValidationError names the one field that failed and why. Reason is a

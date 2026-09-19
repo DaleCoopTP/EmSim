@@ -156,8 +156,8 @@ func TestAuthStoreUserByLoginNotFound(t *testing.T) {
 
 	withTx(t, ctx, pool, func(tx pgx.Tx) error {
 		_, err := store.UserByLogin(ctx, tx, "does-not-exist")
-		if !errors.Is(err, authpg.ErrNotFound) {
-			t.Fatalf("UserByLogin() error = %v, want authpg.ErrNotFound", err)
+		if !errors.Is(err, auth.ErrNotFound) {
+			t.Fatalf("UserByLogin() error = %v, want auth.ErrNotFound", err)
 		}
 		return nil
 	})
@@ -442,8 +442,8 @@ func TestAuthStoreSessionExpiresByPostgresClockNotGoDeadline(t *testing.T) {
 
 	withTx(t, ctx, pool, func(tx pgx.Tx) error {
 		_, err := store.SessionByID(ctx, tx, sessionID)
-		if !errors.Is(err, authpg.ErrNotFound) {
-			t.Fatalf("SessionByID() on an expired session = %v, want authpg.ErrNotFound", err)
+		if !errors.Is(err, auth.ErrNotFound) {
+			t.Fatalf("SessionByID() on an expired session = %v, want auth.ErrNotFound", err)
 		}
 		return nil
 	})
@@ -600,8 +600,8 @@ func TestAuthStoreDeleteSessionAndDeleteUserSessions(t *testing.T) {
 		return store.DeleteSession(ctx, tx, sessionA)
 	})
 	withTx(t, ctx, pool, func(tx pgx.Tx) error {
-		if _, err := store.SessionByID(ctx, tx, sessionA); !errors.Is(err, authpg.ErrNotFound) {
-			t.Fatalf("SessionByID(sessionA) after DeleteSession = %v, want authpg.ErrNotFound", err)
+		if _, err := store.SessionByID(ctx, tx, sessionA); !errors.Is(err, auth.ErrNotFound) {
+			t.Fatalf("SessionByID(sessionA) after DeleteSession = %v, want auth.ErrNotFound", err)
 		}
 		if _, err := store.SessionByID(ctx, tx, sessionB); err != nil {
 			t.Fatalf("SessionByID(sessionB) = %v, want it untouched by deleting sessionA", err)
@@ -613,8 +613,8 @@ func TestAuthStoreDeleteSessionAndDeleteUserSessions(t *testing.T) {
 		return store.DeleteUserSessions(ctx, tx, user.ID)
 	})
 	withTx(t, ctx, pool, func(tx pgx.Tx) error {
-		if _, err := store.SessionByID(ctx, tx, sessionB); !errors.Is(err, authpg.ErrNotFound) {
-			t.Fatalf("SessionByID(sessionB) after DeleteUserSessions = %v, want authpg.ErrNotFound", err)
+		if _, err := store.SessionByID(ctx, tx, sessionB); !errors.Is(err, auth.ErrNotFound) {
+			t.Fatalf("SessionByID(sessionB) after DeleteUserSessions = %v, want auth.ErrNotFound", err)
 		}
 		return nil
 	})
@@ -694,8 +694,8 @@ func TestAuthStoreWithTxRollsBackSessionAndAuditTogether(t *testing.T) {
 	}
 
 	withTx(t, ctx, pool, func(tx pgx.Tx) error {
-		if _, err := store.SessionByID(ctx, tx, sessionID); !errors.Is(err, authpg.ErrNotFound) {
-			t.Fatalf("session present after a rolled-back WithTx: err = %v, want authpg.ErrNotFound", err)
+		if _, err := store.SessionByID(ctx, tx, sessionID); !errors.Is(err, auth.ErrNotFound) {
+			t.Fatalf("session present after a rolled-back WithTx: err = %v, want auth.ErrNotFound", err)
 		}
 		var auditCount int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE request_id = 'req-atomic-rollback'`).Scan(&auditCount); err != nil {

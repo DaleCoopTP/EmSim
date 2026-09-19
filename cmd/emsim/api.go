@@ -1,13 +1,12 @@
 // Ported from orchestration-core@34290d74656bc594f8968ae17871dc997559b497
 // cmd/api/main.go; adapted: no httpapi.API/runapp.Service — core's public
-// server served exactly one route (POST/GET /v1/runs); this skeleton's
-// public server has none of its own yet (auth/content/training/
-// assessment/reporting each add their routes on top of this in later
-// commits). It now serves the shared public-API middleware chain from
-// internal/platform/httpapi (request id, no-store, Origin check, JSON 404
-// envelope) instead of a bare 404 handler, instrumented the same way the
-// real routes will be. ready() drops the profile registry check (no
-// profiles were ported, see docs/technical-discovery.md §3.5).
+// server served exactly one route (POST/GET /v1/runs). This process now
+// composes auth (slice 1: login/logout/me) on top of the shared
+// public-API middleware chain from internal/platform/httpapi (request id,
+// no-store, Origin check, JSON 404 envelope); content/training/
+// assessment/reporting register their own routes on the same mux in later
+// slices. ready() drops the profile registry check (no profiles were
+// ported, see docs/technical-discovery.md §3.5).
 package main
 
 import (
@@ -21,6 +20,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"emsim/internal/auth"
+	authhttp "emsim/internal/auth/http"
+	authpg "emsim/internal/auth/postgres"
 	"emsim/internal/platform/admin"
 	"emsim/internal/platform/config"
 	"emsim/internal/platform/httpapi"
@@ -68,7 +70,7 @@ func runAPI(ctx context.Context, args []string) error {
 	adminHandler := observability.InstrumentHTTP(
 		admin.AdminWithMetrics(readiness, metricRegistry), metrics, logger, observability.AdminRouteNamer,
 	)
-	publicHandler := observability.InstrumentHTTP(newPublicHandler(), metrics, logger, observability.PatternRouteNamer)
+	publicHandler := observability.InstrumentHTTP(newPublicHandler(pool, processConfig), metrics, logger, observability.PatternRouteNamer)
 	publicServer := &http.Server{Addr: processConfig.PublicAddr, Handler: publicHandler, ReadHeaderTimeout: 5 * time.Second}
 	adminServer := &http.Server{Addr: processConfig.AdminAddr, Handler: adminHandler, ReadHeaderTimeout: 5 * time.Second}
 
@@ -79,14 +81,22 @@ func runAPI(ctx context.Context, args []string) error {
 
 var errAPITakesNoArgs = errors.New("api subcommand takes no arguments")
 
-// newPublicHandler is the public server until a module registers its first
-// route on the mux; it exists so InstrumentHTTP has something real to
-// wrap and the listener comes up in every environment, including one with
-// no domain modules yet. A module adding real endpoints (auth first, see
-// slice 1) registers "METHOD /api/v1/..." patterns on this same mux
-// instead of replacing this function.
-func newPublicHandler() http.Handler {
-	return httpapi.WrapPublic(httpapi.NewMux())
+// newPublicHandler composes every module's routes onto one mux, wrapped in
+// the shared public-API middleware chain (httpapi.WrapPublic: request id,
+// no-store, Origin check). Each module follows the same shape — a pgx
+// store, an application Service built on it, HTTP Handlers built on that
+// — composed here and nowhere else, matching CLAUDE.md's "composition
+// lives in cmd/emsim". A future module (content/training/assessment/
+// reporting) adds its own three lines here and calls its own Register on
+// the same mux.
+func newPublicHandler(pool *pgxpool.Pool, cfg config.API) http.Handler {
+	mux := httpapi.NewMux()
+
+	authStore := authpg.NewStore(pool)
+	authService := auth.NewService(authStore, cfg.SessionTTL, nil)
+	authhttp.NewHandlers(authService, cfg.CookieSecure).Register(mux)
+
+	return httpapi.WrapPublic(mux)
 }
 
 func apiSchemaReady(ctx context.Context, pool *pgxpool.Pool) bool {

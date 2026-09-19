@@ -1,9 +1,13 @@
 // Package postgres is the pgx-backed adapter for the auth module's ports
 // (CLAUDE.md: "HTTP, PostgreSQL, files, STT, and LLM are adapters" — the
-// narrow Store interface the application service actually needs is
-// declared in internal/auth/service.go, next commit; this package holds
-// the concrete implementation and every method it needs, which service.go
-// composes into its own interface).
+// narrow Store interface Service actually needs is declared in
+// internal/auth/service.go, its consumer; this package holds the concrete
+// implementation and every method any consumer needs, structurally
+// satisfying that interface without either package naming the other's
+// interface type). Errors this package cannot map to a specific domain
+// sentinel (auth.ErrLoginTaken, say) come back as auth.ErrNotFound or
+// auth.ErrStorage — both declared in internal/auth, not here, precisely so
+// service.go can check for them without importing its own adapter.
 //
 // Every method except WithTx takes an explicit pgx.Tx instead of opening
 // its own transaction (CLAUDE.md: "Use pgx.Tx for atomic domain and queue
@@ -22,19 +26,12 @@ import (
 	"time"
 
 	"emsim/internal/auth"
+	"emsim/internal/platform/audit"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-)
-
-var (
-	// ErrNotFound is returned by a lookup that found no matching row.
-	ErrNotFound = errors.New("not found")
-	// ErrStorage is returned for a database failure unrelated to the
-	// input's own shape or to a row simply not existing.
-	ErrStorage = errors.New("auth storage failure")
 )
 
 type Store struct {
@@ -45,6 +42,12 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
+// *Store structurally satisfies auth.Store (its consumer's own interface,
+// internal/auth/service.go) — asserted here so a divergence between the
+// two fails the build in this package, at the adapter, rather than as a
+// confusing error where service.go is composed (cmd/emsim/api.go).
+var _ auth.Store = (*Store)(nil)
+
 // WithTx runs fn inside a fresh READ COMMITTED transaction (RFC-001 §8),
 // committing only if fn returns nil and rolling back otherwise — including
 // on panic, since the deferred Rollback always runs and a Commit after a
@@ -53,14 +56,14 @@ func NewStore(pool *pgxpool.Pool) *Store {
 func (s *Store) WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
-		return ErrStorage
+		return auth.ErrStorage
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err := fn(tx); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return ErrStorage
+		return auth.ErrStorage
 	}
 	return nil
 }
@@ -73,10 +76,10 @@ func scanUser(row pgx.Row) (auth.User, error) {
 	var u auth.User
 	err := row.Scan(&u.ID, &u.Login, &u.PasswordHash, &u.FullName, &u.Role, &u.ServiceCode, &u.Level, &u.Active, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return auth.User{}, ErrNotFound
+		return auth.User{}, auth.ErrNotFound
 	}
 	if err != nil {
-		return auth.User{}, ErrStorage
+		return auth.User{}, auth.ErrStorage
 	}
 	return u, nil
 }
@@ -101,13 +104,13 @@ func (s *Store) ListUsers(ctx context.Context, tx pgx.Tx, page, pageSize int) ([
 
 	var total int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&total); err != nil {
-		return nil, 0, ErrStorage
+		return nil, 0, auth.ErrStorage
 	}
 
 	rows, err := tx.Query(ctx, `SELECT `+userColumns+` FROM users ORDER BY login LIMIT $1 OFFSET $2`,
 		pageSize, (page-1)*pageSize)
 	if err != nil {
-		return nil, 0, ErrStorage
+		return nil, 0, auth.ErrStorage
 	}
 	defer rows.Close()
 
@@ -120,7 +123,7 @@ func (s *Store) ListUsers(ctx context.Context, tx pgx.Tx, page, pageSize int) ([
 		users = append(users, u)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, ErrStorage
+		return nil, 0, auth.ErrStorage
 	}
 	return users, total, nil
 }
@@ -145,7 +148,7 @@ func (s *Store) InsertUser(ctx context.Context, tx pgx.Tx, u auth.User) (auth.Us
 		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
 			return auth.User{}, auth.ErrLoginTaken
 		}
-		return auth.User{}, ErrStorage
+		return auth.User{}, auth.ErrStorage
 	}
 	return u, nil
 }
@@ -213,7 +216,7 @@ func (s *Store) UpdateUser(ctx context.Context, tx pgx.Tx, id uuid.UUID, update 
 func (s *Store) CountActiveAdmins(ctx context.Context, tx pgx.Tx) (int, error) {
 	var count int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM users WHERE role = 'admin' AND active`).Scan(&count); err != nil {
-		return 0, ErrStorage
+		return 0, auth.ErrStorage
 	}
 	return count, nil
 }
@@ -231,10 +234,10 @@ func scanWorkstation(row pgx.Row) (auth.Workstation, error) {
 	var w auth.Workstation
 	err := row.Scan(&w.ID, &w.Number, &w.Label, &w.IPAddress, &w.Active)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return auth.Workstation{}, ErrNotFound
+		return auth.Workstation{}, auth.ErrNotFound
 	}
 	if err != nil {
-		return auth.Workstation{}, ErrStorage
+		return auth.Workstation{}, auth.ErrStorage
 	}
 	return w, nil
 }
@@ -243,10 +246,18 @@ func (s *Store) WorkstationByNumber(ctx context.Context, tx pgx.Tx, number int) 
 	return scanWorkstation(tx.QueryRow(ctx, `SELECT `+workstationColumns+` FROM workstations WHERE number = $1`, number))
 }
 
+// WorkstationByID looks up the workstation a Principal (built from
+// Service.Authenticate's session join) names by id — used by Service.Me
+// to render the full Workstation for GET /me, since Principal only keeps
+// the id.
+func (s *Store) WorkstationByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (auth.Workstation, error) {
+	return scanWorkstation(tx.QueryRow(ctx, `SELECT `+workstationColumns+` FROM workstations WHERE id = $1`, id))
+}
+
 func (s *Store) ListWorkstations(ctx context.Context, tx pgx.Tx) ([]auth.Workstation, error) {
 	rows, err := tx.Query(ctx, `SELECT `+workstationColumns+` FROM workstations ORDER BY number`)
 	if err != nil {
-		return nil, ErrStorage
+		return nil, auth.ErrStorage
 	}
 	defer rows.Close()
 
@@ -259,7 +270,7 @@ func (s *Store) ListWorkstations(ctx context.Context, tx pgx.Tx) ([]auth.Worksta
 		workstations = append(workstations, w)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, ErrStorage
+		return nil, auth.ErrStorage
 	}
 	return workstations, nil
 }
@@ -305,21 +316,12 @@ func (s *Store) DeactivateWorkstationsNotIn(ctx context.Context, tx pgx.Tx, keep
 		keepNumbers = []int{}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE workstations SET active = false WHERE number <> ALL($1) AND active`, keepNumbers); err != nil {
-		return ErrStorage
+		return auth.ErrStorage
 	}
 	return nil
 }
 
 // ------------------------------------------------------------ sessions
-
-// SessionLookup is what SessionByID returns: the session row joined with
-// its user and (if any) workstation, so Authenticate/Me (service.go) get
-// everything they need in one round trip.
-type SessionLookup struct {
-	Session     auth.Session
-	User        auth.User
-	Workstation *auth.Workstation
-}
 
 // InsertSession creates a session for userID (and, optionally,
 // workstationID), valid for ttl from PostgreSQL's own clock — expires_at
@@ -336,7 +338,7 @@ func (s *Store) InsertSession(ctx context.Context, tx pgx.Tx, session auth.Sessi
 	`, session.ID, session.UserID, session.WorkstationID, ttl.Seconds(),
 	).Scan(&session.CreatedAt, &session.LastSeenAt, &session.ExpiresAt)
 	if err != nil {
-		return auth.Session{}, ErrStorage
+		return auth.Session{}, auth.ErrStorage
 	}
 	return session, nil
 }
@@ -345,9 +347,9 @@ func (s *Store) InsertSession(ctx context.Context, tx pgx.Tx, session auth.Sessi
 // domain.go's Session.ID doc), joined with its user and workstation. Only
 // a session whose expires_at is still after PostgreSQL's own clock
 // matches: an expired session is indistinguishable from a missing one
-// (ErrNotFound either way), so a client can never use a distinct "expired"
+// (auth.ErrNotFound either way), so a client can never use a distinct "expired"
 // response to learn that a session id it guessed once existed.
-func (s *Store) SessionByID(ctx context.Context, tx pgx.Tx, id []byte) (SessionLookup, error) {
+func (s *Store) SessionByID(ctx context.Context, tx pgx.Tx, id []byte) (auth.SessionLookup, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT
 			s.id, s.user_id, s.workstation_id, s.created_at, s.last_seen_at, s.expires_at,
@@ -359,7 +361,7 @@ func (s *Store) SessionByID(ctx context.Context, tx pgx.Tx, id []byte) (SessionL
 		WHERE s.id = $1 AND s.expires_at > clock_timestamp()
 	`, id)
 
-	var lookup SessionLookup
+	var lookup auth.SessionLookup
 	var workstationID, wID *uuid.UUID
 	var wNumber *int
 	var wLabel, wIPAddress *string
@@ -370,10 +372,10 @@ func (s *Store) SessionByID(ctx context.Context, tx pgx.Tx, id []byte) (SessionL
 		&wID, &wNumber, &wLabel, &wIPAddress, &wActive,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return SessionLookup{}, ErrNotFound
+		return auth.SessionLookup{}, auth.ErrNotFound
 	}
 	if err != nil {
-		return SessionLookup{}, ErrStorage
+		return auth.SessionLookup{}, auth.ErrStorage
 	}
 	lookup.Session.WorkstationID = workstationID
 	if wID != nil {
@@ -395,14 +397,14 @@ func (s *Store) TouchSession(ctx context.Context, tx pgx.Tx, id []byte, staleAft
 		WHERE id = $1 AND last_seen_at < clock_timestamp() - make_interval(secs => $2)
 	`, id, staleAfter.Seconds(), ttl.Seconds())
 	if err != nil {
-		return ErrStorage
+		return auth.ErrStorage
 	}
 	return nil
 }
 
 func (s *Store) DeleteSession(ctx context.Context, tx pgx.Tx, id []byte) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, id); err != nil {
-		return ErrStorage
+		return auth.ErrStorage
 	}
 	return nil
 }
@@ -413,9 +415,19 @@ func (s *Store) DeleteSession(ctx context.Context, tx pgx.Tx, id []byte) error {
 // stops working immediately rather than at its natural expiry.
 func (s *Store) DeleteUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID); err != nil {
-		return ErrStorage
+		return auth.ErrStorage
 	}
 	return nil
+}
+
+// ------------------------------------------------------------ audit
+
+// AuditRecord is a thin pass-through to platform/audit.Record — it exists
+// on auth.Store (not called directly by service.go) purely so a test fake
+// can record an audit.Entry without a working pgx.Tx; see auth.Store's
+// doc comment.
+func (s *Store) AuditRecord(ctx context.Context, tx pgx.Tx, entry audit.Entry) error {
+	return audit.Record(ctx, tx, entry)
 }
 
 // pgUniqueViolation is PostgreSQL's SQLSTATE for a unique_violation.

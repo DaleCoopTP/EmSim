@@ -11,14 +11,23 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"emsim/internal/platform/config"
 	"emsim/internal/platform/httpapi"
 )
+
+// testPublicHandler builds newPublicHandler with a nil pool and a
+// zero-value config: every test in this file only exercises routing/
+// middleware behavior (listen failures, shutdown, the 404 fallback),
+// never a handler that would actually query the database.
+func testPublicHandler() http.Handler {
+	return newPublicHandler(nil, config.API{})
+}
 
 func TestServeAPIReturnsErrorWhenAServerCannotListen(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	good := &http.Server{Addr: "127.0.0.1:0", Handler: newPublicHandler()}
-	bad := &http.Server{Addr: "invalid-address", Handler: newPublicHandler()}
+	good := &http.Server{Addr: "127.0.0.1:0", Handler: testPublicHandler()}
+	bad := &http.Server{Addr: "invalid-address", Handler: testPublicHandler()}
 	if err := serveAPI(ctx, good, bad); err == nil {
 		t.Fatal("listen failure on one server was accepted")
 	}
@@ -26,7 +35,7 @@ func TestServeAPIReturnsErrorWhenAServerCannotListen(t *testing.T) {
 
 func TestServeAPIShutsDownCleanlyOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	server := &http.Server{Addr: "127.0.0.1:0", Handler: newPublicHandler()}
+	server := &http.Server{Addr: "127.0.0.1:0", Handler: testPublicHandler()}
 	done := make(chan error, 1)
 	go func() { done <- serveAPI(ctx, server) }()
 	cancel()
@@ -37,7 +46,7 @@ func TestServeAPIShutsDownCleanlyOnContextCancel(t *testing.T) {
 
 func TestPublicHandlerServesJSONNotFoundWithNoStoreAndRequestID(t *testing.T) {
 	response := httptest.NewRecorder()
-	newPublicHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/anything", nil))
+	testPublicHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/anything", nil))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", response.Code)
 	}
