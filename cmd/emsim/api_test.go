@@ -6,16 +6,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"emsim/internal/platform/httpapi"
 )
 
 func TestServeAPIReturnsErrorWhenAServerCannotListen(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	good := &http.Server{Addr: "127.0.0.1:0", Handler: publicNotFoundMux()}
-	bad := &http.Server{Addr: "invalid-address", Handler: publicNotFoundMux()}
+	good := &http.Server{Addr: "127.0.0.1:0", Handler: newPublicHandler()}
+	bad := &http.Server{Addr: "invalid-address", Handler: newPublicHandler()}
 	if err := serveAPI(ctx, good, bad); err == nil {
 		t.Fatal("listen failure on one server was accepted")
 	}
@@ -23,7 +26,7 @@ func TestServeAPIReturnsErrorWhenAServerCannotListen(t *testing.T) {
 
 func TestServeAPIShutsDownCleanlyOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	server := &http.Server{Addr: "127.0.0.1:0", Handler: publicNotFoundMux()}
+	server := &http.Server{Addr: "127.0.0.1:0", Handler: newPublicHandler()}
 	done := make(chan error, 1)
 	go func() { done <- serveAPI(ctx, server) }()
 	cancel()
@@ -32,13 +35,31 @@ func TestServeAPIShutsDownCleanlyOnContextCancel(t *testing.T) {
 	}
 }
 
-func TestPublicNotFoundMuxServes404WithNoStore(t *testing.T) {
+func TestPublicHandlerServesJSONNotFoundWithNoStoreAndRequestID(t *testing.T) {
 	response := httptest.NewRecorder()
-	publicNotFoundMux().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/anything", nil))
+	newPublicHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/anything", nil))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", response.Code)
 	}
 	if response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("Cache-Control = %q, want no-store", response.Header().Get("Cache-Control"))
+	}
+	if response.Header().Get(httpapi.RequestIDHeader) == "" {
+		t.Fatal("X-Request-ID header missing")
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error.Code != "not_found" {
+		t.Fatalf("error.code = %q, want not_found", body.Error.Code)
+	}
+	if body.RequestID != response.Header().Get(httpapi.RequestIDHeader) {
+		t.Fatalf("body request_id = %q, header = %q", body.RequestID, response.Header().Get(httpapi.RequestIDHeader))
 	}
 }

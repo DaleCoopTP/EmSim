@@ -7,6 +7,16 @@
 // admin.go supplies AdminRouteNamer for its own three routes. The response
 // recorder (Flusher/Hijacker/Pusher/ReaderFrom capability preservation,
 // needed for SSE) is unchanged.
+//
+// RouteNamer now takes the *http.Request instead of its raw path: every
+// caller serves through an http.ServeMux (admin.go, and from
+// internal/platform/httpapi onward the public API too), and the enhanced
+// stdlib mux (Go 1.22+) records the pattern that matched on r.Pattern
+// before it invokes the handler — that mutation is visible here once
+// next.ServeHTTP returns, because r is the same *http.Request all the way
+// down. A matched pattern is already a low-cardinality label (it is the
+// registered route, e.g. "GET /api/v1/items/{id}", never the raw path with
+// its concrete id); an unmatched request leaves r.Pattern empty.
 package observability
 
 import (
@@ -18,16 +28,16 @@ import (
 	"time"
 )
 
-// RouteNamer maps a request path to a low-cardinality route label for
-// metrics and logs — never the raw path, which could contain IDs.
-type RouteNamer func(path string) string
+// RouteNamer maps a request to a low-cardinality route label for metrics
+// and logs — never the raw path, which could contain IDs.
+type RouteNamer func(r *http.Request) string
 
 func InstrumentHTTP(next http.Handler, metrics *Metrics, logger Logger, routeName RouteNamer) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		writer, recorder := newResponseRecorder(w)
 		next.ServeHTTP(writer, r)
-		route := routeName(r.URL.Path)
+		route := routeName(r)
 		method := r.Method
 		if !validMethod(method) {
 			method = "OTHER"
@@ -39,8 +49,8 @@ func InstrumentHTTP(next http.Handler, metrics *Metrics, logger Logger, routeNam
 }
 
 // AdminRouteNamer names the three routes admin.go serves.
-func AdminRouteNamer(path string) string {
-	switch path {
+func AdminRouteNamer(r *http.Request) string {
+	switch r.Pattern {
 	case "/healthz":
 		return "health"
 	case "/readyz":
@@ -50,6 +60,17 @@ func AdminRouteNamer(path string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// PatternRouteNamer is the default RouteNamer for a caller that has no
+// friendlier names to give its routes: it reports the ServeMux pattern
+// that matched (e.g. "POST /api/v1/auth/login"), or "unknown" for a
+// request no registered pattern matched.
+func PatternRouteNamer(r *http.Request) string {
+	if r.Pattern == "" {
+		return "unknown"
+	}
+	return r.Pattern
 }
 
 type responseRecorder struct {
