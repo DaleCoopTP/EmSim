@@ -1,12 +1,16 @@
 // Ported from orchestration-core@34290d74656bc594f8968ae17871dc997559b497
 // test/integration/schema_test.go; adapted: the domain tables
 // (runs/run_items/dialogues/evaluations/run_results) were not ported, so
-// this only exercises the standalone platform "tasks" table — CHECK
-// constraints, migrate up/down/up, and readiness. The queue lifecycle tests
-// (claim/heartbeat/terminal/recovery) land in the following commits once
-// internal/platform/tasks exists. Adapted: added a TEST_DATABASE_URL escape
-// hatch alongside testcontainers, since testcontainers needs Docker on every
-// developer machine (docs/technical-discovery.md §6).
+// this only exercises the platform tables migrated so far ("tasks", and
+// from migration 00002 "audit_log") — CHECK constraints, migrate up/down/
+// up, and readiness. down/up now migrates through every applied migration
+// (downToZero), not a single goose step, since goose's own Down only
+// reverts the latest version. The queue lifecycle tests (claim/heartbeat/
+// terminal/recovery) live in task_queue_test.go/task_recovery_test.go
+// once internal/platform/tasks exists; audit_test.go covers audit_log's
+// own writer. Adapted: added a TEST_DATABASE_URL escape hatch alongside
+// testcontainers, since testcontainers needs Docker on every developer
+// machine (docs/technical-discovery.md §6).
 //
 //go:build integration
 
@@ -30,7 +34,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-func TestPlatformTasksSchema(t *testing.T) {
+func TestPlatformSchema(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
@@ -55,17 +59,34 @@ func TestPlatformTasksSchema(t *testing.T) {
 	assertTableSet(t, ctx, pool)
 	assertTaskConstraints(t, ctx, pool)
 
-	if err := pgstore.Down(ctx, databaseURL); err != nil {
-		t.Fatalf("migrate down: %v", err)
-	}
+	downToZero(t, ctx, pool, databaseURL)
 	assertVersionAndReadiness(t, ctx, pool, 0, false)
-	assertTasksTableAbsent(t, ctx, pool)
+	assertApplicationTablesAbsent(t, ctx, pool)
 
 	if err := pgstore.Up(ctx, databaseURL); err != nil {
 		t.Fatalf("migrate up after down: %v", err)
 	}
 	assertVersionAndReadiness(t, ctx, pool, pgstore.ExpectedSchemaVersion, true)
 	assertTableSet(t, ctx, pool)
+}
+
+// downToZero migrates databaseURL down one goose version at a time until
+// none remain applied. goose's own Down (pgstore.Down) reverts only the
+// latest applied version, like "goose down" — it is not "goose down-to 0".
+func downToZero(t *testing.T, ctx context.Context, pool *pgxpool.Pool, databaseURL string) {
+	t.Helper()
+	for {
+		version, err := pgstore.CurrentVersion(ctx, pool)
+		if err != nil {
+			t.Fatalf("current migration version: %v", err)
+		}
+		if version == 0 {
+			return
+		}
+		if err := pgstore.Down(ctx, databaseURL); err != nil {
+			t.Fatalf("migrate down from version %d: %v", version, err)
+		}
+	}
 }
 
 // openTestDatabase returns a connection string for an empty PostgreSQL 16
@@ -118,7 +139,7 @@ func resetSchema(t *testing.T, ctx context.Context, databaseURL string) {
 		t.Fatalf("open PostgreSQL for reset: %v", err)
 	}
 	defer pool.Close()
-	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS tasks; DROP TABLE IF EXISTS goose_db_version;`); err != nil {
+	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS audit_log; DROP TABLE IF EXISTS tasks; DROP TABLE IF EXISTS goose_db_version;`); err != nil {
 		t.Fatalf("reset schema: %v", err)
 	}
 }
@@ -126,7 +147,7 @@ func resetSchema(t *testing.T, ctx context.Context, databaseURL string) {
 // openTestPool opens and pings a pool against an already-migrated test
 // database. Other _test.go files in this package use it after their own
 // openTestDatabase + pgstore.Up, rather than repeating the open/ping
-// boilerplate TestPlatformTasksSchema above needs inline (it asserts
+// boilerplate TestPlatformSchema above needs inline (it asserts
 // readiness before the schema exists, so it cannot use this helper for its
 // first pool).
 func openTestPool(t *testing.T, ctx context.Context, databaseURL string) *pgxpool.Pool {
@@ -195,24 +216,24 @@ func assertTableSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate application tables: %v", err)
 	}
-	want := []string{"tasks"}
+	want := []string{"audit_log", "tasks"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("application tables = %v, want %v", got, want)
 	}
 }
 
-func assertTasksTableAbsent(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func assertApplicationTablesAbsent(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	var count int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		FROM pg_catalog.pg_tables
-		WHERE schemaname = 'public' AND tablename = 'tasks'
+		WHERE schemaname = 'public' AND tablename IN ('audit_log', 'tasks')
 	`).Scan(&count); err != nil {
 		t.Fatalf("count application tables: %v", err)
 	}
 	if count != 0 {
-		t.Fatalf("tasks table after down = %d, want 0", count)
+		t.Fatalf("application tables after down = %d, want 0", count)
 	}
 }
 

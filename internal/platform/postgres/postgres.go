@@ -1,7 +1,10 @@
-// internal/postgres/postgres.go; adapted: Ready() checks for the platform
-// "tasks" table only, not the domain tables (runs/run_items/dialogues/
+// internal/postgres/postgres.go; adapted: Ready() checks for the set of
+// platform tables actually migrated so far — "tasks" and, from migration
+// 00002, "audit_log" — not the domain tables (runs/run_items/dialogues/
 // evaluations/run_results) that were not ported — see
-// docs/technical-discovery.md §3.5.
+// docs/technical-discovery.md §3.5. applicationTables grows as later
+// migrations land; it is not meant to enumerate every table in the final
+// schema.sql.
 package postgres
 
 import (
@@ -22,7 +25,12 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-const ExpectedSchemaVersion int64 = 1
+const ExpectedSchemaVersion int64 = 2
+
+// applicationTables lists the platform tables Ready() requires to exist,
+// alongside the expected goose version — a version match alone would not
+// catch a migration that ran but left the table set incomplete.
+var applicationTables = []string{"audit_log", "tasks"}
 
 var (
 	ErrDatabaseURLRequired = errors.New("database URL is required")
@@ -103,11 +111,11 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 		SELECT count(*)
 		FROM pg_catalog.pg_tables
 		WHERE schemaname = 'public'
-		  AND tablename = 'tasks'
-	`).Scan(&tableCount); err != nil {
+		  AND tablename = ANY($1)
+	`, applicationTables).Scan(&tableCount); err != nil {
 		return false, fmt.Errorf("inspect application tables: %w", ErrSchemaInspection)
 	}
-	return tableCount == 1, nil
+	return tableCount == len(applicationTables), nil
 }
 
 func migrate(ctx context.Context, databaseURL string, up bool) error {
