@@ -330,3 +330,26 @@ Open issues / risks:
 
 Next:
 - C4 — `internal/content/http` (GET /services, /scenarios, /scenarios/{id}, /scenarios/{id}/versions, /scenarios/{id}/preview), `authz.GroupServices`, composition in `cmd/emsim/api.go`.
+
+## 2026-09-19T23:02:58+03:00 — Claude — slice 2 C4 (instructor HTTP API)
+
+Status: completed
+Slice: 2 (`slice-2-plan.md`, C4)
+
+Changed:
+- `internal/content/http/handlers.go` (new): `GET /services` (`authz.GroupServices`, admin+instructor), `GET /scenarios` (filters service/status/difficulty_min/difficulty_max, page/page_size, `difficulty_min>difficulty_max` → 422), `GET /scenarios/{id}`, `GET /scenarios/{id}/versions`, `GET /scenarios/{id}/preview` — all instructor-only (`authz.GroupContent`). Reuses `internal/auth/http`'s `SessionMiddleware`/`RequireRole` directly rather than reimplementing session handling. JSON DTOs are explicit (mirroring `internal/auth/http`'s `toUserJSON` convention) for every closed/allowlisted shape (`CardPreview` and friends); the full-body `Scenario`/`ScenarioBody` response reuses `content.Body` as-is since it is already the wire format (`internal/content`'s json tags) and this route is instructor-only.
+- `internal/auth/authz.go`: new `GroupServices` (admin+instructor) distinct from `GroupContent` (instructor-only) — an admin needs the service list for `/admin/users` but not scenario content; covered in `authz_test.go`.
+- `internal/content/store.go`, `internal/content/postgres/store.go`: `VersionSummary` gained `Difficulty` (`openapi.yaml`'s `ScenarioVersionSummary.difficulty` was missing from the domain type).
+- `cmd/emsim/api.go`: composes `content.Service` + `contenthttp.Handlers` onto the same mux as auth, behind the shared public-API middleware; `mustSchemaValidator()` panics on a malformed embedded schema (build-time invariant, mirrors `auth/password.go`'s `mustHashDummy`).
+
+Validation:
+- `go build ./...`, `go vet ./...`, `gofmt -l .` — clean.
+- `go test ./...` — all green, including new `internal/content/http` handler tests (auth/role boundaries for every route, filter application, 404 mapping, full-body detail includes the instructor-only reference, preview leak check, version list shape).
+- `make verify` (staticcheck included) — passed.
+- `go test -tags=integration -count=1 ./test/integration/...` — all green, including new `TestAPIProcessContentCatalogAccess`: real binary, `migrate up` → `bootstrap-admin` → `import seed` → running `api` process, driven over HTTP — instructor sees the catalogue and a leak-free preview (reference present, `card` has no `pilot_goal`), admin reaches `/services` but gets 403 on `/scenarios`, unauthenticated requests get 401.
+
+Open issues / risks:
+- None new.
+
+Next:
+- C5 — `ServiceCatalog` port in `internal/auth` (422 on an unknown `service_code`), adapter in `content`, web `<select>` for service in the admin Users form.

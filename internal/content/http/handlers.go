@@ -1,0 +1,425 @@
+// Package http is the content module's HTTP adapter (CLAUDE.md:
+// "HTTP... are adapters") — the instructor catalogue routes
+// slice-planning.md §3's C4 adds: GET /services (admin+instructor),
+// GET /scenarios, GET /scenarios/{id}, GET /scenarios/{id}/versions,
+// GET /scenarios/{id}/preview (instructor). It reuses
+// internal/auth/http's SessionMiddleware/RequireRole rather than
+// reimplementing session handling — every module's HTTP layer sits
+// behind the same auth boundary, not a module-specific one.
+package http
+
+import (
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
+
+	"emsim/internal/auth"
+	authhttp "emsim/internal/auth/http"
+	"emsim/internal/content"
+	"emsim/internal/platform/httpapi"
+
+	"github.com/google/uuid"
+)
+
+// contentService is the subset of *content.Service Handlers need —
+// declared here (their consumer), matching internal/auth/http's own
+// convention.
+type contentService interface {
+	ListServices(ctx context.Context) ([]content.ServiceRecord, error)
+	ListScenarios(ctx context.Context, filter content.ScenarioFilter) ([]content.ScenarioSummary, int, error)
+	ScenarioDetail(ctx context.Context, id uuid.UUID) (content.ScenarioDetail, error)
+	ScenarioVersions(ctx context.Context, id uuid.UUID) ([]content.VersionSummary, error)
+	ScenarioPreview(ctx context.Context, id uuid.UUID) (content.ScenarioPreview, error)
+}
+
+// authenticator is the session-verification port SessionMiddleware needs
+// — a *auth.Service satisfies it structurally, so composition
+// (cmd/emsim/api.go) passes the same instance auth's own handlers use.
+type authenticator interface {
+	Authenticate(ctx context.Context, token string) (auth.Principal, error)
+}
+
+// Handlers owns GET /services and the /scenarios* catalogue routes.
+type Handlers struct {
+	content      contentService
+	auth         authenticator
+	cookieSecure bool
+}
+
+func NewHandlers(content contentService, authService authenticator, cookieSecure bool) *Handlers {
+	return &Handlers{content: content, auth: authService, cookieSecure: cookieSecure}
+}
+
+// Register adds this package's routes to mux, each behind
+// SessionMiddleware then the route's own RequireRole group —
+// authz.GroupServices for /services (admin+instructor),
+// authz.GroupContent for /scenarios* (instructor only).
+func (h *Handlers) Register(mux *http.ServeMux) {
+	servicesGroup := func(handler http.HandlerFunc) http.Handler {
+		return authhttp.SessionMiddleware(h.auth, h.cookieSecure)(authhttp.RequireRole(auth.GroupServices)(handler))
+	}
+	contentGroup := func(handler http.HandlerFunc) http.Handler {
+		return authhttp.SessionMiddleware(h.auth, h.cookieSecure)(authhttp.RequireRole(auth.GroupContent)(handler))
+	}
+	mux.Handle("GET /api/v1/services", servicesGroup(h.listServices))
+	mux.Handle("GET /api/v1/scenarios", contentGroup(h.listScenarios))
+	mux.Handle("GET /api/v1/scenarios/{scenarioId}", contentGroup(h.scenarioDetail))
+	mux.Handle("GET /api/v1/scenarios/{scenarioId}/versions", contentGroup(h.scenarioVersions))
+	mux.Handle("GET /api/v1/scenarios/{scenarioId}/preview", contentGroup(h.scenarioPreview))
+}
+
+func (h *Handlers) listServices(w http.ResponseWriter, r *http.Request) {
+	records, err := h.content.ListServices(r.Context())
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to list services", nil)
+		return
+	}
+	items := make([]serviceJSON, len(records))
+	for i, s := range records {
+		items[i] = toServiceJSON(s)
+	}
+	writeJSON(w, r, http.StatusOK, items)
+}
+
+func (h *Handlers) listScenarios(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	difficultyMin, err := queryIntInRange(query, "difficulty_min", 1, 10)
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "invalid difficulty_min", map[string]any{"field": "difficulty_min"})
+		return
+	}
+	difficultyMax, err := queryIntInRange(query, "difficulty_max", 1, 10)
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "invalid difficulty_max", map[string]any{"field": "difficulty_max"})
+		return
+	}
+	if difficultyMin != 0 && difficultyMax != 0 && difficultyMin > difficultyMax {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "difficulty_min must not exceed difficulty_max", map[string]any{"field": "difficulty_min"})
+		return
+	}
+
+	filter := content.ScenarioFilter{
+		TargetService: query.Get("service"),
+		Status:        query.Get("status"),
+		DifficultyMin: difficultyMin,
+		DifficultyMax: difficultyMax,
+		Page:          queryIntOrDefault(query, "page", 1),
+		PageSize:      min(queryIntOrDefault(query, "page_size", 50), 200), // openapi.yaml PageSize: maximum 200
+	}
+
+	items, total, err := h.content.ListScenarios(r.Context(), filter)
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to list scenarios", nil)
+		return
+	}
+	summaries := make([]scenarioSummaryJSON, len(items))
+	for i, s := range items {
+		summaries[i] = toScenarioSummaryJSON(s)
+	}
+	writeJSON(w, r, http.StatusOK, scenarioListJSON{Items: summaries, Total: total})
+}
+
+func (h *Handlers) scenarioDetail(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("scenarioId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "scenario not found", nil)
+		return
+	}
+	detail, err := h.content.ScenarioDetail(r.Context(), id)
+	if err != nil {
+		writeScenarioLookupError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, toScenarioJSON(detail))
+}
+
+func (h *Handlers) scenarioVersions(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("scenarioId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "scenario not found", nil)
+		return
+	}
+	versions, err := h.content.ScenarioVersions(r.Context(), id)
+	if err != nil {
+		writeScenarioLookupError(w, r, err)
+		return
+	}
+	items := make([]versionSummaryJSON, len(versions))
+	for i, v := range versions {
+		items[i] = toVersionSummaryJSON(v)
+	}
+	writeJSON(w, r, http.StatusOK, items)
+}
+
+func (h *Handlers) scenarioPreview(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("scenarioId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "scenario not found", nil)
+		return
+	}
+	preview, err := h.content.ScenarioPreview(r.Context(), id)
+	if err != nil {
+		writeScenarioLookupError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, toPreviewJSON(preview))
+}
+
+func writeScenarioLookupError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, content.ErrNotFound) {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "scenario not found", nil)
+		return
+	}
+	httpapi.WriteError(w, r, httpapi.CodeInternalError, "operation failed", nil)
+}
+
+// queryIntOrDefault mirrors internal/auth/http/admin.go's own helper —
+// kept as its own small copy rather than a shared one, since each
+// module's HTTP layer is otherwise self-contained.
+func queryIntOrDefault(query url.Values, key string, fallback int) int {
+	raw := query.Get(key)
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 {
+		return fallback
+	}
+	return value
+}
+
+// queryIntInRange parses query[key] as an integer in [lo, hi], returning
+// 0 (meaning "no filter", content.ScenarioFilter's convention) for an
+// absent value, and an error for a present but out-of-range or malformed
+// one — unlike pagination, a garbled difficulty filter is a client
+// mistake worth a 422, not something to silently clamp.
+func queryIntInRange(query url.Values, key string, lo, hi int) (int, error) {
+	raw := query.Get(key)
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < lo || value > hi {
+		return 0, errors.New("out of range")
+	}
+	return value, nil
+}
+
+// -------------------------------------------------------------- JSON DTOs
+
+type workflowJSON struct {
+	Transitions     map[string][]string `json:"transitions"`
+	CommentRequired []string            `json:"comment_required"`
+	Terminal        []string            `json:"terminal"`
+}
+
+type serviceJSON struct {
+	Code     string       `json:"code"`
+	Name     string       `json:"name"`
+	Workflow workflowJSON `json:"workflow"`
+}
+
+func toServiceJSON(s content.ServiceRecord) serviceJSON {
+	transitions := make(map[string][]string, len(s.Workflow.Transitions))
+	for from, tos := range s.Workflow.Transitions {
+		reactions := make([]string, len(tos))
+		for i, r := range tos {
+			reactions[i] = string(r)
+		}
+		transitions[string(from)] = reactions
+	}
+	return serviceJSON{
+		Code: s.Code, Name: s.Name,
+		Workflow: workflowJSON{
+			Transitions:     transitions,
+			CommentRequired: reactionsToStrings(s.Workflow.CommentRequired),
+			Terminal:        reactionsToStrings(s.Workflow.Terminal),
+		},
+	}
+}
+
+func reactionsToStrings(reactions []content.Reaction) []string {
+	out := make([]string, len(reactions))
+	for i, r := range reactions {
+		out[i] = string(r)
+	}
+	return out
+}
+
+type scenarioListJSON struct {
+	Items []scenarioSummaryJSON `json:"items"`
+	Total int                   `json:"total"`
+}
+
+type scenarioSummaryJSON struct {
+	ID            string  `json:"id"`
+	Title         string  `json:"title"`
+	TargetService string  `json:"target_service"`
+	Difficulty    int     `json:"difficulty"`
+	Status        string  `json:"status"`
+	Origin        string  `json:"origin"`
+	Version       int     `json:"version"`
+	SourceKey     *string `json:"source_key"`
+	HasEvents     bool    `json:"has_events"`
+	// HasVoice is always false in slice 2 — voice_assets do not exist
+	// until slice 11 (openapi.yaml ScenarioSummary.has_voice).
+	HasVoice  bool   `json:"has_voice"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+func toScenarioSummaryJSON(s content.ScenarioSummary) scenarioSummaryJSON {
+	return scenarioSummaryJSON{
+		ID: s.ID.String(), Title: s.Title, TargetService: s.TargetService, Difficulty: s.Difficulty,
+		Status: s.Status, Origin: s.Origin, Version: s.Version, SourceKey: s.SourceKey,
+		HasEvents: s.HasEvents, HasVoice: false, UpdatedAt: formatTime(s.UpdatedAt),
+	}
+}
+
+// scenarioJSON is openapi.yaml's Scenario (ScenarioSummary + body/
+// version_id/digest); scenarioSummaryJSON is embedded unqualified so its
+// fields flatten into the same JSON object, matching the contract's
+// allOf composition.
+type scenarioJSON struct {
+	scenarioSummaryJSON
+	Body      content.Body `json:"body"`
+	VersionID string       `json:"version_id"`
+	Digest    string       `json:"digest"`
+}
+
+func toScenarioJSON(d content.ScenarioDetail) scenarioJSON {
+	return scenarioJSON{
+		scenarioSummaryJSON: toScenarioSummaryJSON(d.ScenarioSummary),
+		Body:                d.Body,
+		VersionID:           d.VersionID.String(),
+		Digest:              hex.EncodeToString(d.Digest[:]),
+	}
+}
+
+type versionSummaryJSON struct {
+	ID         string  `json:"id"`
+	Version    int     `json:"version"`
+	Status     string  `json:"status"`
+	CreatedBy  string  `json:"created_by"`
+	CreatedAt  string  `json:"created_at"`
+	ApprovedAt *string `json:"approved_at"`
+	Digest     string  `json:"digest"`
+	Difficulty int     `json:"difficulty"`
+}
+
+func toVersionSummaryJSON(v content.VersionSummary) versionSummaryJSON {
+	var approvedAt *string
+	if v.ApprovedAt != nil {
+		s := formatTime(*v.ApprovedAt)
+		approvedAt = &s
+	}
+	return versionSummaryJSON{
+		ID: v.ID.String(), Version: v.Version, Status: v.Status, CreatedBy: v.CreatedBy.String(),
+		CreatedAt: formatTime(v.CreatedAt), ApprovedAt: approvedAt,
+		Digest: hex.EncodeToString(v.Digest[:]), Difficulty: v.Difficulty,
+	}
+}
+
+// previewJSON is openapi.yaml's inline /scenarios/{id}/preview response
+// {card, reference}. reference is content.Reference unmodified — this
+// route is instructor-only, so it carries the full эталон, not an
+// allowlist projection. content.CardPreview itself carries no json tags
+// (like auth.User, it is a domain type, not a wire type — see
+// internal/auth/http's toUserJSON convention), so cardPreviewJSON maps it
+// field by field, matching openapi.yaml's CardPreview schema.
+type previewJSON struct {
+	Card      cardPreviewJSON   `json:"card"`
+	Reference content.Reference `json:"reference"`
+}
+
+type applicantPreviewJSON struct {
+	Name   string `json:"name,omitempty"`
+	Phone  string `json:"phone,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
+type incidentPreviewJSON struct {
+	TypeCode    string         `json:"type_code"`
+	TypeName    string         `json:"type_name"`
+	Features    map[string]any `json:"features"`
+	Description string         `json:"description"`
+	Victims     int            `json:"victims"`
+	Danger      string         `json:"danger,omitempty"`
+}
+
+type notificationPreviewJSON struct {
+	Service string `json:"service"`
+	Status  string `json:"status"`
+	Mine    bool   `json:"mine"`
+}
+
+type phonesJSON struct {
+	AON      string `json:"aon,omitempty"`
+	Provided string `json:"provided,omitempty"`
+	OnSite   string `json:"on_site,omitempty"`
+}
+
+type contactPreviewJSON struct {
+	Key    string `json:"key"`
+	Label  string `json:"label"`
+	Number string `json:"number"`
+	Voice  string `json:"voice,omitempty"`
+}
+
+type cardPreviewJSON struct {
+	Number              string                    `json:"number"`
+	RegisteredAtOffsetS int                       `json:"registered_at_offset_s"`
+	Applicant           applicantPreviewJSON      `json:"applicant"`
+	Address             content.Address           `json:"address"` // already json-tagged (body.go) matching openapi.yaml's Address schema
+	Incident            incidentPreviewJSON       `json:"incident"`
+	NotificationList    []notificationPreviewJSON `json:"notification_list"`
+	Phones              phonesJSON                `json:"phones"`
+	Channel             string                    `json:"channel,omitempty"`
+	Contacts            []contactPreviewJSON      `json:"contacts"`
+}
+
+func toCardPreviewJSON(c content.CardPreview, contacts []content.ContactPreview) cardPreviewJSON {
+	notifications := make([]notificationPreviewJSON, len(c.NotificationList))
+	for i, n := range c.NotificationList {
+		notifications[i] = notificationPreviewJSON{Service: n.Service, Status: string(n.Status), Mine: n.Mine}
+	}
+	contactItems := make([]contactPreviewJSON, len(contacts))
+	for i, ct := range contacts {
+		contactItems[i] = contactPreviewJSON{Key: ct.Key, Label: ct.Label, Number: ct.Number, Voice: ct.Voice}
+	}
+	return cardPreviewJSON{
+		Number: c.Number, RegisteredAtOffsetS: c.RegisteredAtOffsetS,
+		Applicant: applicantPreviewJSON{Name: c.Applicant.Name, Phone: c.Applicant.Phone, Status: c.Applicant.Status},
+		Address:   c.Address,
+		Incident: incidentPreviewJSON{
+			TypeCode: c.Incident.TypeCode, TypeName: c.Incident.TypeName, Features: c.Incident.Features,
+			Description: c.Incident.Description, Victims: c.Incident.Victims, Danger: c.Incident.Danger,
+		},
+		NotificationList: notifications,
+		Phones:           phonesJSON{AON: c.Phones.AON, Provided: c.Phones.Provided, OnSite: c.Phones.OnSite},
+		Channel:          c.Channel,
+		Contacts:         contactItems,
+	}
+}
+
+func toPreviewJSON(p content.ScenarioPreview) previewJSON {
+	return previewJSON{
+		Card:      toCardPreviewJSON(p.Card, p.Contacts),
+		Reference: p.Reference,
+	}
+}
+
+func formatTime(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
+}
+
+// writeJSON mirrors internal/auth/http's own helper of the same name.
+func writeJSON(w http.ResponseWriter, r *http.Request, status int, body any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}

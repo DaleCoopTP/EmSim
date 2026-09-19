@@ -128,6 +128,7 @@ type VersionSummary struct {
 	Version    int
 	Status     string
 	Digest     [32]byte
+	Difficulty int
 	CreatedBy  uuid.UUID
 	CreatedAt  time.Time
 	ApprovedBy *uuid.UUID

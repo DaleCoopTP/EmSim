@@ -47,6 +47,13 @@ func TestAllowedMatchesRFC001Table(t *testing.T) {
 		{RoleAdmin, GroupTasks, true},
 		{RoleInstructor, GroupTasks, true},
 		{RoleTrainee, GroupTasks, false},
+
+		// services: admin and instructor — the one content-module route
+		// admin may reach, since it needs the catalogue to pick a
+		// trainee's service_code (never scenario content).
+		{RoleAdmin, GroupServices, true},
+		{RoleInstructor, GroupServices, true},
+		{RoleTrainee, GroupServices, false},
 	}
 	for _, test := range tests {
 		if got := Allowed(test.role, test.group); got != test.want {

@@ -312,7 +312,7 @@ func (s *Store) ApprovedVersion(ctx context.Context, tx pgx.Tx, scenarioID uuid.
 
 func (s *Store) ListVersions(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID) ([]content.VersionSummary, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT id, version, status, digest, created_by, created_at, approved_by, approved_at
+		SELECT id, version, status, digest, difficulty, created_by, created_at, approved_by, approved_at
 		FROM scenario_versions WHERE scenario_id = $1 ORDER BY version DESC
 	`, scenarioID)
 	if err != nil {
@@ -323,7 +323,7 @@ func (s *Store) ListVersions(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUI
 	for rows.Next() {
 		var v content.VersionSummary
 		var digest []byte
-		if err := rows.Scan(&v.ID, &v.Version, &v.Status, &digest, &v.CreatedBy, &v.CreatedAt, &v.ApprovedBy, &v.ApprovedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.Version, &v.Status, &digest, &v.Difficulty, &v.CreatedBy, &v.CreatedAt, &v.ApprovedBy, &v.ApprovedAt); err != nil {
 			return nil, content.ErrStorage
 		}
 		if len(digest) != len(v.Digest) {

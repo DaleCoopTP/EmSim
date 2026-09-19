@@ -13,11 +13,16 @@ const (
 	// GroupAdmin is /admin/* — users, workstations, import, backup,
 	// status, task retry.
 	GroupAdmin Group = "admin"
-	// GroupContent is /services, /scenarios/* — instructor-only per
-	// RFC-001 §5; content.go's own read path for a trainee's assigned
-	// scenario goes through GroupTrainee's item endpoints instead, not
-	// through this group.
+	// GroupContent is /scenarios/* — instructor-only per RFC-001 §5;
+	// content.go's own read path for a trainee's assigned scenario goes
+	// through GroupTrainee's item endpoints instead, not through this
+	// group.
 	GroupContent Group = "content"
+	// GroupServices is GET /services — admin and instructor (openapi.yaml:
+	// an admin needs the service catalogue to pick a trainee's
+	// service_code in /admin/users, but gets no access to scenario
+	// content/эталоны through it).
+	GroupServices Group = "services"
 	// GroupLessons is /lessons/* (create, assignments, start, stop,
 	// monitor, stream) — instructor.
 	GroupLessons Group = "lessons"
@@ -52,6 +57,7 @@ var groupRoles = map[Group][]Role{
 	GroupAuth:        {RoleAdmin, RoleInstructor, RoleTrainee},
 	GroupAdmin:       {RoleAdmin},
 	GroupContent:     {RoleInstructor},
+	GroupServices:    {RoleAdmin, RoleInstructor},
 	GroupLessons:     {RoleInstructor},
 	GroupTrainee:     {RoleTrainee},
 	GroupAssessment:  {RoleInstructor},

@@ -49,9 +49,9 @@ func newAdmin(login string) auth.User {
 
 // insertService satisfies users_service_code_fkey (migrations/00004) for
 // tests that insert a trainee with a given service_code. It writes
-// directly with SQL rather than through internal/content (that module's
-// import/store lands in slice 2's later commits) — a bare content.services
-// row is all auth's own tests need from the FK's far side.
+// directly with SQL rather than through internal/content (content_import_
+// test.go exercises that module's own store/import) — a bare
+// content.services row is all auth's own tests need from the FK's far side.
 func insertService(t *testing.T, ctx context.Context, pool *pgxpool.Pool, code string) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `INSERT INTO services (code, name, workflow) VALUES ($1, $1, '{}'::jsonb)`, code); err != nil {

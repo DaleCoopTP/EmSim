@@ -1,11 +1,12 @@
 // Ported from orchestration-core@34290d74656bc594f8968ae17871dc997559b497
 // cmd/api/main.go; adapted: no httpapi.API/runapp.Service — core's public
 // server served exactly one route (POST/GET /v1/runs). This process now
-// composes auth (slice 1: login/logout/me) on top of the shared
+// composes auth (slice 1: login/logout/me) and content (slice 2: the
+// instructor catalogue — GET /services, /scenarios*) on top of the shared
 // public-API middleware chain from internal/platform/httpapi (request id,
-// no-store, Origin check, JSON 404 envelope); content/training/
-// assessment/reporting register their own routes on the same mux in later
-// slices. It also serves the embedded SPA build (static.go, web/embed.go)
+// no-store, Origin check, JSON 404 envelope); training/assessment/
+// reporting register their own routes on the same mux in later slices.
+// It also serves the embedded SPA build (static.go, web/embed.go)
 // for everything outside "/api/" (ADR-009). ready() drops the profile
 // registry check (no profiles were ported, see docs/technical-discovery.md
 // §3.5).
@@ -26,6 +27,10 @@ import (
 	"emsim/internal/auth"
 	authhttp "emsim/internal/auth/http"
 	authpg "emsim/internal/auth/postgres"
+	"emsim/internal/content"
+	contenthttp "emsim/internal/content/http"
+	contentpg "emsim/internal/content/postgres"
+	"emsim/internal/content/schema"
 	"emsim/internal/platform/admin"
 	"emsim/internal/platform/config"
 	"emsim/internal/platform/httpapi"
@@ -92,9 +97,10 @@ var errAPITakesNoArgs = errors.New("api subcommand takes no arguments")
 // chain (httpapi.WrapPublic: request id, no-store, Origin check). Each
 // module follows the same shape — a pgx store, an application Service
 // built on it, HTTP Handlers built on that — composed here and nowhere
-// else, matching CLAUDE.md's "composition lives in cmd/emsim". A future
-// module (content/training/assessment/reporting) adds its own three
-// lines here and calls its own Register on apiMux.
+// else, matching CLAUDE.md's "composition lives in cmd/emsim" (content
+// is the first to follow auth's lead). A future module (training/
+// assessment/reporting) adds its own three lines here and calls its own
+// Register on apiMux.
 func newPublicHandler(pool *pgxpool.Pool, cfg config.API) http.Handler {
 	handler, _ := newPublicHTTP(pool, cfg)
 	return handler
@@ -108,6 +114,9 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API) (http.Handler, observabil
 	authhttp.NewHandlers(authService, cfg.CookieSecure).Register(apiMux)
 	authhttp.NewAdminHandlers(authService, cfg.CookieSecure).Register(apiMux)
 
+	contentService := content.NewService(contentpg.NewStore(pool), mustSchemaValidator())
+	contenthttp.NewHandlers(contentService, authService, cfg.CookieSecure).Register(apiMux)
+
 	root := http.NewServeMux()
 	root.Handle("/api/", apiMux)
 	root.Handle("/", newSPAHandler(web.DistFS))
@@ -120,6 +129,20 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API) (http.Handler, observabil
 		return "spa"
 	}
 	return httpapi.WrapPublic(root), routeName
+}
+
+// mustSchemaValidator compiles the embedded scenario/scenario-file JSON
+// Schemas once per process. A failure here can only mean the embedded
+// contracts themselves are malformed — a build-time invariant, not a
+// runtime condition to recover from (internal/auth/password.go's
+// mustHashDummy is the same pattern for its own always-succeeds-in-
+// practice precomputation).
+func mustSchemaValidator() *schema.Validator {
+	validator, err := schema.New()
+	if err != nil {
+		panic("emsim: failed to compile embedded scenario schemas: " + err.Error())
+	}
+	return validator
 }
 
 func apiSchemaReady(ctx context.Context, pool *pgxpool.Pool) bool {
