@@ -1,14 +1,3 @@
-// Ported from orchestration-core@34290d74656bc594f8968ae17871dc997559b497
-// internal/config/worker.go; adapted: no Simulator/Client/Judge
-// InferenceAdapter — core's dialogue/judge roles each needed an LLM
-// transport configured; the open kind registry has no fixed set of roles
-// needing adapters (that comes with the training/assessment modules that
-// register kinds later). Instead there are three pool concurrencies —
-// short/llm/stt (RFC-001 §4.3, §11: "LLM_CONCURRENCY выбирается замерами
-// 1/2/4, не числом карточек") — validated unconditionally regardless of
-// Role, a deliberate simplification over core's role-conditional adapter
-// validation (ADR-001: no config surface unless a profile actually needs
-// it).
 package config
 
 import (

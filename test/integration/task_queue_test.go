@@ -33,7 +33,7 @@ func TestTaskQueueLifecycle(t *testing.T) {
 	}
 	pool := openTestPool(t, ctx, databaseURL)
 
-	now := time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond)
+	now := databaseTime(t, ctx, pool)
 	registry := newQueueTestRegistry(t)
 	store := tasks.NewStore(pool, registry)
 
@@ -233,12 +233,16 @@ func TestTaskQueueLifecycle(t *testing.T) {
 			t.Fatalf("identical replay result/error = %q/%v", result, err)
 		}
 		conflicting := request
-		conflicting.Outcome, err = tasks.Failed("remote_rejected", nil)
-		if err != nil {
-			t.Fatalf("conflicting outcome: %v", err)
-		}
+		conflicting.Outcome = tasks.Done([]byte(`{"ok":false}`))
 		if _, err := store.Terminal(ctx, terminalTx, conflicting); !errors.Is(err, tasks.ErrTerminalConflict) {
 			t.Fatalf("conflicting replay error = %v", err)
+		}
+		conflicting.Outcome, err = tasks.Failed("remote_rejected", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Terminal(ctx, terminalTx, conflicting); !errors.Is(err, tasks.ErrTerminalConflict) {
+			t.Fatalf("changed status replay = %v", err)
 		}
 		wrongWorker := request
 		wrongWorker.Lease.WorkerID = "other-worker"

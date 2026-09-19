@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// PostgreSQL interprets NextAttemptAt - Now as the requested retry delay,
+// anchored to its own clock after acquiring the task lock.
 type FailureRequest struct {
 	Lease         Lease
 	Now           time.Time

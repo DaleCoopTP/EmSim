@@ -45,7 +45,7 @@ func TestTaskRecovery(t *testing.T) {
 		t.Fatalf("create task recovery: %v", err)
 	}
 	store := tasks.NewStore(pool, registry)
-	now := time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond)
+	now := databaseTime(t, ctx, pool)
 
 	t.Run("current retryable failure schedules kind backoff", func(t *testing.T) {
 		resetTasks(t, ctx, pool)
@@ -59,7 +59,14 @@ func TestTaskRecovery(t *testing.T) {
 		if err != nil || resolution != tasks.ResolutionRequeued {
 			t.Fatalf("retry resolution/error = %q/%v", resolution, err)
 		}
-		assertTaskState(t, ctx, pool, lease.TaskID, "pending", 1, 1, nextAttempt)
+		var scheduled, updated time.Time
+		if err := pool.QueryRow(ctx, "SELECT next_attempt_at, updated_at FROM tasks WHERE id=$1", lease.TaskID).Scan(&scheduled, &updated); err != nil {
+			t.Fatal(err)
+		}
+		if scheduled.Sub(updated) != nextAttempt.Sub(now.Add(time.Second)) {
+			t.Fatalf("backoff = %v", scheduled.Sub(updated))
+		}
+		assertTaskState(t, ctx, pool, lease.TaskID, "pending", 1, 1, scheduled)
 	})
 
 	t.Run("exhausted retryable failure dead letters task", func(t *testing.T) {
@@ -143,7 +150,7 @@ func TestTaskRecovery(t *testing.T) {
 	t.Run("heartbeat extension protects lease from reaper", func(t *testing.T) {
 		resetTasks(t, ctx, pool)
 		databaseNow := databaseTime(t, ctx, pool)
-		lease := insertLeasedTask(t, ctx, pool, queueKindA, 1, "heartbeat-owner", databaseNow.Add(-time.Minute), databaseNow.Add(-5*time.Second))
+		lease := insertLeasedTask(t, ctx, pool, queueKindA, 1, "heartbeat-owner", databaseNow.Add(-time.Minute), databaseNow.Add(5*time.Second))
 		if _, err := store.Heartbeat(ctx, tasks.HeartbeatRequest{
 			Lease: lease, Now: databaseNow.Add(-6 * time.Second), LeaseDuration: spec.Lease,
 		}); err != nil {
@@ -155,7 +162,7 @@ func TestTaskRecovery(t *testing.T) {
 		}
 	})
 
-	t.Run("terminal writer and reaper have one winner", func(t *testing.T) {
+	t.Run("expired terminal writer cannot beat reaper", func(t *testing.T) {
 		resetTasks(t, ctx, pool)
 		databaseNow := databaseTime(t, ctx, pool)
 		lease := insertLeasedTask(t, ctx, pool, queueKindA, 1, "race-owner", databaseNow.Add(-2*time.Minute), databaseNow.Add(-30*time.Second))
@@ -195,7 +202,7 @@ func TestTaskRecovery(t *testing.T) {
 		reapErr := <-reaperError
 		terminalWon := terminalErr == nil
 		reaperWon := reapErr == nil && summary.Count() == 1
-		if terminalWon == reaperWon {
+		if terminalWon || !reaperWon {
 			t.Fatalf("terminal/reaper winners = %t/%t, errors = %v/%v summary=%+v", terminalWon, reaperWon, terminalErr, reapErr, summary)
 		}
 		if terminalErr != nil && !errors.Is(terminalErr, tasks.ErrLeaseLost) {

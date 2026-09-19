@@ -7,8 +7,8 @@
 // docs/technical-discovery.md §3.1/§4) and gains the polymorphic scope
 // fields plus Payload/Priority. TerminalOutcome drops the digest (no
 // terminal_digest column in the new schema) in favour of a Code +
-// arbitrary Result payload, and terminal replay is classified without a
-// digest (see pgstore.go, added in the following commit). TaskStatus,
+// arbitrary Result payload; terminal replay compares JSONB result contents
+// without a digest (see pgstore.go). TaskStatus,
 // EnqueueRequest, and CancelRequest are new: core had a closed
 // pending/leased/done/failed/dead_letter machine with no cancellation and
 // no Enqueue contract (a run's tasks were created inline by
@@ -66,6 +66,9 @@ func (*TerminalConflictError) Unwrap() error { return ErrTerminalConflict }
 // core, it carries no LeaseDuration: the lease length is per-kind
 // (Spec.Lease), looked up by the storage layer once it knows which task it
 // claimed.
+// Now is retained for request compatibility; PostgreSQL uses its own clock
+// for eligibility, lease checks and persisted timestamps (also for heartbeat,
+// terminal and cancel).
 type ClaimRequest struct {
 	Kinds    []Kind
 	WorkerID string

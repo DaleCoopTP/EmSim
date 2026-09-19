@@ -1,4 +1,3 @@
-// Ported from orchestration-core@34290d74656bc594f8968ae17871dc997559b497
 // internal/postgres/postgres.go; adapted: Ready() checks for the platform
 // "tasks" table only, not the domain tables (runs/run_items/dialogues/
 // evaluations/run_results) that were not ported — see

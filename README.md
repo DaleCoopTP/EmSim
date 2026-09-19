@@ -21,7 +21,7 @@ LLM/STT/Caddy добавятся вместе с клиентами инфере
 
 ```bash
 make verify              # gofmt, build, go vet, go test, staticcheck
-make test-integration    # тесты очереди/recovery против PostgreSQL 16 (testcontainers)
+make test-integration    # очередь/recovery + запуск и crash recovery реального worker (PostgreSQL 16)
 make compose-config      # проверить compose.yaml без сборки образов
 ```
 
@@ -33,3 +33,15 @@ make compose-config      # проверить compose.yaml без сборки �
 TEST_DATABASE_URL="postgres://user@localhost:5432/emsim_test?sslmode=disable" \
   go test -tags=integration -count=1 ./test/integration/...
 ```
+
+
+Операции очереди используют часы PostgreSQL; проверка lease выполняется после
+получения блокировки строки. Для атомарной записи доменного эффекта используйте
+`EnqueueTx`, `CancelTx` и `Terminal` с общей `pgx.Tx`: вызывающий код отвечает
+за commit/rollback. Повтор `Terminal` сравнивает статус, код ошибки и JSONB-результат
+(порядок ключей несущественен); изменение результата возвращает конфликт.
+
+Интеграционный process-тест собирает `cmd/emsim`, проверяет реальные роли
+`worker/maintenance/all`, graceful shutdown и SIGKILL во время фиксации noop.
+Для ускорения теста expiry оставшегося lease меняется в тестовой БД; reaping и
+повторное выполнение выполняют настоящие процессы приложения.

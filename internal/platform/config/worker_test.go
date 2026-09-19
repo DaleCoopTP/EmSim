@@ -1,7 +1,3 @@
-// Ported from orchestration-core@34290d74656bc594f8968ae17871dc997559b497
-// internal/config/worker_test.go; adapted: no adapter env vars (see
-// worker.go) — role-awareness is instead tested via the pool
-// concurrencies, which core's version did not have.
 package config
 
 import (

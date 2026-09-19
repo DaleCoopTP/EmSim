@@ -1,6 +1,3 @@
-// Ported from orchestration-core@34290d74656bc594f8968ae17871dc997559b497
-// internal/httpapi/api_test.go (TestAdminEndpoints,
-// TestAdminMetricsUseOnlyInjectedRegistry); as-is.
 package admin
 
 import (

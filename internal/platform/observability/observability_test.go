@@ -1,4 +1,3 @@
-// Ported from orchestration-core@34290d74656bc594f8968ae17871dc997559b497
 // internal/observability/observability_test.go; adapted: namespace
 // orchestration_core -> emsim, dot-namespaced test kinds instead of
 // dialogue/judge, Logger.Operation drops the safeStage argument, and the

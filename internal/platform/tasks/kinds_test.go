@@ -88,3 +88,19 @@ func TestRegistryPoolListsSortedKinds(t *testing.T) {
 		t.Fatalf("missing pool kinds = %v, want empty", got)
 	}
 }
+
+func TestRegistryRejectsRetryAboveCap(t *testing.T) {
+	policy := DefaultPolicy()
+	registry, err := NewRegistry(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{Name: "system.retry", Pool: "short", MaxAttempts: 3, Lease: time.Minute, RetryBase: policy.RetryCap + time.Second}
+	if err := registry.Register(spec); !errors.Is(err, ErrInvalidSpec) {
+		t.Fatalf("register = %v", err)
+	}
+	spec.RetryBase = policy.RetryCap
+	if err := registry.Register(spec); err != nil {
+		t.Fatalf("cap boundary: %v", err)
+	}
+}

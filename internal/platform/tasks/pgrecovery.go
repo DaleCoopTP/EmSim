@@ -83,6 +83,14 @@ func (r *Recovery) ResolveFailureTx(ctx context.Context, tx pgx.Tx, request Fail
 	if err != nil {
 		return "", ErrStorage
 	}
+	now, err := databaseTime(ctx, tx)
+	if err != nil {
+		return "", err
+	}
+	// Preserve the requested backoff duration, anchored to the database clock.
+	delay := request.NextAttemptAt.Sub(request.Now)
+	request.Now = now
+	request.NextAttemptAt = now.Add(delay)
 	if status != string(TaskLeased) || worker == nil || *worker != request.Lease.WorkerID ||
 		token != int64(request.Lease.Token) || expiresAt == nil || !expiresAt.After(request.Now) {
 		return "", ErrLeaseLost
@@ -132,7 +140,7 @@ func (r *Recovery) ReapExpired(ctx context.Context) (ReapSummary, error) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var databaseNow time.Time
-	if err := tx.QueryRow(ctx, "SELECT transaction_timestamp()").Scan(&databaseNow); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT clock_timestamp()").Scan(&databaseNow); err != nil {
 		return ReapSummary{}, ErrStorage
 	}
 

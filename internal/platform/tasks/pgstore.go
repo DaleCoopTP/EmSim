@@ -9,7 +9,7 @@
 //     "one current owner" guarantee core's tests check is unchanged).
 //   - Terminal writes last_error_code + result instead of a terminal
 //     digest (no terminal_digest column); replay is classified by
-//     comparing (status, last_error_code) instead of a digest.
+//     comparing status, last_error_code and JSONB result contents.
 //   - Enqueue and Cancel are new (see queue.go): core created a run's
 //     tasks inline in application/run and had no cancellation.
 package tasks
@@ -46,6 +46,29 @@ func (s *Store) Enqueue(ctx context.Context, request EnqueueRequest) (id uuid.UU
 	if err := request.Validate(); err != nil {
 		return uuid.Nil, false, err
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, false, ErrStorage
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	id, created, err = s.EnqueueTx(ctx, tx, request)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, false, ErrStorage
+	}
+	return id, created, nil
+}
+
+// EnqueueTx joins the caller's domain transaction. The caller owns commit/rollback.
+func (s *Store) EnqueueTx(ctx context.Context, tx pgx.Tx, request EnqueueRequest) (id uuid.UUID, created bool, err error) {
+	if tx == nil {
+		return uuid.Nil, false, ErrInvalidRequest
+	}
+	if err := request.Validate(); err != nil {
+		return uuid.Nil, false, err
+	}
 	spec, ok := s.registry.Lookup(request.Kind)
 	if !ok {
 		return uuid.Nil, false, ErrUnknownKind
@@ -61,7 +84,7 @@ func (s *Store) Enqueue(ctx context.Context, request EnqueueRequest) (id uuid.UU
 	}
 
 	var insertedID uuid.UUID
-	err = s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO tasks (
 			id, priority, dependency_task_ids, kind, scope_type, scope_id,
 			dedup_key, payload, status, max_attempts, next_attempt_at
@@ -79,7 +102,7 @@ func (s *Store) Enqueue(ctx context.Context, request EnqueueRequest) (id uuid.UU
 	}
 
 	var existingID uuid.UUID
-	if err := s.pool.QueryRow(ctx, `SELECT id FROM tasks WHERE dedup_key = $1`, request.DedupKey).Scan(&existingID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM tasks WHERE dedup_key = $1`, request.DedupKey).Scan(&existingID); err != nil {
 		return uuid.Nil, false, ErrStorage
 	}
 	return existingID, false, nil
@@ -100,6 +123,10 @@ func (s *Store) Claim(ctx context.Context, request ClaimRequest) (Lease, bool, e
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	now, err := databaseTime(ctx, tx)
+	if err != nil {
+		return Lease{}, false, err
+	}
 	var taskID uuid.UUID
 	var kindName string
 	err = tx.QueryRow(ctx, `
@@ -111,7 +138,7 @@ func (s *Store) Claim(ctx context.Context, request ClaimRequest) (Lease, bool, e
 		ORDER BY priority DESC, next_attempt_at, created_at, id
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
-	`, kindNames, request.Now).Scan(&taskID, &kindName)
+	`, kindNames, now).Scan(&taskID, &kindName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lease{}, false, nil
 	}
@@ -127,7 +154,11 @@ func (s *Store) Claim(ctx context.Context, request ClaimRequest) (Lease, bool, e
 		// a storage-layer integrity failure, not a normal empty claim.
 		return Lease{}, false, ErrStorage
 	}
-	expiresAt := request.Now.Add(spec.Lease)
+	now, err = databaseTime(ctx, tx)
+	if err != nil {
+		return Lease{}, false, err
+	}
+	expiresAt := now.Add(spec.Lease)
 
 	var lease Lease
 	var scopeID *uuid.UUID
@@ -145,7 +176,7 @@ func (s *Store) Claim(ctx context.Context, request ClaimRequest) (Lease, bool, e
 		WHERE id = $1
 		RETURNING id, kind, scope_type, scope_id, dedup_key, payload, priority,
 			attempts, lease_token, lease_started_at, lease_expires_at
-	`, taskID, request.WorkerID, request.Now, expiresAt).Scan(
+	`, taskID, request.WorkerID, now, expiresAt).Scan(
 		&lease.TaskID, &kindName, &lease.ScopeType, &scopeID, &lease.DedupKey, &lease.Payload, &lease.Priority,
 		&lease.Attempt, &token, &lease.StartedAt, &lease.ExpiresAt,
 	)
@@ -166,9 +197,20 @@ func (s *Store) Heartbeat(ctx context.Context, request HeartbeatRequest) (time.T
 	if err := request.Validate(); err != nil {
 		return time.Time{}, err
 	}
-	newExpiry := request.Now.Add(request.LeaseDuration)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return time.Time{}, ErrStorage
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	now, err := lockTaskTime(ctx, tx, request.Lease.TaskID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	request.Now = now
+	newExpiry := now.Add(request.LeaseDuration)
 	var expiresAt time.Time
-	err := s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE tasks
 		SET lease_expires_at = $4, updated_at = $3
 		WHERE id = $1
@@ -180,20 +222,23 @@ func (s *Store) Heartbeat(ctx context.Context, request HeartbeatRequest) (time.T
 		RETURNING lease_expires_at
 	`, request.Lease.TaskID, request.Lease.WorkerID, request.Now, newExpiry, int64(request.Lease.Token)).Scan(&expiresAt)
 	if err == nil {
+		if err := tx.Commit(ctx); err != nil {
+			return time.Time{}, ErrStorage
+		}
 		return expiresAt, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return time.Time{}, ErrStorage
 	}
-	return time.Time{}, s.classifyHeartbeat(ctx, request, newExpiry)
+	return time.Time{}, s.classifyHeartbeat(ctx, tx, request, newExpiry)
 }
 
-func (s *Store) classifyHeartbeat(ctx context.Context, request HeartbeatRequest, newExpiry time.Time) error {
+func (s *Store) classifyHeartbeat(ctx context.Context, tx pgx.Tx, request HeartbeatRequest, newExpiry time.Time) error {
 	var status string
 	var worker *string
 	var token int64
 	var expiry *time.Time
-	err := s.pool.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		SELECT status, leased_worker, lease_token, lease_expires_at
 		FROM tasks WHERE id = $1
 	`, request.Lease.TaskID).Scan(&status, &worker, &token, &expiry)
@@ -222,6 +267,11 @@ func (s *Store) Terminal(ctx context.Context, tx pgx.Tx, request TerminalRequest
 	if err := request.Validate(); err != nil {
 		return "", err
 	}
+	now, err := lockTaskTime(ctx, tx, request.Lease.TaskID)
+	if err != nil {
+		return "", err
+	}
+	request.Now = now
 	var code any
 	if request.Outcome.Code != "" {
 		code = string(request.Outcome.Code)
@@ -231,7 +281,7 @@ func (s *Store) Terminal(ctx context.Context, tx pgx.Tx, request TerminalRequest
 		result = request.Outcome.Result
 	}
 	var taskID uuid.UUID
-	err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE tasks
 		SET status = $4,
 			leased_worker = NULL,
@@ -265,10 +315,15 @@ func (s *Store) classifyTerminal(ctx context.Context, tx pgx.Tx, request Termina
 	var token int64
 	var terminalWorker *string
 	var code *string
+	var sameResult bool
+	var result any
+	if request.Outcome.Result != nil {
+		result = request.Outcome.Result
+	}
 	err := tx.QueryRow(ctx, `
-		SELECT status, lease_token, terminal_worker, last_error_code
+		SELECT status, lease_token, terminal_worker, last_error_code, result IS NOT DISTINCT FROM $2::jsonb
 		FROM tasks WHERE id = $1
-	`, request.Lease.TaskID).Scan(&status, &token, &terminalWorker, &code)
+	`, request.Lease.TaskID, result).Scan(&status, &token, &terminalWorker, &code, &sameResult)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrLeaseLost
 	}
@@ -281,7 +336,7 @@ func (s *Store) classifyTerminal(ctx context.Context, tx pgx.Tx, request Termina
 	if status != string(TaskDone) && status != string(TaskFailed) {
 		return "", ErrLeaseLost
 	}
-	if status == string(request.Outcome.Status) && sameCode(request.Outcome.Code, code) {
+	if status == string(request.Outcome.Status) && sameCode(request.Outcome.Code, code) && sameResult {
 		return TerminalAlreadyApplied, nil
 	}
 	return "", &TerminalConflictError{}
@@ -304,7 +359,37 @@ func (s *Store) Cancel(ctx context.Context, request CancelRequest) (bool, error)
 	if err := request.Validate(); err != nil {
 		return false, err
 	}
-	command, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, ErrStorage
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	changed, err := s.CancelTx(ctx, tx, request)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, ErrStorage
+	}
+	return changed, nil
+}
+
+// CancelTx cancels atomically with the caller's domain change.
+func (s *Store) CancelTx(ctx context.Context, tx pgx.Tx, request CancelRequest) (bool, error) {
+	if tx == nil {
+		return false, ErrInvalidRequest
+	}
+	if err := request.Validate(); err != nil {
+		return false, err
+	}
+	now, err := lockTaskTime(ctx, tx, request.TaskID)
+	if errors.Is(err, ErrLeaseLost) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	command, err := tx.Exec(ctx, `
 		UPDATE tasks
 		SET status = 'cancelled',
 			leased_worker = NULL,
@@ -315,9 +400,30 @@ func (s *Store) Cancel(ctx context.Context, request CancelRequest) (bool, error)
 			updated_at = $2
 		WHERE id = $1
 		  AND status IN ('waiting', 'pending', 'leased')
-	`, request.TaskID, request.Now)
+	`, request.TaskID, now)
 	if err != nil {
 		return false, ErrStorage
 	}
 	return command.RowsAffected() == 1, nil
+}
+
+// lockTaskTime reads the database clock only after acquiring the task lock.
+// A timestamp captured before a lock wait must never authorize an expired lease.
+func lockTaskTime(ctx context.Context, tx pgx.Tx, id uuid.UUID) (time.Time, error) {
+	var locked uuid.UUID
+	if err := tx.QueryRow(ctx, "SELECT id FROM tasks WHERE id = $1 FOR UPDATE", id).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return time.Time{}, ErrLeaseLost
+		}
+		return time.Time{}, ErrStorage
+	}
+	return databaseTime(ctx, tx)
+}
+
+func databaseTime(ctx context.Context, tx pgx.Tx) (time.Time, error) {
+	var now time.Time
+	if err := tx.QueryRow(ctx, "SELECT clock_timestamp()").Scan(&now); err != nil {
+		return time.Time{}, ErrStorage
+	}
+	return now, nil
 }

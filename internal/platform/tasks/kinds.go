@@ -68,7 +68,7 @@ func (r *Registry) Register(spec Spec) error {
 	if err := spec.validate(); err != nil {
 		return err
 	}
-	if spec.Lease <= r.policy.minimumLease() {
+	if spec.Lease <= r.policy.minimumLease() || spec.RetryBase > r.policy.RetryCap {
 		return ErrInvalidSpec
 	}
 	r.mu.Lock()

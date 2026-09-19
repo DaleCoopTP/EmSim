@@ -1,4 +1,3 @@
-// Ported from orchestration-core@34290d74656bc594f8968ae17871dc997559b497
 // internal/observability/logging.go; adapted: core whitelisted exactly 3
 // operations (http_request/queue_sampler/lifecycle) and 2 error codes
 // (database_unavailable/operational_error) — too narrow once the tasks
