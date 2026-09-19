@@ -242,3 +242,91 @@ Open issues / risks:
 
 Next:
 - Decide whether to schedule the deferred slice-1 hardening before starting slice 2.
+
+## 2026-09-19T20:58:49+03:00 — Codex — review and narrow slice-2 implementation plan
+
+Status: completed
+Slice: 2 (planning only)
+
+Changed:
+- `slice-2-plan.md`: reviewed replacement for the supplied C1–C7 plan; records the two pilot cases, structured correction reference, instructor preview, explicit version imports, migration/seed ordering and acceptance checks.
+- `slice-planning.md`: linked the detailed plan and recorded the agreed pilot scope.
+
+Decisions:
+- Two cases suffice for the catalogue; full workflow, complete classifier and 8–12 cases are not prerequisites. Pilot correction targets existing `card.address.okrug`, not `district`.
+- Plan requires explicit new versions, empty contacts for no-call cases, safe FK validation over existing users, preserved approval provenance after superseding, deletion protection and allowlisted public DTOs. These are planned implementation changes, not applied contracts.
+- Acceptance-only completion remains a temporary pilot goal; existing ADR/RFC close rules remain in force until separately amended for slice 3. No trainee execution or evaluator is added in slice 2.
+
+Validation:
+- Read supplied plan and compared relevant local schema, OpenAPI, scenario format, auth role rules, Compose and slice DoD. No code, migration or runtime tests run for this documentation-only change; prior test/XLSX claims in the pasted plan were not revalidated.
+
+Open issues / risks:
+- Organizer confirmation of full workflow/edit permissions and deferred slice-1 findings remain outstanding; neither is silently marked resolved.
+
+Next:
+- Implement C1 from `slice-2-plan.md`, then proceed through C7; verify all contract and migration changes during implementation. No commits made.
+
+## 2026-09-19T22:34:23+03:00 — Claude — slice 2 C1 (contracts/migration) and C2 (content domain)
+
+Status: completed
+Slice: 2 (`slice-2-plan.md`; execution detail in `/Users/lucifer/.claude/plans/melodic-toasting-pudding.md`)
+
+Changed — C1 (contracts and migration):
+- `design-docs/contracts/schema.sql`: `scenarios.source_key`; three-way `scenario_versions_approval_shape` CHECK preserving approval attribution across `approved→superseded`; partial unique index enforcing one `approved` version per scenario; `BEFORE DELETE` guard rejecting deletion of non-draft versions; `users.service_code_fkey → services(code)`.
+- `design-docs/contracts/scenario.schema.json`: `contacts.minItems` 1→0; new `reference.field_corrections` and `reference.pilot_goal` (pilot extension, both optional).
+- New `design-docs/contracts/scenario-file.schema.json` (file wrapper: key/version/title/origin/body) and `design-docs/contracts/embed.go` (embeds both schemas + `rubric.default.json` for the binary).
+- `design-docs/contracts/openapi.yaml`: role notes, "not implemented until slice 11" markers on editor routes, `ScenarioSummary.source_key`, new `Address`/`CardPreview`/`ScenarioReference` schemas, typed `/scenarios/{id}/preview` response.
+- `design-docs/contracts/check.py`: validates the new file schema too.
+- New `migrations/00004_content_catalog.sql`: `services`, `classifier_types`, `tickets`, `scenarios`, `scenario_versions` + the two triggers above; FK added `NOT VALID` (validated explicitly once `services` is seeded, per the migration's header comment).
+- `internal/platform/postgres/postgres.go`: `ExpectedSchemaVersion` 3→4, `applicationTables` extended.
+- `test/integration/{harness,auth_store,api_process}_test.go`: updated table set; added `services` fixtures the new FK now requires.
+
+Changed — C2 (`internal/content` domain + `internal/content/schema`):
+- New package `internal/content`: typed `Body`/`Card`/`Address`/`Contact`/`Event`/`Reference`/`Workflow` etc. mirroring `scenario.schema.json` field-for-field; `DecodeFile` (duplicate-object-key rejection at any depth, `json.Number`-preserving raw form alongside the typed struct); `Canonical`/`Digest`/`BodyDigest` (deterministic serialization independent of key order/whitespace, numbers kept at their source literal); `Validate(body, catalog)` — semantic rules JSON Schema can't express (service/classifier existence and active state, exactly-one `mine`, contact/event key uniqueness, workflow reachability of `primary_decision`/`expected_chain`, `field_corrections.before_status` against the service's workflow, `scoring` references against `rubric.default.json`'s criterion ids); `ProjectCard`/`ProjectContacts` — the allowlist `CardPreview` projection (no `reference`/hints/generation/events-expects/phrases reach it).
+- New package `internal/content/schema`: compiles `scenario-file.schema.json` + `scenario.schema.json` from the embedded contracts via `github.com/santhosh-tekuri/jsonschema/v6` (new dependency; `go.mod`/`go.sum` updated), offline only.
+- `Validate` deliberately does not require `field_corrections.expected_value` to differ from the card's actual value — that mismatch is the pilot exercise itself, confirmed by a dedicated test.
+
+Decisions:
+- `Catalog` (the service/classifier lookup `Validate` needs) is a plain value-returning interface, not an `auth.Store`-style `ctx+pgx.Tx` port — `Validate` performs no I/O itself; C3's `Importer` will pre-fetch and adapt.
+- `design-docs/contracts/embed.go` (called for in C1's plan but not written then) was added now, since C2 needed it; `contracts.Files` also carries `rubric.default.json` for `Validate`'s scoring check.
+
+Validation:
+- `go build ./...`, `go vet ./...`, `gofmt -l .` — clean.
+- `go test ./...` — all packages pass (`internal/content`: 40/40 including duplicate-key/digest/leak/schema tests).
+- `make verify` (format-check, build, test, vet, staticcheck) — passed.
+- `python3 design-docs/contracts/check.py` — all checks passed.
+- Manual SQL invariant checks against throwaway Postgres containers for every migration edge case (approval shape, one-approved index, content-immutability trigger, delete guard incl. cascade, `NOT VALID` FK over existing orphaned data, `VALIDATE CONSTRAINT` after seeding) — see prior session notes; not re-run this pass since the migration file did not change.
+- `make test-integration` not re-run in this pass (no change to `test/integration` since the last green run recorded for C1).
+
+Open issues / risks:
+- C2 has no store/HTTP yet — `Catalog`, `Validate`, and the preview projection are exercised only by unit tests with an in-memory fake; real DB-backed behavior is unverified until C3.
+
+Next:
+- C3 — `internal/content/postgres` store, `Importer` application service, `emsim import services|classifier|scenarios|seed` CLI, and the actual seed files (two pilot scenarios). No commits made.
+
+## 2026-09-19T22:54:37+03:00 — Claude — slice 2 C3 (storage, import CLI, pilot seed)
+
+Status: completed
+Slice: 2 (`slice-2-plan.md`, C3)
+
+Changed:
+- `internal/content/store.go`: `Store` port (ctx+pgx.Tx, internal/auth's convention), `ServiceRecord`/`ClassifierType`/`ScenarioRecord`/`ScenarioVersionRecord`/`ScenarioSummary`/`ScenarioDetail`/`VersionSummary`/`ScenarioFilter`, `ErrNotFound`/`ErrStorage`/`ErrConflict`.
+- `internal/content/service.go`, `import.go`, `read.go`: `Service` (one struct for both use-case families, `internal/auth.Service`'s shape) — `ImportServices`/`ImportClassifierTypes` (insert-or-no-op-or-conflict), `ImportScenarios` (whole-batch transaction; per-file version rules: new key must start at v1, known key's title/target_service/origin are fixed, next version must be exactly max+1 and supersedes the previous approved version preserving its attribution, an existing version's content can't change, no version gaps); `ListServices`/`ListScenarios`/`ScenarioDetail`/`ScenarioVersions`/`ScenarioPreview`.
+- `internal/content/postgres/store.go`: pgx-backed `Store`. Notable fix: `InsertScenarioVersion`'s `CASE WHEN status='approved' THEN $N` reusing the same placeholder for both a plain INSERT value and a CASE branch made PostgreSQL report "inconsistent types deduced" (and, once split, "column is uuid but expression is text") — fixed by giving `approved_by` its own parameter with an explicit `::uuid` cast.
+- `internal/platform/postgres/constraints.go` (new): `OrphanServiceCodes`/`ValidateUsersServiceCodeFK` — cross-module (auth+content) helpers for the `users_service_code_fkey` NOT VALID → validated transition; `postgres.go` gained `UpTo` for tests that need to simulate "existing installation before migration 00004".
+- `cmd/emsim/import.go` (new) + `main.go`: `emsim import services|classifier|scenarios|seed --actor <login> <path>`. `--actor` must resolve to an active admin. `import services` additionally checks for orphan `users.service_code` and only then runs `VALIDATE CONSTRAINT`, refusing with a listed set of codes otherwise.
+- `seed/`: `services.json` (3 pilot services, identical minimal workflow), `classifier.json` (code `14080106`), `scenarios/pilot-tree-{01,02}.json` (the two pilot cases from slice-2-plan.md — 02 has the deliberate `okrug` error + `field_corrections`), `README.md`.
+- `internal/content/seed_test.go`: the real seed files pass schema + semantic validation (no DB).
+
+Validation:
+- `go build ./...`, `go vet ./...`, `gofmt -l .` — clean.
+- `go test ./...` — all green.
+- `make verify` (staticcheck included) — passed.
+- `go test -tags=integration -count=1 ./test/integration/...` — all green, including new `content_import_test.go` (seed import + idempotent replay + conflict rejection + version/supersede rules + batch rollback on one invalid file) and `content_fk_test.go` (orphan detection, `VALIDATE CONSTRAINT` fails while an orphan exists and succeeds once fixed, idempotent re-run).
+- Manual end-to-end smoke test of the built `emsim` binary against a throwaway `postgres:16-alpine` container: `migrate up` → `bootstrap-admin` → `import seed` (services/classifier/scenarios all created, FK validated) → re-run `import seed` (all unchanged) → `import services --actor nobody` and bare `import` both fail cleanly with a safe exit code.
+
+Open issues / risks:
+- None new. C4 (instructor HTTP API) and C5 (auth linkage) are next.
+
+Next:
+- C4 — `internal/content/http` (GET /services, /scenarios, /scenarios/{id}, /scenarios/{id}/versions, /scenarios/{id}/preview), `authz.GroupServices`, composition in `cmd/emsim/api.go`.

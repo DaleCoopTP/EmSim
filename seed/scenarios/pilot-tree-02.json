@@ -1,0 +1,73 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "pilot-tree-02",
+  "version": 1,
+  "title": "Дерево во дворе — 02",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "target_service": "dds_district",
+    "card": {
+      "number": "881413",
+      "registered_at_offset_s": -60,
+      "applicant": {
+        "name": "Иванов, очевидец",
+        "phone": "+77495123456",
+        "status": "witness"
+      },
+      "address": {
+        "country": "Россия",
+        "city": "Москва",
+        "okrug": "ЮАР",
+        "district": "Чертаново Южное",
+        "street": "Чертановская улица",
+        "house": "58",
+        "building": "2",
+        "entrance": "2",
+        "text": "Россия, Москва, (ЮАР, Чертаново Южное), Чертановская улица, 58, к. 2, под. 2"
+      },
+      "incident": {
+        "type_code": "14080106",
+        "type_name": "Дерево упало во дворе",
+        "features": {
+          "объект": "Дерево",
+          "состояние": "Упало, сломано",
+          "место": "Двор тротуар газон"
+        },
+        "description": "Заявитель сообщает, что во дворе дома упало дерево; повреждений построек и пострадавших нет.",
+        "victims": 0
+      },
+      "notification_list": [
+        { "service": "dds_district", "status": "added", "mine": true },
+        { "service": "pilot_yuao_prefecture", "status": "added" },
+        { "service": "pilot_nature_department", "status": "added" }
+      ],
+      "phones": {
+        "aon": "+77495123456",
+        "provided": "+7 (749) 512-34-56"
+      }
+    },
+    "contacts": [],
+    "events": [],
+    "reference": {
+      "primary_decision": {
+        "status": "accepted",
+        "comment_required": false
+      },
+      "expected_chain": [],
+      "call": {
+        "required": false
+      },
+      "field_corrections": [
+        { "path": "/card/address/okrug", "expected_value": "ЮАО", "before_status": "accepted" }
+      ],
+      "pilot_goal": "accept_card",
+      "guide_refs": [
+        "Гайд «Работа с АРМ-112 для ДДС от ОКр ГСИ», стр. 23, «Происшествие 881412»"
+      ],
+      "notes": "Пилотный кейс 2: округ в карточке ошибочно указан как «ЮАР» (правильно «ЮАО»); обучаемый обязан исправить его до принятия."
+    },
+    "difficulty": 1,
+    "exercise_type": "dds_processing"
+  }
+}

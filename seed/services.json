@@ -1,0 +1,41 @@
+[
+  {
+    "code": "dds_district",
+    "name": "ДДС района (Чертаново Южное)",
+    "workflow": {
+      "transitions": {
+        "added": ["received"],
+        "received": ["accepted", "not_accepted"],
+        "not_accepted": ["accepted"]
+      },
+      "comment_required": ["not_accepted"],
+      "terminal": []
+    }
+  },
+  {
+    "code": "pilot_yuao_prefecture",
+    "name": "Префектура ЮАО",
+    "workflow": {
+      "transitions": {
+        "added": ["received"],
+        "received": ["accepted", "not_accepted"],
+        "not_accepted": ["accepted"]
+      },
+      "comment_required": ["not_accepted"],
+      "terminal": []
+    }
+  },
+  {
+    "code": "pilot_nature_department",
+    "name": "Департамент природопользования и охраны окружающей среды",
+    "workflow": {
+      "transitions": {
+        "added": ["received"],
+        "received": ["accepted", "not_accepted"],
+        "not_accepted": ["accepted"]
+      },
+      "comment_required": ["not_accepted"],
+      "terminal": []
+    }
+  }
+]
