@@ -1,7 +1,7 @@
 # EmSim
 
 Тренажёр диспетчера ДДС/112: одна Go-программа `emsim`
-(`migrate | api | worker | bootstrap-admin`), PostgreSQL как БД и очередь
+(`migrate | api | worker | bootstrap-admin | import`), PostgreSQL как БД и очередь
 задач, веб-фронтенд поверх (см. `design-docs/`). Архитектурные решения —
 [`design-docs/rfc-001-emsim.md`](design-docs/rfc-001-emsim.md) и
 [`design-docs/adr/`](design-docs/adr); что и почему перенесено из
@@ -18,11 +18,16 @@ docker compose up --build
 сервисом `bootstrap` создаёт начальную учётную запись администратора
 (`BOOTSTRAP_ADMIN_LOGIN`/`BOOTSTRAP_ADMIN_PASSWORD` из `.env`, по умолчанию
 `admin` / `local-only-admin-password` — сменить перед чем-либо, кроме
-локальной демонстрации), запускает `api` (`:8080` — публичный API, `:8081` —
-`/healthz`/`/readyz`/`/metrics`) и один `worker --role=all` (`:8082` — его
-собственные `/healthz`/`/readyz`/`/metrics`). `bootstrap` идемпотентен:
-повторный `docker compose up` не создаёт второго администратора. LLM/STT/Caddy
-добавятся вместе с клиентами инференса.
+локальной демонстрации), затем одноразовым сервисом `seed` загружает
+пилотный каталог служб/классификатора/сценариев (`seed/`, slice-planning.md
+§3) от имени этого администратора, запускает `api` (`:8080` — публичный
+API, `:8081` — `/healthz`/`/readyz`/`/metrics`) и один `worker --role=all`
+(`:8082` — его собственные `/healthz`/`/readyz`/`/metrics`). `bootstrap` и
+`seed` идемпотентны: повторный `docker compose up` не создаёт второго
+администратора и не дублирует уже загруженный каталог (`make seed`
+перезапускает только сервис `seed`, без остального стека — например, после
+добавления файла в `seed/scenarios/`). LLM/STT/Caddy добавятся вместе с
+клиентами инференса.
 
 Демо-профиль не ставит перед `api` reverse proxy с TLS, поэтому `api`
 запускается с `COOKIE_SECURE=false` — иначе браузер не отправлял бы cookie
@@ -35,11 +40,20 @@ docker compose up --build
 
 Дальше — в браузере на `http://localhost:8080`: вход администратором →
 «Рабочие места» (добавить РМ, сохранить) → «Пользователи» (создать
-преподавателя и обучаемого со службой) → «Выйти» → в другом браузере/профиле
-вход обучаемого с номером РМ → ФИО, служба, РМ и «Ожидайте назначения
-занятия»; F5 сохраняет вход, «Выйти» отзывает сессию.
+преподавателя и обучаемого со службой из уже загруженного каталога) →
+«Выйти» → в другом браузере/профиле вход преподавателя → «Сценарии» —
+пилотный каталог (два прохождения карточки «Дерево во дворе», одно с
+намеренной ошибкой в округе — эталон, список оповещения и версии видны
+без JSON) → «Выйти» → вход обучаемого с номером РМ → ФИО, служба, РМ и
+«Ожидайте назначения занятия»; F5 сохраняет вход, «Выйти» отзывает сессию.
 
-То же через API — curl-пример:
+Обновление уже развёрнутой установки (новая миграция добавляет каталог
+служб как внешний ключ у `users.service_code`) и диагностика конфликтов при
+повторной загрузке каталога — [`seed/README.md`](seed/README.md).
+
+То же через API — curl-пример (`service_code` — код из уже загруженного
+каталога, `GET /api/v1/services`; неизвестный код `admin/users` отклоняет
+с `422 validation_failed`, срез 2, C5):
 
 ```bash
 curl -c cookies.txt -s -X POST http://localhost:8080/api/v1/auth/login \
@@ -61,7 +75,10 @@ curl -b cookies.txt -s -X POST http://localhost:8080/api/v1/admin/users \
 make verify              # gofmt, build, go vet, go test, staticcheck (не требует Node)
 make test-integration    # очередь/recovery + запуск и crash recovery реального worker (PostgreSQL 16)
 make compose-config      # проверить compose.yaml без сборки образов
+make seed                # перезапустить только одноразовый сервис seed поверх уже поднятого стека
 make verify-web          # web/: npm ci, регенерация типов из openapi.yaml, tsc, vite build
+python3 design-docs/contracts/check.py   # офлайн-проверка контрактов (openapi.yaml, *.schema.json, примеры)
+cd web && npm run lint   # oxlint
 ```
 
 `go build`/`make verify` не требуют Node: `web/dist` несёт закоммиченный
@@ -99,3 +116,10 @@ TEST_DATABASE_URL="postgres://user@localhost:5432/emsim_test?sslmode=disable" \
 администратора и отказ по старой cookie → вход обучаемого с РМ → `GET /me`
 после «перезагрузки страницы» → 403 у обучаемого на административный API →
 выход обучаемого → отказ по неверному паролю.
+
+Тот же файл добавляет сквозной каталожный тест среза 2: `migrate up` →
+`bootstrap-admin` → `emsim import seed` → `api` — преподаватель видит
+каталог и просмотр карточки без утечки закрытых полей (`pilot_goal` не
+покидает `reference`), администратор доходит до `/services`, но получает 403
+на `/scenarios`, неаутентифицированный запрос — 401, а создание обучаемого с
+неизвестным `service_code` — настоящий 422 от работающего процесса `api`.

@@ -17,6 +17,12 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY migrations ./migrations
+# internal/content/schema embeds scenario.schema.json/scenario-file.schema.json/
+# rubric.default.json via design-docs/contracts/embed.go (slice 2's C1) —
+# .dockerignore lets only *.json and embed.go through this directory, so
+# this is not the whole design-docs/contracts tree (openapi.yaml, check.py,
+# schema.sql, ... stay out of the build context here).
+COPY design-docs/contracts design-docs/contracts
 COPY web/embed.go web/embed.go
 COPY --from=web-build /app/web/dist web/dist
 ARG TARGETOS
@@ -30,4 +36,7 @@ FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec4
 WORKDIR /app
 USER 65532:65532
 COPY --from=build /out/emsim /app/emsim
+# seed/ (slice 2's C3 pilot catalogue) is read by "emsim import seed
+# --actor ... /app/seed" — compose.yaml's one-shot "seed" service.
+COPY seed /app/seed
 ENTRYPOINT ["/app/emsim"]

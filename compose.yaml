@@ -52,6 +52,22 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # One-shot: loads the pilot catalogue (seed/, slice-planning.md §3's C3
+  # — three services, one classifier type, two prepared scenarios) after
+  # the initial admin exists, since import's --actor must name an active
+  # admin. Idempotent (internal/content.Service.ImportScenarios' own
+  # replay rules) — safe on every "docker compose up", including after a
+  # scenario file gains a new version.
+  seed:
+    image: emsim:local
+    command: ["import", "seed", "--actor", "${BOOTSTRAP_ADMIN_LOGIN:-admin}", "/app/seed"]
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    restart: "no"
+
   api:
     image: emsim:local
     command: ["api"]
@@ -67,7 +83,7 @@ services:
       - "127.0.0.1:${API_PORT:-8080}:8080"
       - "127.0.0.1:${API_ADMIN_PORT:-8081}:8081"
     depends_on:
-      bootstrap:
+      seed:
         condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:

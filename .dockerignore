@@ -10,6 +10,8 @@ README.md
 docs
 design-docs
 !design-docs/contracts/openapi.yaml
+!design-docs/contracts/*.json
+!design-docs/contracts/embed.go
 orchestration-core-main
 tmp
 *.pdf

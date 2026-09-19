@@ -1,4 +1,4 @@
-.PHONY: format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build web-install web-build web-check verify-web
+.PHONY: format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build seed web-install web-build web-check verify-web
 
 GO_FILES := $(shell git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do test -f "$$file" && printf '%s\n' "$$file"; done)
 
@@ -32,6 +32,13 @@ compose-config:
 
 compose-build: compose-config
 	docker compose build
+
+# Re-runs compose.yaml's one-shot seed service on its own — e.g. after
+# adding a scenario file to seed/ — without restarting the rest of the
+# stack. Idempotent for content already loaded (see compose.yaml's seed
+# service and seed/README.md).
+seed:
+	docker compose run --rm seed
 
 # The Go build/test/verify targets above never need Node — web/dist ships
 # a checked-in .gitkeep placeholder (web/embed.go), so "go build ./..."

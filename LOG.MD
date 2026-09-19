@@ -427,3 +427,28 @@ Open issues / risks:
 
 Next:
 - C7 — Dockerfile/.dockerignore for `design-docs/contracts` + `seed/`, compose one-shot `seed` service, `make seed`, README update, final `make verify`/`make test-integration`/`docker compose up --build` acceptance pass.
+
+## 2026-09-19T23:58:06+03:00 — Claude — slice 2 C7 (seed wiring, docs, acceptance)
+
+Status: completed
+Slice: 2 (`slice-2-plan.md`, C7) — this closes slice-planning.md §3's full C1–C7 DoD.
+
+Changed:
+- `Dockerfile`: build stage now `COPY design-docs/contracts design-docs/contracts` — this was missing entirely before, so `go build` inside the container was broken (`internal/content/schema` imports `emsim/design-docs/contracts`, C1's `//go:embed`, and the package didn't exist in the build context). Runtime stage now `COPY seed /app/seed` so the `import seed` compose service has something to read.
+- `.dockerignore`: `design-docs` stays blanket-excluded, but `!design-docs/contracts/*.json` and `!design-docs/contracts/embed.go` let the embedded schemas and the embed source through (check.py/schema.sql/openapi.yaml's own consumer stays the web-build stage's existing narrower COPY). `seed/` was never excluded, so no change needed there.
+- `compose.yaml`: new one-shot `seed` service (`import seed --actor ${BOOTSTRAP_ADMIN_LOGIN:-admin} /app/seed`), depends on `bootstrap` completing (import's actor must be an active admin); `api` now depends on `seed` completing instead of `bootstrap` directly, so the SPA never comes up in front of an empty catalogue.
+- `Makefile`: new `seed` target (`docker compose run --rm seed`) for re-seeding after editing `seed/` without restarting the rest of the stack.
+- `README.md`: documented the new `seed` compose step and its idempotency, added the instructor catalogue to the demo walkthrough, pointed the "upgrading an existing install" question at `seed/README.md` (already written during C3 and still accurate — no change needed there), added `make seed`/`python3 design-docs/contracts/check.py`/`npm run lint` to the dev command list, and described the C6-era addition to `api_process_test.go`'s second process test.
+
+Validation:
+- `docker build -t emsim:local .` — clean; confirmed by inspecting the built image that `/app/seed/**` and the embedded schema/rubric JSON (via a successful `go build`, which would fail immediately without design-docs/contracts present) are actually there, not just that the Dockerfile parses.
+- `docker compose up --build` against a clean volume: `migrate` → `bootstrap` → `seed` → `api` all completed/started in that order; `seed` logged `services: created=3 unchanged=0`, `classifier: created=1 unchanged=0`, `scenarios: new_scenarios=2 new_versions=2 unchanged=0`; a second `docker compose up --build` (no volume reset) logged `created=0 unchanged=3/1/2` across the board — the reimport-after-supersede fix from the pre-C6 review pass and C3's original idempotency rules both hold under the real compose flow, not just `go test`.
+- Manual acceptance pass against that running stack, per `slice-2-plan.md`'s C7 verification list: instructor catalogue with the service filter (narrowing to a service that is only in a scenario's notification list, not its target, correctly shows "Сценарии не найдены"); `POST /admin/users` with an unknown `service_code` → real `422 validation_failed`; a trainee hitting `/instructor/scenarios` in the browser is redirected to their own home, and the same request against `GET /scenarios` over the API → real `403 forbidden`.
+- `make verify`, `make test-integration`, `python3 design-docs/contracts/check.py`, `make verify-web`, `cd web && npm run lint`, `make compose-config` — all clean (run after the Docker acceptance pass, from a clean `web/dist` — no build artifacts left staged).
+- Did not separately re-drive the "existing slice-1 install with an orphan `service_code`" upgrade path by hand through Docker: it is already covered end to end by `test/integration/content_fk_test.go` (migrates to schema v3, inserts the orphan row, migrates to v4, then exercises the same orphan-report → fix → validate sequence `seed/README.md` documents), which passed as part of `make test-integration` above.
+
+Open issues / risks:
+- None new. Slice 2 (`slice-planning.md` §3, C1–C7) is complete: contracts/migration, content domain, storage/import/CLI/seed, instructor HTTP API, auth-content linkage, instructor catalogue UI, and now container/compose wiring plus documentation.
+
+Next:
+- Slice 3 (`slice-planning.md` §4) — the first end-to-end single-card run: lesson draft, one assignment, start/run/item creation, the `training/dds` command surface, and the trainee's first working card screen.
