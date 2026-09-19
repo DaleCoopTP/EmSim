@@ -4,10 +4,8 @@ import { errorMessage } from "../../api/errors";
 import type { components } from "../../api/schema";
 
 type Role = components["schemas"]["Role"];
-type Level = components["schemas"]["Level"];
 
 const roles: Role[] = ["admin", "instructor", "trainee"];
-const levels: Level[] = ["easy", "medium", "hard"];
 const pageSize = 50;
 
 export function UsersRoute() {
@@ -87,7 +85,6 @@ function CreateUserForm({ onDone }: { onDone: () => void }) {
     full_name: "",
     role: "trainee" as Role,
     service_code: "",
-    level: "easy" as Level,
   });
 
   const onSubmit = (event: FormEvent) => {
@@ -97,7 +94,6 @@ function CreateUserForm({ onDone }: { onDone: () => void }) {
       password: form.password,
       full_name: form.full_name.trim(),
       role: form.role,
-      level: form.level,
       ...(form.role === "trainee" ? { service_code: form.service_code.trim() } : {}),
     };
     create.mutate(body, { onSuccess: onDone });
@@ -124,10 +120,9 @@ function CreateUserForm({ onDone }: { onDone: () => void }) {
         ФИО
         <input required value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
       </label>
-      <RoleServiceLevelFields
+      <RoleServiceFields
         role={form.role}
         serviceCode={form.service_code}
-        level={form.level}
         onChange={(patch) => setForm({ ...form, ...patch })}
       />
       {create.isError && <p role="alert" className="error">{errorMessage(create.error)}</p>}
@@ -154,7 +149,6 @@ function EditUserForm({ user, onDone }: { user: User; onDone: () => void }) {
     full_name: user.full_name,
     role: user.role,
     service_code: user.service_code ?? "",
-    level: user.level,
     active: user.active,
   });
 
@@ -164,7 +158,6 @@ function EditUserForm({ user, onDone }: { user: User; onDone: () => void }) {
     if (form.password !== "") patch.password = form.password;
     if (form.full_name.trim() !== user.full_name) patch.full_name = form.full_name.trim();
     if (form.role !== user.role) patch.role = form.role;
-    if (form.level !== user.level) patch.level = form.level;
     if (form.active !== user.active) patch.active = form.active;
     const wantService = form.role === "trainee" ? form.service_code.trim() : null;
     if (wantService !== (user.service_code ?? null)) patch.service_code = wantService;
@@ -187,10 +180,9 @@ function EditUserForm({ user, onDone }: { user: User; onDone: () => void }) {
         ФИО
         <input required value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
       </label>
-      <RoleServiceLevelFields
+      <RoleServiceFields
         role={form.role}
         serviceCode={form.service_code}
-        level={form.level}
         onChange={(patch) => setForm({ ...form, ...patch })}
       />
       <label>
@@ -210,16 +202,14 @@ function EditUserForm({ user, onDone }: { user: User; onDone: () => void }) {
   );
 }
 
-function RoleServiceLevelFields({
+function RoleServiceFields({
   role,
   serviceCode,
-  level,
   onChange,
 }: {
   role: Role;
   serviceCode: string;
-  level: Level;
-  onChange: (patch: { role?: Role; service_code?: string; level?: Level }) => void;
+  onChange: (patch: { role?: Role; service_code?: string }) => void;
 }) {
   return (
     <>
@@ -239,16 +229,6 @@ function RoleServiceLevelFields({
           <input required value={serviceCode} onChange={(e) => onChange({ service_code: e.target.value })} />
         </label>
       )}
-      <label>
-        Уровень
-        <select value={level} onChange={(e) => onChange({ level: e.target.value as Level })}>
-          {levels.map((l) => (
-            <option key={l} value={l}>
-              {l}
-            </option>
-          ))}
-        </select>
-      </label>
     </>
   );
 }

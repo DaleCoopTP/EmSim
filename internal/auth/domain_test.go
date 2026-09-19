@@ -121,26 +121,9 @@ func TestValidateNewUserRejectsBadPasswordLength(t *testing.T) {
 	}
 }
 
-func TestValidateNewUserRejectsInvalidRoleAndLevel(t *testing.T) {
-	n := baseNewUser(Role("superadmin"))
-	if err := ValidateNewUser(n); err == nil {
+func TestValidateNewUserRejectsInvalidRole(t *testing.T) {
+	if err := ValidateNewUser(baseNewUser(Role("superadmin"))); err == nil {
 		t.Fatal("unknown role was accepted")
-	}
-	n = baseNewUser(RoleAdmin)
-	n.Level = Level("impossible")
-	if err := ValidateNewUser(n); err == nil {
-		t.Fatal("unknown level was accepted")
-	}
-}
-
-func TestNewUserLevelOrDefault(t *testing.T) {
-	n := baseNewUser(RoleAdmin)
-	if got := n.LevelOrDefault(); got != LevelEasy {
-		t.Fatalf("LevelOrDefault() = %q, want easy", got)
-	}
-	n.Level = LevelHard
-	if got := n.LevelOrDefault(); got != LevelHard {
-		t.Fatalf("LevelOrDefault() = %q, want hard", got)
 	}
 }
 

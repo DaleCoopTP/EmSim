@@ -190,3 +190,25 @@ Open issues / risks:
 
 Next:
 - Slice 2: prepared-scenario catalogue — `services`/`classifier_types` seed, `scenario_versions` (immutable, `exercise_type`), `emsim import scenarios <dir>`, instructor catalogue API + UI; answer key never exposed on trainee routes.
+
+## 2026-09-19T18:50:00+03:00 — Claude Opus 5 — level is not an admin-editable account field
+
+Status: decision
+Slice: 1
+
+Changed:
+- `design-docs/contracts/openapi.yaml`: `level` removed from `UserCreate` and `UserPatch`; `User.level` documented as read-only training state.
+- `internal/auth` (`domain.go`, `admin.go`, `http/admin.go` + tests): `NewUser`/`Patch` lost `Level`; every new user starts at `easy`. `UserUpdate.Level` (store port) stays for the slice-10 apply-level use case.
+- `web/src/routes/admin/Users.tsx`: level dropped from create/edit forms, kept as a read-only column.
+
+Decisions:
+- `users.level` is the trainee's current difficulty — state produced by training (recommendation accepted by the instructor, RFC-001 §7.4, slice 10), not a provisioning attribute. The admin API therefore neither sets nor changes it; the only writer will be the apply-level application use case through the auth port.
+
+Validation:
+- `make verify`, `python3 design-docs/contracts/check.py`, `npm run check`, `npm run lint` — passed.
+
+Open issues / risks:
+- none.
+
+Next:
+- Slice 2 planning.

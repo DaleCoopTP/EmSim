@@ -81,7 +81,6 @@ type userCreateBody struct {
 	FullName    string  `json:"full_name"`
 	Role        string  `json:"role"`
 	ServiceCode *string `json:"service_code,omitempty"`
-	Level       string  `json:"level,omitempty"`
 }
 
 func (h *AdminHandlers) createUser(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +93,7 @@ func (h *AdminHandlers) createUser(w http.ResponseWriter, r *http.Request) {
 
 	created, err := h.service.CreateUser(r.Context(), auth.NewUser{
 		Login: body.Login, Password: body.Password, FullName: body.FullName,
-		Role: auth.Role(body.Role), ServiceCode: body.ServiceCode, Level: auth.Level(body.Level),
+		Role: auth.Role(body.Role), ServiceCode: body.ServiceCode,
 	}, actor, httpapi.RequestIDFromContext(r.Context()))
 	if err != nil {
 		writeUserMutationError(w, r, err)
@@ -177,14 +176,6 @@ func parseUserPatch(raw map[string]json.RawMessage) (auth.Patch, error) {
 			}
 			patch.ServiceCode = &s
 		}
-	}
-	if v, ok := raw["level"]; ok {
-		var s string
-		if err := json.Unmarshal(v, &s); err != nil {
-			return auth.Patch{}, err
-		}
-		level := auth.Level(s)
-		patch.Level = &level
 	}
 	if v, ok := raw["active"]; ok {
 		var b bool

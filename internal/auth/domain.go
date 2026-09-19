@@ -38,7 +38,11 @@ func (r Role) Valid() bool {
 	}
 }
 
-// Level is users.level / runs.level_at_start (openapi.yaml Level).
+// Level is users.level / runs.level_at_start (openapi.yaml Level): the
+// trainee's current difficulty level. It is training state, not an
+// account attribute — every user starts at LevelEasy and the only thing
+// that changes it is an instructor applying a level recommendation
+// (RFC-001 §7.4, slice 10), never the admin user API.
 type Level string
 
 const (
@@ -136,23 +140,14 @@ type SessionLookup struct {
 // NewUser is the input to creating a user (openapi.yaml UserCreate) — kept
 // distinct from User because it carries a plaintext Password the domain
 // never stores; the caller turns it into a PasswordHash with
-// HashPassword before persisting a User.
+// HashPassword before persisting a User. There is no Level: a new user
+// always starts at LevelEasy (see Level).
 type NewUser struct {
 	Login       string
 	Password    string
 	FullName    string
 	Role        Role
 	ServiceCode *string
-	Level       Level // "" means unspecified; LevelOrDefault resolves it.
-}
-
-// LevelOrDefault returns n.Level, or LevelEasy when it was left
-// unspecified — the same default users.level carries in the schema.
-func (n NewUser) LevelOrDefault() Level {
-	if n.Level == "" {
-		return LevelEasy
-	}
-	return n.Level
 }
 
 // Patch is a partial update to a user (openapi.yaml UserPatch). A nil
@@ -167,7 +162,6 @@ type Patch struct {
 	FullName    *string
 	Role        *Role
 	ServiceCode *string
-	Level       *Level
 	Active      *bool
 }
 
@@ -308,9 +302,6 @@ func ValidateNewUser(n NewUser) error {
 	if !n.Role.Valid() {
 		return invalid("role", "invalid")
 	}
-	if n.Level != "" && !n.Level.Valid() {
-		return invalid("level", "invalid")
-	}
 	return validateServiceCode(n.Role, n.ServiceCode)
 }
 
@@ -337,9 +328,6 @@ func ValidateUserPatch(current User, patch Patch) error {
 			return invalid("role", "invalid")
 		}
 		effectiveRole = *patch.Role
-	}
-	if patch.Level != nil && !patch.Level.Valid() {
-		return invalid("level", "invalid")
 	}
 	if patch.Role == nil && patch.ServiceCode == nil {
 		return nil

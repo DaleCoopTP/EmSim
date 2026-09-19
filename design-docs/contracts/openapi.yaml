@@ -556,7 +556,7 @@ components:
         full_name: { type: string }
         role: { $ref: '#/components/schemas/Role' }
         service_code: { type: string, nullable: true }
-        level: { $ref: '#/components/schemas/Level' }
+        level: { $ref: '#/components/schemas/Level', description: 'Текущий уровень обучаемого. Новый пользователь всегда easy; меняется только применением рекомендации преподавателем (срез 10), не через admin API.' }
         active: { type: boolean }
     UserCreate:
       type: object
@@ -567,7 +567,6 @@ components:
         full_name: { type: string, maxLength: 200 }
         role: { $ref: '#/components/schemas/Role' }
         service_code: { type: string }
-        level: { $ref: '#/components/schemas/Level' }
     UserPatch:
       type: object
       properties:
@@ -575,7 +574,6 @@ components:
         full_name: { type: string }
         role: { $ref: '#/components/schemas/Role' }
         service_code: { type: string, nullable: true }
-        level: { $ref: '#/components/schemas/Level' }
         active: { type: boolean }
     Workstation:
       type: object

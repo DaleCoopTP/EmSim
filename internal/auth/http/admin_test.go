@@ -195,7 +195,7 @@ func TestPatchUserSendsPathIDAndParsedPatch(t *testing.T) {
 	if call.patch.Active == nil || *call.patch.Active != false {
 		t.Fatalf("patch.Active = %v", call.patch.Active)
 	}
-	if call.patch.Password != nil || call.patch.Role != nil || call.patch.ServiceCode != nil || call.patch.Level != nil {
+	if call.patch.Password != nil || call.patch.Role != nil || call.patch.ServiceCode != nil {
 		t.Fatalf("untouched fields were set: %+v", call.patch)
 	}
 }

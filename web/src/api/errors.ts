@@ -38,7 +38,6 @@ const fieldLabels: Record<string, string> = {
   full_name: "ФИО",
   role: "роль",
   service_code: "служба",
-  level: "уровень",
   number: "номер РМ",
   workstation_no: "номер РМ",
 };

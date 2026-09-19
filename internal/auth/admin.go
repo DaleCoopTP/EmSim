@@ -25,7 +25,7 @@ func (s *Service) CreateUser(ctx context.Context, n NewUser, actor Principal, re
 	}
 	candidate := User{
 		ID: uuid.New(), Login: n.Login, PasswordHash: hash, FullName: n.FullName,
-		Role: n.Role, ServiceCode: n.ServiceCode, Level: n.LevelOrDefault(), Active: true,
+		Role: n.Role, ServiceCode: n.ServiceCode, Level: LevelEasy, Active: true,
 	}
 
 	var created User
@@ -110,7 +110,7 @@ func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, patch Patch, act
 // one. There is no authenticated actor before the very first admin
 // exists, so the audit row carries a nil ActorID.
 func (s *Service) BootstrapAdmin(ctx context.Context, login, password string) (bool, error) {
-	n := NewUser{Login: login, Password: password, FullName: "Administrator", Role: RoleAdmin, Level: LevelEasy}
+	n := NewUser{Login: login, Password: password, FullName: "Administrator", Role: RoleAdmin}
 	if err := ValidateNewUser(n); err != nil {
 		return false, err
 	}
@@ -120,7 +120,7 @@ func (s *Service) BootstrapAdmin(ctx context.Context, login, password string) (b
 	}
 	candidate := User{
 		ID: uuid.New(), Login: n.Login, PasswordHash: hash, FullName: n.FullName,
-		Role: n.Role, Level: n.LevelOrDefault(), Active: true,
+		Role: n.Role, Level: LevelEasy, Active: true,
 	}
 
 	var created bool
@@ -173,7 +173,7 @@ func wouldLoseLastActiveAdmin(current User, patch Patch) bool {
 // ServiceCode's empty-string-means-clear convention into the store's
 // explicit ServiceCodeSet/nil-means-NULL one.
 func buildUserUpdate(patch Patch) (UserUpdate, error) {
-	update := UserUpdate{FullName: patch.FullName, Role: patch.Role, Level: patch.Level, Active: patch.Active}
+	update := UserUpdate{FullName: patch.FullName, Role: patch.Role, Active: patch.Active}
 	if patch.Password != nil {
 		hash, err := HashPassword(*patch.Password, DefaultParams)
 		if err != nil {
