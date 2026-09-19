@@ -109,12 +109,17 @@ func newPublicHandler(pool *pgxpool.Pool, cfg config.API) http.Handler {
 func newPublicHTTP(pool *pgxpool.Pool, cfg config.API) (http.Handler, observability.RouteNamer) {
 	apiMux := httpapi.NewMux()
 
+	// contentService is built first: auth.NewService takes it as its
+	// ServiceCatalog port (service_code validation, slice-2-plan.md's
+	// C5) — content has no dependency on auth, so this order is the only
+	// one that avoids a forward reference.
+	contentService := content.NewService(contentpg.NewStore(pool), mustSchemaValidator())
+
 	authStore := authpg.NewStore(pool)
-	authService := auth.NewService(authStore, auth.NewPasswordIdentityProvider(authStore), cfg.SessionTTL, nil)
+	authService := auth.NewService(authStore, auth.NewPasswordIdentityProvider(authStore), cfg.SessionTTL, nil, contentService)
 	authhttp.NewHandlers(authService, cfg.CookieSecure).Register(apiMux)
 	authhttp.NewAdminHandlers(authService, cfg.CookieSecure).Register(apiMux)
 
-	contentService := content.NewService(contentpg.NewStore(pool), mustSchemaValidator())
 	contenthttp.NewHandlers(contentService, authService, cfg.CookieSecure).Register(apiMux)
 
 	root := http.NewServeMux()

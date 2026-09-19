@@ -19,6 +19,9 @@ func (s *Service) CreateUser(ctx context.Context, n NewUser, actor Principal, re
 	if err := ValidateNewUser(n); err != nil {
 		return User{}, err
 	}
+	if err := s.checkServiceCode(ctx, n.ServiceCode); err != nil {
+		return User{}, err
+	}
 	hash, err := HashPassword(n.Password, DefaultParams)
 	if err != nil {
 		return User{}, ErrStorage
@@ -60,6 +63,14 @@ func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, patch Patch, act
 		}
 		if err := ValidateUserPatch(current, patch); err != nil {
 			return err
+		}
+		// A nil or empty-string ServiceCode means "leave unchanged" or
+		// "clear to NULL" (Patch's own convention) — neither needs a
+		// catalog lookup, only assigning a real code does.
+		if patch.ServiceCode != nil && *patch.ServiceCode != "" {
+			if err := s.checkServiceCode(ctx, patch.ServiceCode); err != nil {
+				return err
+			}
 		}
 		if wouldLoseLastActiveAdmin(current, patch) {
 			count, err := s.store.CountActiveAdmins(ctx, tx)
@@ -146,6 +157,28 @@ func (s *Service) BootstrapAdmin(ctx context.Context, login, password string) (b
 		return false, err
 	}
 	return created, nil
+}
+
+// checkServiceCode verifies code against s.catalog when both are
+// present, returning *ValidationError{service_code, unknown} for a code
+// no service in content's catalog has, and ErrStorage — surfaced as a
+// real 500, not masked as a validation failure — for a catalog read
+// failure (slice-2-plan.md's C5: "ошибка чтения → 500"). A nil code or a
+// nil catalog (cmd/emsim/bootstrap.go's Service — see NewService) is a
+// no-op: ValidateNewUser/ValidateUserPatch already guarantee code is
+// only ever non-nil for a trainee, and bootstrap-admin never creates one.
+func (s *Service) checkServiceCode(ctx context.Context, code *string) error {
+	if code == nil || *code == "" || s.catalog == nil {
+		return nil
+	}
+	exists, err := s.catalog.ServiceExists(ctx, *code)
+	if err != nil {
+		return ErrStorage
+	}
+	if !exists {
+		return invalid("service_code", "unknown")
+	}
+	return nil
 }
 
 // wouldLoseLastActiveAdmin reports whether patch, applied to current,

@@ -77,6 +77,55 @@ func TestCreateUserRejectsDuplicateLogin(t *testing.T) {
 	}
 }
 
+func TestCreateUserRejectsUnknownServiceCode(t *testing.T) {
+	store := newFakeStore()
+	actor := testAdminActor(store)
+	service := newTestServiceWithCatalog(store, fakeCatalog{known: map[string]bool{"dds_district": true}})
+
+	code := "no_such_service"
+	_, err := service.CreateUser(context.Background(), NewUser{
+		Login: "dispatcher-unknown-svc", Password: "correct-horse", FullName: "x",
+		Role: RoleTrainee, ServiceCode: &code,
+	}, actor, "req-create-4")
+	var ve *ValidationError
+	if !errors.As(err, &ve) || ve.Field != "service_code" || ve.Reason != "unknown" {
+		t.Fatalf("CreateUser() error = %v, want *ValidationError{service_code, unknown}", err)
+	}
+}
+
+func TestCreateUserAllowsKnownServiceCode(t *testing.T) {
+	store := newFakeStore()
+	actor := testAdminActor(store)
+	service := newTestServiceWithCatalog(store, fakeCatalog{known: map[string]bool{"dds_district": true}})
+
+	code := "dds_district"
+	created, err := service.CreateUser(context.Background(), NewUser{
+		Login: "dispatcher-known-svc", Password: "correct-horse", FullName: "x",
+		Role: RoleTrainee, ServiceCode: &code,
+	}, actor, "req-create-5")
+	if err != nil {
+		t.Fatalf("CreateUser() error = %v", err)
+	}
+	if created.ServiceCode == nil || *created.ServiceCode != code {
+		t.Fatalf("created.ServiceCode = %v, want %q", created.ServiceCode, code)
+	}
+}
+
+func TestCreateUserSurfacesCatalogReadFailureAsStorageError(t *testing.T) {
+	store := newFakeStore()
+	actor := testAdminActor(store)
+	service := newTestServiceWithCatalog(store, fakeCatalog{err: errors.New("db unreachable")})
+
+	code := "dds_district"
+	_, err := service.CreateUser(context.Background(), NewUser{
+		Login: "dispatcher-catalog-down", Password: "correct-horse", FullName: "x",
+		Role: RoleTrainee, ServiceCode: &code,
+	}, actor, "req-create-6")
+	if !errors.Is(err, ErrStorage) {
+		t.Fatalf("CreateUser() error = %v, want ErrStorage (not masked as validation failure)", err)
+	}
+}
+
 func TestUpdateUserAppliesPartialChangesAndAudits(t *testing.T) {
 	store := newFakeStore()
 	actor := testAdminActor(store)
@@ -96,6 +145,42 @@ func TestUpdateUserAppliesPartialChangesAndAudits(t *testing.T) {
 	entries := store.auditEntriesByAction("admin.user.update")
 	if len(entries) != 1 || entries[0].RequestID != "req-update-1" {
 		t.Fatalf("audit entries = %+v", entries)
+	}
+}
+
+func TestUpdateUserRejectsUnknownServiceCode(t *testing.T) {
+	store := newFakeStore()
+	actor := testAdminActor(store)
+	target, _ := testTrainee("dispatcher-svc-target", "correct-horse", "dds_district")
+	store.addUser(target)
+	service := newTestServiceWithCatalog(store, fakeCatalog{known: map[string]bool{"dds_district": true}})
+
+	newCode := "no_such_service"
+	_, err := service.UpdateUser(context.Background(), target.ID, Patch{ServiceCode: &newCode}, actor, "req-update-svc-1")
+	var ve *ValidationError
+	if !errors.As(err, &ve) || ve.Field != "service_code" || ve.Reason != "unknown" {
+		t.Fatalf("UpdateUser() error = %v, want *ValidationError{service_code, unknown}", err)
+	}
+}
+
+// TestUpdateUserClearingServiceCodeSkipsCatalogCheck confirms Patch's
+// empty-string-means-clear convention (domain.go) never reaches the
+// catalog — clearing to NULL cannot be "unknown".
+func TestUpdateUserClearingServiceCodeSkipsCatalogCheck(t *testing.T) {
+	store := newFakeStore()
+	actor := testAdminActor(store)
+	target, _ := testTrainee("dispatcher-svc-clear", "correct-horse", "dds_district")
+	store.addUser(target)
+	newRole := RoleInstructor
+	service := newTestServiceWithCatalog(store, fakeCatalog{err: errors.New("must not be called")})
+
+	empty := ""
+	updated, err := service.UpdateUser(context.Background(), target.ID, Patch{Role: &newRole, ServiceCode: &empty}, actor, "req-update-svc-2")
+	if err != nil {
+		t.Fatalf("UpdateUser() error = %v", err)
+	}
+	if updated.ServiceCode != nil {
+		t.Fatalf("updated.ServiceCode = %v, want nil (cleared)", updated.ServiceCode)
 	}
 }
 

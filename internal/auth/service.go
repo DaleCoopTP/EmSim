@@ -62,6 +62,16 @@ type Store interface {
 	AuditRecord(ctx context.Context, tx pgx.Tx, entry audit.Entry) error
 }
 
+// ServiceCatalog is the port CreateUser/UpdateUser use to check a
+// trainee's service_code against content's services table before
+// writing it (openapi.yaml's 422 "service_code: unknown",
+// slice-2-plan.md's C5). Declared here (auth, the consumer) rather than
+// in internal/content — the same reasoning as Store: content.Service
+// satisfies this structurally without importing auth.
+type ServiceCatalog interface {
+	ServiceExists(ctx context.Context, code string) (bool, error)
+}
+
 // Service implements the auth module's login/session use cases
 // (slice-planning.md §2) and its admin user/workstation management
 // (CreateUser, UpdateUser, ListUsers, ListWorkstations,
@@ -71,19 +81,25 @@ type Service struct {
 	identityProvider IdentityProvider
 	limiter          *LoginLimiter
 	ttl              time.Duration
+	catalog          ServiceCatalog
 }
 
 // NewService constructs a Service. ttl is the session lifetime (RFC-001
 // §9/ADR-008: 12h by default — internal/platform/config.API.SessionTTL);
-// limiter defaults to DefaultLoginLimiter (5/min) when nil.
-func NewService(store Store, identityProvider IdentityProvider, ttl time.Duration, limiter *LoginLimiter) *Service {
+// limiter defaults to DefaultLoginLimiter (5/min) when nil. catalog may
+// be nil — cmd/emsim/bootstrap.go's Service never sets a service_code
+// (BootstrapAdmin always creates an admin), so it has no content module
+// to wire in; CreateUser/UpdateUser's service_code check is a no-op
+// without one. The real api process (cmd/emsim/api.go) always wires a
+// real catalog.
+func NewService(store Store, identityProvider IdentityProvider, ttl time.Duration, limiter *LoginLimiter, catalog ServiceCatalog) *Service {
 	if identityProvider == nil {
 		identityProvider = NewPasswordIdentityProvider(store)
 	}
 	if limiter == nil {
 		limiter = DefaultLoginLimiter()
 	}
-	return &Service{store: store, identityProvider: identityProvider, limiter: limiter, ttl: ttl}
+	return &Service{store: store, identityProvider: identityProvider, limiter: limiter, ttl: ttl, catalog: catalog}
 }
 
 // LoginRequest is POST /auth/login's body (openapi.yaml).

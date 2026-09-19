@@ -43,7 +43,28 @@ func testTrainee(login, password, serviceCode string) (User, string) {
 }
 
 func newTestService(store *fakeStore) *Service {
-	return NewService(store, NewPasswordIdentityProvider(store), time.Hour, NewLoginLimiter(5, time.Minute, nil))
+	return NewService(store, NewPasswordIdentityProvider(store), time.Hour, NewLoginLimiter(5, time.Minute, nil), nil)
+}
+
+// newTestServiceWithCatalog is newTestService plus a ServiceCatalog —
+// only the service_code-checking tests (admin_test.go) need a non-nil
+// one; every other test's nil catalog makes checkServiceCode a no-op.
+func newTestServiceWithCatalog(store *fakeStore, catalog ServiceCatalog) *Service {
+	return NewService(store, NewPasswordIdentityProvider(store), time.Hour, NewLoginLimiter(5, time.Minute, nil), catalog)
+}
+
+// fakeCatalog is an in-memory ServiceCatalog for CreateUser/UpdateUser's
+// service_code tests.
+type fakeCatalog struct {
+	known map[string]bool
+	err   error
+}
+
+func (c fakeCatalog) ServiceExists(_ context.Context, code string) (bool, error) {
+	if c.err != nil {
+		return false, c.err
+	}
+	return c.known[code], nil
 }
 
 func TestServiceLoginSucceedsForAdminWithoutWorkstation(t *testing.T) {
@@ -78,7 +99,7 @@ func TestServiceLoginUsesConfiguredIdentityProvider(t *testing.T) {
 	store := newFakeStore()
 	user, _ := testAdmin("federated-admin", "unused-local-password")
 	provider := &stubIdentityProvider{user: user}
-	service := NewService(store, provider, time.Hour, NewLoginLimiter(5, time.Minute, nil))
+	service := NewService(store, provider, time.Hour, NewLoginLimiter(5, time.Minute, nil), nil)
 
 	if _, err := service.Login(context.Background(), LoginRequest{Login: "external-login", Password: "external-secret"}, "req-idp"); err != nil {
 		t.Fatalf("Login() error = %v", err)
@@ -200,7 +221,7 @@ func TestServiceLoginRejectsInactiveWorkstation(t *testing.T) {
 
 func TestServiceLoginRateLimitsAfterMaxAttempts(t *testing.T) {
 	store := newFakeStore()
-	service := NewService(store, NewPasswordIdentityProvider(store), time.Hour, NewLoginLimiter(2, time.Minute, nil))
+	service := NewService(store, NewPasswordIdentityProvider(store), time.Hour, NewLoginLimiter(2, time.Minute, nil), nil)
 	for i := 0; i < 2; i++ {
 		_, err := service.Login(context.Background(), LoginRequest{Login: "someone", Password: "wrong-password"}, "req-rl")
 		if !errors.Is(err, ErrInvalidCredentials) {

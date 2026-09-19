@@ -408,6 +408,24 @@ func TestAPIProcessContentCatalogAccess(t *testing.T) {
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("create instructor status = %d", response.StatusCode)
 	}
+	// C5: auth.Service now checks a trainee's service_code against
+	// content's real catalogue (not just shape-validates it) — an
+	// unknown code is rejected with 422 before any user is written.
+	var unknownServiceErr struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	response = jsonRequest(t, ctx, adminClient, baseURL, http.MethodPost, "/api/v1/admin/users", map[string]any{
+		"login": "catalog-trainee-bad-service", "password": "correct-horse-battery-staple",
+		"full_name": "Курсант Ошибка", "role": "trainee", "service_code": "no_such_service",
+	}, &unknownServiceErr)
+	if response.StatusCode != http.StatusUnprocessableEntity || unknownServiceErr.Error.Code != "validation_failed" ||
+		unknownServiceErr.Error.Details["field"] != "service_code" {
+		t.Fatalf("create trainee with unknown service_code status = %d, body = %+v", response.StatusCode, unknownServiceErr)
+	}
+
 	var trainee userResponse
 	response = jsonRequest(t, ctx, adminClient, baseURL, http.MethodPost, "/api/v1/admin/users", map[string]any{
 		"login": "catalog-trainee", "password": "correct-horse-battery-staple",

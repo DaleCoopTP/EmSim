@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useCreateUser, useUpdateUser, useUsers, type User, type UserCreate, type UserPatch } from "../../api/admin";
+import { useServices } from "../../api/content";
 import { errorMessage } from "../../api/errors";
 import type { components } from "../../api/schema";
 
@@ -202,6 +203,11 @@ function EditUserForm({ user, onDone }: { user: User; onDone: () => void }) {
   );
 }
 
+// RoleServiceFields' service_code is a <select> populated from GET
+// /services (internal/content, slice 2), not free text — the server
+// already rejects an unknown code with 422 (internal/auth.Service's
+// ServiceCatalog check, C5), but picking from the real catalogue is
+// both faster for the admin and avoids that round trip on a typo.
 function RoleServiceFields({
   role,
   serviceCode,
@@ -211,6 +217,7 @@ function RoleServiceFields({
   serviceCode: string;
   onChange: (patch: { role?: Role; service_code?: string }) => void;
 }) {
+  const services = useServices();
   return (
     <>
       <label>
@@ -225,8 +232,26 @@ function RoleServiceFields({
       </label>
       {role === "trainee" && (
         <label>
-          Служба (код)
-          <input required value={serviceCode} onChange={(e) => onChange({ service_code: e.target.value })} />
+          Служба
+          {services.isError && <p role="alert" className="error">{errorMessage(services.error)}</p>}
+          <select
+            required
+            value={serviceCode}
+            disabled={services.isPending}
+            onChange={(e) => onChange({ service_code: e.target.value })}
+          >
+            <option value="" disabled>
+              {services.isPending ? "Загрузка…" : "Выберите службу"}
+            </option>
+            {serviceCode !== "" && !services.data?.some((s) => s.code === serviceCode) && (
+              <option value={serviceCode}>{serviceCode} (неизвестна каталогу)</option>
+            )}
+            {services.data?.map((s) => (
+              <option key={s.code} value={s.code}>
+                {s.name} ({s.code})
+              </option>
+            ))}
+          </select>
         </label>
       )}
     </>

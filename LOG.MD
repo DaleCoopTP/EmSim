@@ -353,3 +353,30 @@ Open issues / risks:
 
 Next:
 - C5 — `ServiceCatalog` port in `internal/auth` (422 on an unknown `service_code`), adapter in `content`, web `<select>` for service in the admin Users form.
+
+## 2026-09-19T23:11:26+03:00 — Claude — slice 2 C5 (auth-content linkage)
+
+Status: completed
+Slice: 2 (`slice-2-plan.md`, C5) — this closes slice-planning.md §3's C1–C5.
+
+Changed:
+- `internal/auth/service.go`: new `ServiceCatalog` port (`ServiceExists(ctx, code) (bool, error)`, declared in auth — the consumer, per CLAUDE.md); `Service` gained a `catalog` field, `NewService` a `catalog` parameter (nil is valid: `cmd/emsim/bootstrap.go`'s `Service` never sets a `service_code`, so it wires nil rather than importing `content`).
+- `internal/auth/admin.go`: `checkServiceCode` — `CreateUser` and `UpdateUser` (only when a patch actually assigns a non-empty code, never on clear-to-NULL) now check the code against the real catalog: unknown → `*ValidationError{service_code, unknown}` (422 via the existing `writeUserMutationError` mapping, no HTTP-layer change needed); a catalog read failure → `ErrStorage` (500, not masked as a validation failure, per the plan).
+- `internal/content/read.go`: `Service.ServiceExists` — content's side of the port; content still never imports auth.
+- `cmd/emsim/api.go`: `content.Service` is now constructed before `auth.Service` and passed as its `ServiceCatalog` (content has no dependency on auth, so this ordering is the only one that avoids a forward reference).
+- `internal/content/store.go`/`postgres/store.go`: `VersionSummary` gained `Difficulty` (was missing from `openapi.yaml`'s `ScenarioVersionSummary`, caught while touching this area — see also the C4 entry above, this is the second half of the same gap since the SQL wasn't selecting it either).
+- `web/src/api/content.ts` (new): `useServices()` (`GET /services`). `web/src/routes/admin/Users.tsx`: the service_code field is now a `<select>` populated from it, not free text; the current value is kept selectable even if absent from the fetched list (a stale/unknown code shouldn't silently vanish from the form).
+
+Validation:
+- `go build ./...`, `go vet ./...`, `gofmt -l .` — clean.
+- `go test ./...` — all green, including new `internal/auth` tests (`CreateUser`/`UpdateUser` reject an unknown code, accept a known one, surface a catalog read failure as `ErrStorage` not a validation error, clearing `service_code` to NULL never calls the catalog).
+- `make verify` (staticcheck included) — passed.
+- `go test -tags=integration -count=1 ./test/integration/...` — all green; `TestAPIProcessContentCatalogAccess` now also asserts creating a trainee with an unknown `service_code` gets a real 422 from the running `api` process (not just a unit test).
+- `python3 design-docs/contracts/check.py`, `cd web && npm run check`, `npm run lint`, `npm run build` — all clean.
+- Manual UI check in the browser against a throwaway PostgreSQL container (migrate → bootstrap-admin → import seed → api serving the freshly built SPA): logged in as admin, opened "Создать пользователя", the "Служба" field is a real `<select>` listing the three seeded services, created a trainee with `service_code=dds_district` picked from it — appears correctly in the user list.
+
+Open issues / risks:
+- None new. Slice 2's C1–C5 (slice-planning.md §3's core DoD: import, catalogue read API, auth linkage) are done; C6 (instructor scenario-catalogue UI) and C7 (compose/docs/final acceptance pass) remain, per `slice-2-plan.md`.
+
+Next:
+- C6 — `web/src/routes/instructor/` catalogue list + detail view (IncidentCard, Эталон, События, Звонки, Версии), reusing `CardPreview`/`ScenarioReference`.

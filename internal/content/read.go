@@ -2,6 +2,7 @@ package content
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -20,6 +21,34 @@ func (s *Service) ListServices(ctx context.Context) ([]ServiceRecord, error) {
 		return nil, err
 	}
 	return records, nil
+}
+
+// ServiceExists reports whether code names a known service — content's
+// side of internal/auth's ServiceCatalog port (slice-2-plan.md's C5).
+// Service satisfies auth.ServiceCatalog structurally by having this
+// method; content never imports auth (CLAUDE.md: consumer-owned ports).
+// An active-or-not service both counts: a service being deactivated does
+// not retroactively make an already-assigned trainee's service_code
+// invalid, and CreateUser/UpdateUser's own role rules are what actually
+// restrict which role may carry one.
+func (s *Service) ServiceExists(ctx context.Context, code string) (bool, error) {
+	var exists bool
+	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		_, err := s.store.ServiceByCode(ctx, tx, code)
+		if errors.Is(err, ErrNotFound) {
+			exists = false
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		exists = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 // ListScenarios is GET /scenarios (instructor, authz.GroupContent).
