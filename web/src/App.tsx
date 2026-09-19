@@ -1,5 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { Layout } from "./components/Layout";
+import { RequireAuth } from "./components/RequireAuth";
+import { UsersRoute } from "./routes/admin/Users";
+import { WorkstationsRoute } from "./routes/admin/Workstations";
 import { HomeRoute } from "./routes/Home";
 import { LoginRoute } from "./routes/Login";
 
@@ -18,7 +22,17 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginRoute />} />
-          <Route path="/" element={<HomeRoute />} />
+          <Route element={<RequireAuth />}>
+            <Route element={<Layout />}>
+              <Route path="/" element={<HomeRoute />} />
+            </Route>
+          </Route>
+          <Route element={<RequireAuth roles={["admin"]} />}>
+            <Route element={<Layout />}>
+              <Route path="/admin/users" element={<UsersRoute />} />
+              <Route path="/admin/workstations" element={<WorkstationsRoute />} />
+            </Route>
+          </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

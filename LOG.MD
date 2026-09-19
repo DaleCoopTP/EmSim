@@ -164,3 +164,29 @@ Open issues / risks:
 
 Next:
 - C9: login screen (`POST /auth/login`), role home screens (trainee: full name/service/workstation/"ожидайте назначения занятия"; admin: user + workstation management), client-side route protection via `useMe()`.
+
+## 2026-09-19T18:25:00+03:00 — Claude Opus 5 — slice 1 complete: login, role homes, admin UI
+
+Status: completed
+Slice: 1
+
+Changed:
+- `web/src/routes/Login.tsx`: login form (login, password, optional workstation number — the server decides whether it is required); errors rendered from the closed `Error` envelope by code and `details.field/reason` (`web/src/api/errors.ts`).
+- `web/src/routes/Home.tsx`: role home — admin → `/admin/users`; instructor → placeholder until slice 3; trainee → full name, service, workstation, «Ожидайте назначения занятия».
+- `web/src/routes/admin/Users.tsx`, `Workstations.tsx`: paginated user table with create/edit forms (role, service, level, active, password change; PATCH sends only changed fields, `service_code:null` on role change away from trainee); workstation list editor saved with one `PUT /admin/workstations` (unticked rows are left out → deactivated by the server, never deleted).
+- `web/src/components/RequireAuth.tsx`, `Layout.tsx`: client-side guard via `useMe()` (401 → `/login`, wrong role → `/`), header with identity and «Выйти»; `web/src/api/{auth,admin}.ts`: react-query mutations/queries.
+
+Decisions:
+- The client guard is a UX convenience only; every admin endpoint still enforces role on the server (checked: trainee session gets 403 from `GET /api/v1/admin/users` directly).
+- Empty-patch edits (no field changed) are sent as `{}` and the server answers 200 unchanged; not worth a client-side short-circuit.
+
+Validation:
+- `make verify`, `make verify-web`, `oxlint` — passed.
+- Manual happy path in the browser against `docker compose up --build` (slice-planning.md §2 DoD): wrong password → 401 text; admin login → users page; add РМ-05 via editor (PUT 200); create trainee with service (201); edit dialog: deactivating the only admin → 409 shown; logout → `/admin/users` bounces to login; trainee login without РМ → «Укажите номер рабочего места», unknown РМ → «не найдено», with РМ 5 → home with ФИО/служба/РМ/«Ожидайте назначения занятия»; F5 keeps the session; trainee on `/admin/users` → redirected, direct fetch → 403; logout → login page. Automated equivalent of the API side: `test/integration/api_process_test.go`.
+
+Open issues / risks:
+- Instructor home is a placeholder by design (no lessons before slice 3).
+- Admin «не получает доступ к содержимому занятий и оценок» is enforced by the authz table (`internal/auth/authz.go` tests) but has no endpoints to exercise yet.
+
+Next:
+- Slice 2: prepared-scenario catalogue — `services`/`classifier_types` seed, `scenario_versions` (immutable, `exercise_type`), `emsim import scenarios <dir>`, instructor catalogue API + UI; answer key never exposed on trainee routes.

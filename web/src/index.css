@@ -1,10 +1,76 @@
-/* Minimal reset only — the ARM-112 visual pass (ADR-009) happens after
-   slice 7 (slice-planning.md §1), not here. */
+/* Minimal, functional styling only — the ARM-112 visual pass (ADR-009)
+   happens after slice 7 (slice-planning.md §1), not here. */
 :root {
   color-scheme: light;
   font-family: system-ui, sans-serif;
+  font-size: 15px;
 }
 
 body {
   margin: 0;
+}
+
+.layout-header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid #ccc;
+}
+
+.layout-header nav {
+  display: flex;
+  gap: 1rem;
+}
+
+.layout-header nav a.active {
+  font-weight: bold;
+}
+
+.layout-user {
+  margin-left: auto;
+}
+
+.layout-main,
+.login {
+  padding: 1rem;
+}
+
+.login-form,
+.user-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 24rem;
+  margin-bottom: 1.5rem;
+}
+
+.login-form label,
+.user-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+th,
+td {
+  border: 1px solid #ccc;
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+
+tr.inactive {
+  color: #888;
+}
+
+.error {
+  color: #b00020;
+}
+
+.notice {
+  font-weight: bold;
 }

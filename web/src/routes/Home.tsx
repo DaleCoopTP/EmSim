@@ -1,30 +1,35 @@
-import { Navigate } from "react-router-dom";
-import { useMe } from "../api/useMe";
+import { Navigate, useOutletContext } from "react-router-dom";
+import type { Me } from "../api/useMe";
 
-// Route skeleton only (slice 1 commit plan, C8): proves the session
-// round-trips through useMe() and the client-side redirect works. The
-// actual per-role screens (admin's user/workstation management, the
-// trainee's "ФИО/служба/РМ/ожидайте назначения занятия") land in C9 —
-// the server is the real authorization boundary regardless (CLAUDE.md:
-// "authorization and ownership checks... on the server"), so this
-// redirect is a UX convenience, not a security control.
+// Role home (slice-planning.md §2 happy path step 4): admin goes straight
+// to user management; instructor has nothing to do until lessons exist
+// (slice 3); trainee sees exactly what the DoD asks for — full name,
+// service, chosen workstation, and "Ожидайте назначения занятия".
 export function HomeRoute() {
-  const { data: me, isPending } = useMe();
+  const me = useOutletContext<Me>();
 
-  if (isPending) {
-    return <p>Загрузка…</p>;
+  switch (me.user.role) {
+    case "admin":
+      return <Navigate to="/admin/users" replace />;
+    case "instructor":
+      return (
+        <section>
+          <h1>{me.user.full_name}</h1>
+          <p>Занятия появятся в срезе 3.</p>
+        </section>
+      );
+    case "trainee":
+      return (
+        <section>
+          <h1>{me.user.full_name}</h1>
+          <dl>
+            <dt>Служба</dt>
+            <dd>{me.user.service_code ?? "—"}</dd>
+            <dt>Рабочее место</dt>
+            <dd>{me.workstation ? `${me.workstation.label} (№ ${me.workstation.number})` : "не выбрано"}</dd>
+          </dl>
+          <p className="notice">Ожидайте назначения занятия.</p>
+        </section>
+      );
   }
-  if (!me) {
-    return <Navigate to="/login" replace />;
-  }
-
-  return (
-    <main>
-      <h1>EmSim</h1>
-      <p>
-        Вы вошли как {me.user.full_name} ({me.user.role}).
-      </p>
-      <p>Экран для этой роли появится в следующем коммите (срез 1, C9).</p>
-    </main>
-  );
 }
