@@ -28,7 +28,8 @@
     },
     "contacts": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
+      "description": "Пусто, если ни один звонок сценарием не требуется (ни reference.call.required, ни события phone_incoming/notice не ссылаются на contact.key); тогда пустой список не удовлетворяет требованию звонка — семантическая проверка импортёра это гарантирует.",
       "items": {
         "$ref": "#/$defs/contact"
       }
@@ -546,6 +547,39 @@
               "description": "Звонок должен быть до этого статуса"
             }
           }
+        },
+        "field_corrections": {
+          "type": "array",
+          "description": "Поля входящей карточки, которые обучаемый обязан исправить до указанного статуса (пилотное расширение слайса 2 — training/dds в срезе 3 определит команду исправления и её место в evidence). Исходное значение в card может намеренно не совпадать с expected_value — это и есть ошибка, которую находит обучаемый; отсутствие этого блока означает отсутствие ожидаемых исправлений.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "expected_value",
+              "before_status"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "enum": [
+                  "/card/address/okrug"
+                ],
+                "description": "JSON Pointer на поле card. Пилотный список путей — только адрес округа; расширяется по мере появления новых кейсов, не по одному сценарию за раз."
+              },
+              "expected_value": {
+                "type": "string"
+              },
+              "before_status": {
+                "$ref": "#/$defs/reaction",
+                "description": "Исправление ожидается до простановки этого статуса"
+              }
+            }
+          }
+        },
+        "pilot_goal": {
+          "const": "accept_card",
+          "description": "Пилотное упрощение цели прохождения (не команда закрытия и не самостоятельный close_reason): срез 2 показывает эталон преподавателю, срез 3 определит, как учебная цель соотносится с ADR-011/RFC §7.4 close. Отсутствие поля — обычные правила завершения ДДС."
         },
         "guide_refs": {
           "type": "array",

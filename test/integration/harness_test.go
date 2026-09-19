@@ -224,7 +224,10 @@ func assertTableSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate application tables: %v", err)
 	}
-	want := []string{"audit_log", "sessions", "tasks", "users", "workstations"}
+	want := []string{
+		"audit_log", "classifier_types", "scenario_versions", "scenarios",
+		"services", "sessions", "tasks", "tickets", "users", "workstations",
+	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("application tables = %v, want %v", got, want)
 	}
@@ -236,7 +239,10 @@ func assertApplicationTablesAbsent(t *testing.T, ctx context.Context, pool *pgxp
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		FROM pg_catalog.pg_tables
-		WHERE schemaname = 'public' AND tablename IN ('audit_log', 'sessions', 'tasks', 'users', 'workstations')
+		WHERE schemaname = 'public' AND tablename IN (
+			'audit_log', 'classifier_types', 'scenario_versions', 'scenarios',
+			'services', 'sessions', 'tasks', 'tickets', 'users', 'workstations'
+		)
 	`).Scan(&count); err != nil {
 		t.Fatalf("count application tables: %v", err)
 	}

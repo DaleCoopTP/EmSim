@@ -1,0 +1,13 @@
+// Package contracts embeds the executable JSON Schema contracts (as-is,
+// same files design-docs/contracts/check.py validates offline) so the
+// emsim binary carries them without a runtime file dependency — the
+// pattern migrations/embed.go already uses for *.sql. internal/content's
+// schema validator (internal/content/schema) is the first consumer;
+// rubric.default.json is embedded too since internal/content.Validate
+// checks scenario.reference.scoring against its criterion ids.
+package contracts
+
+import "embed"
+
+//go:embed scenario.schema.json scenario-file.schema.json rubric.default.json
+var Files embed.FS

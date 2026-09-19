@@ -162,12 +162,14 @@ paths:
     get:
       tags: [content]
       summary: Справочник служб и их workflow
+      description: Роли — admin и instructor (authz.GroupServices). Администратору доступ к справочнику нужен для выбора service_code обучаемого (/admin/users); доступ к содержимому сценариев/эталонов он при этом не получает.
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Service' } } } } }
   /scenarios:
     get:
       tags: [content]
       summary: Список сценариев
+      description: Роль — instructor (authz.GroupContent).
       parameters:
         - { name: service, in: query, schema: { type: string } }
         - { name: status, in: query, schema: { type: string, enum: [draft, approved, archived] } }
@@ -180,6 +182,7 @@ paths:
     post:
       tags: [content]
       summary: Создать сценарий вручную (версия 1, draft)
+      description: Не реализовано в срезе 2 (каталог в этом срезе только загружается штатным CLI-импортом из подготовленных файлов, slice-planning.md §3). Редактор появляется в срезе 11; маршрут не зарегистрирован и отвечает 404 до этого среза.
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScenarioCreate' } } } }
       responses:
         '201': { description: Создан, content: { application/json: { schema: { $ref: '#/components/schemas/Scenario' } } } }
@@ -188,6 +191,7 @@ paths:
     post:
       tags: [content]
       summary: Сгенерировать сценарии локальной LLM — фоновые задачи
+      description: Не реализовано до среза 11 (генерация сценариев); маршрут не зарегистрирован и отвечает 404 до этого среза.
       requestBody:
         required: true
         content:
@@ -209,12 +213,14 @@ paths:
     get:
       tags: [content]
       summary: Сценарий с текущей версией (эталон виден только преподавателю)
+      description: Роль — instructor. Возвращает текущую approved-версию (тело, version_id, digest); при её отсутствии (только draft — не бывает в срезе 2, т.к. импорт сразу утверждает) — 404.
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scenario' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
     put:
       tags: [content]
       summary: Правка — создаёт новую draft-версию
+      description: Не реализовано в срезе 2 — до утверждённого среза 11 контент только загружается импортом (CLI) и редактируется повторным импортом с явной version. Маршрут не зарегистрирован и отвечает 404 до среза 11.
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScenarioBody' } } } }
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scenario' } } } }
@@ -222,6 +228,7 @@ paths:
     delete:
       tags: [content]
       summary: Архивировать (не удаляет версии, на которые ссылаются карточки)
+      description: Не реализовано в срезе 2; маршрут не зарегистрирован и отвечает 404 до среза 11.
       responses:
         '204': { description: Архивирован }
   /scenarios/{scenarioId}/versions:
@@ -229,6 +236,7 @@ paths:
     get:
       tags: [content]
       summary: Версии сценария
+      description: Роль — instructor. Метаданные всех версий (id, version, status, digest, атрибуция утверждения); полное тело исторической (superseded) версии этот endpoint не отдаёт.
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScenarioVersionSummary' } } } } }
   /scenarios/{scenarioId}/regenerate:
@@ -236,6 +244,7 @@ paths:
     post:
       tags: [content]
       summary: Перегенерировать по комментарию преподавателя — фоновая задача
+      description: Не реализовано до среза 11; маршрут не зарегистрирован и отвечает 404 до этого среза.
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [comment], properties: { comment: { type: string, maxLength: 2000 }, keep: { type: array, items: { type: string, enum: [card, events, reference] } } } } } } }
       responses:
         '202': { $ref: '#/components/responses/Accepted' }
@@ -244,6 +253,7 @@ paths:
     post:
       tags: [content]
       summary: Утвердить текущую draft-версию; ставит задачу озвучки
+      description: Не реализовано в срезе 2 — импорт сразу создаёт approved-версию, отдельного шага утверждения преподавателем нет. Появляется вместе с редактором в срезе 11; маршрут не зарегистрирован и отвечает 404 до этого среза.
       responses:
         '200': { description: Утверждено, content: { application/json: { schema: { $ref: '#/components/schemas/Scenario' } } } }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -253,8 +263,10 @@ paths:
     get:
       tags: [content]
       summary: Как увидит карточку обучаемый (без эталона) + эталон отдельно
+      description: Роль — instructor. Не создаёт item/run — чистый просмотр. card — allowlist-проекция без закрытых полей (§CardPreview); reference — типизированный эталон для преподавателя. Время показывается относительно выдачи (registered_at_offset_s), не абсолютной датой — абсолютное время появится вместе с исполнением упражнения (срез 3).
       responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { card: { $ref: '#/components/schemas/CardView' }, reference: { type: object } } } } } }
+        '200': { description: OK, content: { application/json: { schema: { type: object, required: [card, reference], properties: { card: { $ref: '#/components/schemas/CardPreview' }, reference: { $ref: '#/components/schemas/ScenarioReference' } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ------------------------------------------------------------ lessons (instructor)
   /lessons:
@@ -624,8 +636,9 @@ components:
         status: { type: string, enum: [draft, approved, archived] }
         origin: { type: string, enum: [manual, ticket, generated] }
         version: { type: integer }
+        source_key: { type: string, nullable: true, description: Ключ файла подготовленного сценария (scenarios.source_key); null для сценариев без файлового происхождения (редактор/генерация, срез 11). }
         has_events: { type: boolean }
-        has_voice: { type: boolean }
+        has_voice: { type: boolean, description: 'Наличие подготовленного аудио (voice_assets), не просто присутствие contacts/events. Озвучка появляется в срезе 11 — до этого поле всегда false у каталога.' }
         updated_at: { type: string, format: date-time }
     Scenario:
       allOf:
@@ -706,6 +719,113 @@ components:
               status: { $ref: '#/components/schemas/ReactionStatus' }
               mine: { type: boolean, description: Служба обучаемого }
         contacts: { type: array, items: { $ref: '#/components/schemas/Contact' } }
+
+    Address:
+      type: object
+      description: Структурированный адрес карточки (scenario.schema.json $defs.card.properties.address). Поля необязательны по отдельности — заполняются те, что есть в конкретном сценарии.
+      properties:
+        district: { type: string }
+        street: { type: string }
+        house: { type: string }
+        building: { type: string }
+        entrance: { type: string }
+        floor: { type: string }
+        flat: { type: string }
+        landmark: { type: string }
+        text: { type: string, description: Адрес одной строкой }
+        country: { type: string }
+        region: { type: string }
+        city: { type: string }
+        okrug: { type: string }
+        object: { type: string }
+        structure: { type: string }
+        code: { type: string }
+        descriptive: { type: string }
+
+    CardPreview:
+      type: object
+      description: |
+        Просмотр карточки преподавателем (GET /scenarios/{id}/preview) — та же allowlist-проекция,
+        что увидит обучаемый в срезе 3 (internal/content.CardPreview), плюс отсутствующее в CardView
+        относительное время. Не содержит reference, hints, generation, events[].expects/text,
+        field_corrections, pilot_goal — эти поля преподаватель видит отдельно в ScenarioReference.
+      required: [number, registered_at_offset_s, address, incident, notification_list]
+      properties:
+        number: { type: string }
+        registered_at_offset_s: { type: integer, description: Секунды регистрации в 112 относительно момента выдачи карточки (card.registered_at_offset_s); обычно отрицательное. Абсолютное время появляется только при реальной выдаче в срезе 3. }
+        applicant:
+          type: object
+          properties:
+            name: { type: string }
+            phone: { type: string }
+            status: { type: string, enum: [witness, victim, relative, acquaintance, child, participant] }
+        address: { $ref: '#/components/schemas/Address' }
+        incident:
+          type: object
+          properties:
+            type_code: { type: string }
+            type_name: { type: string }
+            features: { type: object, additionalProperties: { type: [string, boolean, number] } }
+            description: { type: string }
+            victims: { type: integer, minimum: 0 }
+            danger: { type: string }
+        notification_list:
+          type: array
+          items:
+            type: object
+            properties:
+              service: { type: string }
+              status: { $ref: '#/components/schemas/ReactionStatus' }
+              mine: { type: boolean, description: Служба обучаемого }
+        phones:
+          type: object
+          properties:
+            aon: { type: string }
+            provided: { type: string }
+            on_site: { type: string }
+        channel: { type: string }
+        contacts: { type: array, items: { $ref: '#/components/schemas/Contact' } }
+
+    ScenarioReference:
+      type: object
+      description: Эталон сценария — то, с чем сравнивает оценка (scenario.schema.json $defs.reference). Обучаемому никогда не отдаётся; здесь — только для просмотра преподавателем.
+      required: [primary_decision, expected_chain, call]
+      properties:
+        primary_decision:
+          type: object
+          properties:
+            status: { type: string, enum: [accepted, not_accepted, completed_without_team] }
+            reason_tags: { type: array, items: { type: string } }
+            comment_required: { type: boolean }
+            comment_must_mention: { type: array, items: { type: string } }
+        expected_chain: { type: array, items: { $ref: '#/components/schemas/ReactionStatus' } }
+        call:
+          type: object
+          properties:
+            required: { type: boolean }
+            to: { type: string, description: contact.key }
+            must_mention: { type: array, items: { type: string } }
+            before_status: { $ref: '#/components/schemas/ReactionStatus' }
+        field_corrections:
+          type: array
+          description: 'Пилотное расширение слайса 2 (RFC-001 slice-planning.md §3): поля, которые обучаемый обязан исправить до указанного статуса. Пусто, если исправлений не требуется.'
+          items:
+            type: object
+            properties:
+              path: { type: string, description: JSON Pointer на поле card, например /card/address/okrug }
+              expected_value: { type: string }
+              before_status: { $ref: '#/components/schemas/ReactionStatus' }
+        pilot_goal: { type: string, enum: [accept_card], description: Пилотное упрощение цели прохождения; не команда закрытия. Отсутствует у сценариев с обычными правилами завершения. }
+        guide_refs: { type: array, items: { type: string } }
+        notes: { type: string }
+        scoring:
+          type: object
+          description: Поправки к рубрике по умолчанию (ADR-013); отсутствие блока = дефолт.
+          properties:
+            weights: { type: object, additionalProperties: { type: number, minimum: 0, maximum: 100 } }
+            critical: { type: array, items: { type: string } }
+            disabled: { type: array, items: { type: string } }
+            note: { type: string }
 
     LessonCreate:
       type: object

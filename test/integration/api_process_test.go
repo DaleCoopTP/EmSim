@@ -197,6 +197,11 @@ func TestAPIProcessAuthHappyPath(t *testing.T) {
 	if err := pgstore.Up(ctx, databaseURL); err != nil {
 		t.Fatal(err)
 	}
+	// users_service_code_fkey (migrations/00004) requires the trainee's
+	// service_code below to name a real services row; internal/content's
+	// import CLI is what a real installation uses to seed it (slice 2's
+	// later commits), but this test only needs the FK's far side to exist.
+	seedServiceFixture(t, ctx, databaseURL, "dds_district")
 
 	binary := filepath.Join(t.TempDir(), "emsim")
 	build := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/emsim")
@@ -324,5 +329,23 @@ func TestAPIProcessAuthHappyPath(t *testing.T) {
 		map[string]any{"login": traineeLogin, "password": "definitely-wrong"}, nil)
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong password login status = %d, want 401", response.StatusCode)
+	}
+}
+
+// seedServiceFixture inserts a minimal content.services row directly (not
+// through internal/content — that module's own import CLI is slice 2's
+// later commits) so a trainee created in this test satisfies
+// users_service_code_fkey. It opens and closes its own short-lived pool;
+// the rest of this test only talks to the running "emsim api" subprocess
+// over HTTP.
+func seedServiceFixture(t *testing.T, ctx context.Context, databaseURL, code string) {
+	t.Helper()
+	pool, err := pgstore.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open PostgreSQL for service fixture: %v", err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, `INSERT INTO services (code, name, workflow) VALUES ($1, $1, '{}'::jsonb)`, code); err != nil {
+		t.Fatalf("insert fixture service %q: %v", code, err)
 	}
 }

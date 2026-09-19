@@ -49,6 +49,12 @@ CREATE TABLE services (
     CONSTRAINT services_workflow_object CHECK (jsonb_typeof(workflow) = 'object')
 );
 
+-- auth.users.service_code существовал до этого модуля (slice 1) без FK — служба
+-- как содержимое появляется только здесь. Оператор обновления должен провести
+-- существующие профили через NOT VALID → устранение расхождений → VALIDATE
+-- CONSTRAINT (мастер-последовательность — в migrations/00004, не здесь).
+ALTER TABLE users ADD CONSTRAINT users_service_code_fkey FOREIGN KEY (service_code) REFERENCES services(code);
+
 CREATE TABLE classifier_types (
     id            uuid PRIMARY KEY,
     code          text NOT NULL UNIQUE,                -- из XLSX
@@ -77,6 +83,7 @@ CREATE TABLE scenarios (
     origin         text NOT NULL CHECK (origin IN ('manual', 'ticket', 'generated')),
     ticket_id      uuid REFERENCES tickets(id),
     status         text NOT NULL CHECK (status IN ('draft', 'approved', 'archived')),
+    source_key     text UNIQUE,                         -- ключ файла подготовленного сценария (эталонный импорт, slice 2); NULL для будущего авторства без файлов (редактор/генерация, срез 11)
     created_by     uuid NOT NULL REFERENCES users(id),
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now()
@@ -102,11 +109,19 @@ CREATE TABLE scenario_versions (
     UNIQUE (scenario_id, version),
     CONSTRAINT scenario_versions_body_object CHECK (jsonb_typeof(body) = 'object'),
     CONSTRAINT scenario_versions_digest_length CHECK (octet_length(digest) = 32),
+    -- draft — ещё не утверждена, оба поля пусты; approved — обе заполнены;
+    -- superseded сохраняет сведения об утверждении версии, которая была
+    -- approved (обе заполнены), но версия могла устареть и не будучи
+    -- approved (например, при будущей отмене черновика) — тогда обе пусты.
     CONSTRAINT scenario_versions_approval_shape CHECK (
-        (status <> 'approved' AND approved_at IS NULL) OR
-        (status = 'approved' AND approved_by IS NOT NULL AND approved_at IS NOT NULL)
+        (status = 'draft' AND approved_by IS NULL AND approved_at IS NULL) OR
+        (status = 'approved' AND approved_by IS NOT NULL AND approved_at IS NOT NULL) OR
+        (status = 'superseded' AND (approved_by IS NULL) = (approved_at IS NULL))
     )
 );
+-- Не более одной approved-версии одновременно: approve/regenerate-переходы
+-- (срез 11) переводят предыдущую в superseded в той же транзакции.
+CREATE UNIQUE INDEX scenario_versions_one_approved_idx ON scenario_versions (scenario_id) WHERE status = 'approved';
 
 -- ============================================================ platform (объявляем раньше — на blobs ссылаются)
 
@@ -545,6 +560,23 @@ END;
 $$;
 CREATE TRIGGER scenario_version_content_immutable BEFORE UPDATE ON scenario_versions
   FOR EACH ROW EXECUTE FUNCTION protect_scenario_version_content();
--- Каскадное удаление этих учебных данных также отклоняется; политика удаления вне этой правки.
+
+-- approved/superseded версия могла быть назначена и пройдена (RFC-001 §6:
+-- "одна версия сценария может безопасно использоваться во многих
+-- назначениях") — удаление стёрло бы неизменяемую ссылку прогона. Черновик
+-- (status='draft', ещё не approved) можно отбросить — он для этого и есть.
+CREATE FUNCTION reject_scenario_version_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.status <> 'draft' THEN
+    RAISE EXCEPTION 'immutable scenario version: cannot delete a % version', OLD.status;
+  END IF;
+  RETURN OLD;
+END;
+$$;
+CREATE TRIGGER scenario_version_delete_guard BEFORE DELETE ON scenario_versions
+  FOR EACH ROW EXECUTE FUNCTION reject_scenario_version_delete();
+-- scenarios(ON DELETE CASCADE на scenario_id) не обходит эту защиту: любая
+-- approved/superseded дочерняя версия сначала отклонит DELETE-каскад тем же
+-- триггером, до того как Postgres удалит родительскую строку scenarios.
 
 COMMIT;

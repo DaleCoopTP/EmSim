@@ -1,10 +1,11 @@
 // internal/postgres/postgres.go; adapted: Ready() checks for the set of
 // tables actually migrated so far — "tasks" (00001), "audit_log" (00002),
-// and now "users"/"workstations"/"sessions" (00003) — not every domain
-// table the eventual schema.sql has (most of it, e.g. runs/items/
-// dialogues, is not ported/built yet — see docs/technical-discovery.md
-// §3.5). applicationTables grows as later migrations land; it is not
-// meant to enumerate the final schema up front.
+// "users"/"workstations"/"sessions" (00003), and now "services"/
+// "classifier_types"/"tickets"/"scenarios"/"scenario_versions" (00004) —
+// not every domain table the eventual schema.sql has (most of it, e.g.
+// runs/items/dialogues, is not ported/built yet — see
+// docs/technical-discovery.md §3.5). applicationTables grows as later
+// migrations land; it is not meant to enumerate the final schema up front.
 package postgres
 
 import (
@@ -25,12 +26,15 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-const ExpectedSchemaVersion int64 = 3
+const ExpectedSchemaVersion int64 = 4
 
 // applicationTables lists the platform tables Ready() requires to exist,
 // alongside the expected goose version — a version match alone would not
 // catch a migration that ran but left the table set incomplete.
-var applicationTables = []string{"audit_log", "sessions", "tasks", "users", "workstations"}
+var applicationTables = []string{
+	"audit_log", "sessions", "tasks", "users", "workstations",
+	"classifier_types", "scenario_versions", "scenarios", "services", "tickets",
+}
 
 var (
 	ErrDatabaseURLRequired = errors.New("database URL is required")
@@ -73,6 +77,37 @@ func Up(ctx context.Context, databaseURL string) error {
 
 func Down(ctx context.Context, databaseURL string) error {
 	return migrate(ctx, databaseURL, false)
+}
+
+// UpTo migrates only up to version (inclusive) — a test helper for
+// simulating an existing installation mid-upgrade (e.g. "at migration
+// 00003, before 00004's users_service_code_fkey exists"). Production
+// code always uses Up, which migrates to the latest migration.
+func UpTo(ctx context.Context, databaseURL string, version int64) error {
+	db, err := openSQL(databaseURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	operationCtx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	if err := db.PingContext(operationCtx); err != nil {
+		return fmt.Errorf("ping migration database: %w", ErrDatabaseUnavailable)
+	}
+
+	provider, err := goose.NewProvider(
+		goose.DialectPostgres, db, migrations.Files,
+		goose.WithDisableGlobalRegistry(true),
+		goose.WithSlog(slog.New(slog.NewTextHandler(io.Discard, nil))),
+	)
+	if err != nil {
+		return fmt.Errorf("create migration provider: %w", ErrMigrationFailed)
+	}
+	if _, err := provider.UpTo(operationCtx, version); err != nil {
+		return fmt.Errorf("migrate up to %d: %w", version, ErrMigrationFailed)
+	}
+	return nil
 }
 
 func CurrentVersion(ctx context.Context, pool *pgxpool.Pool) (int64, error) {

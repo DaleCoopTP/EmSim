@@ -47,6 +47,18 @@ func newAdmin(login string) auth.User {
 	return u
 }
 
+// insertService satisfies users_service_code_fkey (migrations/00004) for
+// tests that insert a trainee with a given service_code. It writes
+// directly with SQL rather than through internal/content (that module's
+// import/store lands in slice 2's later commits) — a bare content.services
+// row is all auth's own tests need from the FK's far side.
+func insertService(t *testing.T, ctx context.Context, pool *pgxpool.Pool, code string) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `INSERT INTO services (code, name, workflow) VALUES ($1, $1, '{}'::jsonb)`, code); err != nil {
+		t.Fatalf("insert fixture service %q: %v", code, err)
+	}
+}
+
 func withTx(t *testing.T, ctx context.Context, pool *pgxpool.Pool, fn func(tx pgx.Tx) error) {
 	t.Helper()
 	tx, err := pool.Begin(ctx)
@@ -164,6 +176,7 @@ func TestAuthStoreUserByLoginAndByIDRoundTrip(t *testing.T) {
 	defer cancel()
 	pool := migratedTestPool(t, ctx)
 	store := authpg.NewStore(pool)
+	insertService(t, ctx, pool, "dds_district")
 
 	want := newTrainee("dispatcher-lookup", "dds_district")
 	withTx(t, ctx, pool, func(tx pgx.Tx) error {
@@ -273,6 +286,7 @@ func TestAuthStoreUpdateUserPartialUpdateLeavesOtherFieldsAlone(t *testing.T) {
 	defer cancel()
 	pool := migratedTestPool(t, ctx)
 	store := authpg.NewStore(pool)
+	insertService(t, ctx, pool, "dds_district")
 
 	var original auth.User
 	withTx(t, ctx, pool, func(tx pgx.Tx) error {
@@ -325,6 +339,7 @@ func TestAuthStoreUpdateUserClearsServiceCode(t *testing.T) {
 	defer cancel()
 	pool := migratedTestPool(t, ctx)
 	store := authpg.NewStore(pool)
+	insertService(t, ctx, pool, "dds_district")
 
 	var original auth.User
 	withTx(t, ctx, pool, func(tx pgx.Tx) error {
@@ -360,6 +375,7 @@ func TestAuthStoreCountActiveAdmins(t *testing.T) {
 	defer cancel()
 	pool := migratedTestPool(t, ctx)
 	store := authpg.NewStore(pool)
+	insertService(t, ctx, pool, "dds_district")
 
 	withTx(t, ctx, pool, func(tx pgx.Tx) error {
 		count, err := store.CountActiveAdmins(ctx, tx)
@@ -513,6 +529,7 @@ func TestAuthStoreSessionByIDJoinsUserAndWorkstation(t *testing.T) {
 	defer cancel()
 	pool := migratedTestPool(t, ctx)
 	store := authpg.NewStore(pool)
+	insertService(t, ctx, pool, "dds_district")
 
 	var user auth.User
 	var workstation auth.Workstation

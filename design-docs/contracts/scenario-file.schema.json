@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emsim.local/schemas/scenario-file/v1",
+  "title": "ScenarioFile v1",
+  "description": "Файл подготовленного сценария на диске (seed/scenarios/*.json), загружаемый `emsim import scenarios`. Обёртка над неизменяемым телом версии (scenario.schema.json): даёт импортёру идентичность (key), явный номер версии и происхождение, не входящие в body. Одна пара (key, version) соответствует ровно одной строке scenario_versions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "key",
+    "version",
+    "title",
+    "origin",
+    "body"
+  ],
+  "properties": {
+    "schema": {
+      "const": "emsim/scenario-file/v1"
+    },
+    "key": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]{3,64}$",
+      "description": "Стабильный идентификатор сценария независимо от версии (scenarios.source_key). Не зависит от имени/пути файла; повторный импорт того же key с новым содержимым body требует явно увеличенного version, а не переименования файла."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Явный номер версии этого key. Импортёр отклоняет пропуски (следующая версия обязана быть max(version)+1 для уже известного key, и 1 для нового) и повторную попытку задать уже занятый номер другим содержимым."
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "scenarios.title. В срезе 2 закреплён за key: импорт отклоняет попытку сменить title при повторном импорте того же key."
+    },
+    "origin": {
+      "type": "string",
+      "enum": [
+        "manual"
+      ],
+      "description": "scenarios.origin. Срез 2 загружает только вручную подготовленные файлы; ticket/generated происхождение появится с билетами и генерацией (срез 11)."
+    },
+    "body": {
+      "$ref": "https://emsim.local/schemas/scenario/v1",
+      "description": "Неизменяемое тело версии по scenario.schema.json. target_service и exercise_type читаются из body, а не дублируются в обёртке — единственный источник."
+    }
+  }
+}
