@@ -12,6 +12,8 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -79,6 +81,63 @@ func TestAuthStoreInsertUserRejectsDuplicateLogin(t *testing.T) {
 	})
 	if !errors.Is(err, auth.ErrLoginTaken) {
 		t.Fatalf("InsertUser() duplicate login error = %v, want auth.ErrLoginTaken", err)
+	}
+}
+
+// TestAuthStoreInsertUserConcurrentDuplicateLoginOnlyOneSucceeds exercises
+// the same guarantee as the sequential test above, but under a real race:
+// many goroutines racing to insert the same login concurrently must still
+// leave exactly one winner, enforced by the users_login_key unique index
+// itself, not by anything sequential in Go. C6's admin.user.create path
+// (Service.CreateUser) relies on this — the service never pre-checks
+// login availability, it lets the database decide.
+func TestAuthStoreInsertUserConcurrentDuplicateLoginOnlyOneSucceeds(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	pool := migratedTestPool(t, ctx)
+	store := authpg.NewStore(pool)
+
+	const attempts = 10
+	var wg sync.WaitGroup
+	var successCount, conflictCount, otherErrCount int32
+
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := store.WithTx(ctx, func(tx pgx.Tx) error {
+				_, err := store.InsertUser(ctx, tx, newAdmin("dispatcher-race"))
+				return err
+			})
+			switch {
+			case err == nil:
+				atomic.AddInt32(&successCount, 1)
+			case errors.Is(err, auth.ErrLoginTaken):
+				atomic.AddInt32(&conflictCount, 1)
+			default:
+				atomic.AddInt32(&otherErrCount, 1)
+				t.Errorf("unexpected InsertUser() error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if successCount != 1 {
+		t.Fatalf("successCount = %d, want exactly 1", successCount)
+	}
+	if conflictCount != attempts-1 {
+		t.Fatalf("conflictCount = %d, want %d", conflictCount, attempts-1)
+	}
+	if otherErrCount != 0 {
+		t.Fatalf("otherErrCount = %d, want 0", otherErrCount)
+	}
+
+	var rowCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE login = 'dispatcher-race'`).Scan(&rowCount); err != nil {
+		t.Fatalf("count users: %v", err)
+	}
+	if rowCount != 1 {
+		t.Fatalf("users with login dispatcher-race = %d, want 1", rowCount)
 	}
 }
 
@@ -224,7 +283,7 @@ func TestAuthStoreUpdateUserPartialUpdateLeavesOtherFieldsAlone(t *testing.T) {
 
 	newName := "Петров Пётр Петрович"
 	withTx(t, ctx, pool, func(tx pgx.Tx) error {
-		updated, err := store.UpdateUser(ctx, tx, original.ID, authpg.UserUpdate{FullName: &newName})
+		updated, err := store.UpdateUser(ctx, tx, original.ID, auth.UserUpdate{FullName: &newName})
 		if err != nil {
 			t.Fatalf("UpdateUser() error = %v", err)
 		}
@@ -252,7 +311,7 @@ func TestAuthStoreUpdateUserEmptyUpdateReturnsCurrentRow(t *testing.T) {
 	})
 
 	withTx(t, ctx, pool, func(tx pgx.Tx) error {
-		got, err := store.UpdateUser(ctx, tx, original.ID, authpg.UserUpdate{})
+		got, err := store.UpdateUser(ctx, tx, original.ID, auth.UserUpdate{})
 		if err != nil {
 			t.Fatalf("UpdateUser(empty) error = %v", err)
 		}
@@ -280,7 +339,7 @@ func TestAuthStoreUpdateUserClearsServiceCode(t *testing.T) {
 		// true means "set to NULL" — the empty-string-means-clear
 		// convention belongs to auth.Patch (domain.go), which service.go
 		// translates into this before calling UpdateUser.
-		updated, err := store.UpdateUser(ctx, tx, original.ID, authpg.UserUpdate{
+		updated, err := store.UpdateUser(ctx, tx, original.ID, auth.UserUpdate{
 			Role: &newRole, ServiceCode: nil, ServiceCodeSet: true,
 		})
 		if err != nil {

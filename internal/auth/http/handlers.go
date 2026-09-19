@@ -152,19 +152,32 @@ type meJSON struct {
 }
 
 func writeMe(w http.ResponseWriter, r *http.Request, status int, me auth.Me) {
-	body := meJSON{
-		User: userJSON{
-			ID: me.User.ID.String(), Login: me.User.Login, FullName: me.User.FullName,
-			Role: string(me.User.Role), ServiceCode: me.User.ServiceCode, Level: string(me.User.Level), Active: me.User.Active,
-		},
-		SessionExpiresAt: me.SessionExpiresAt.UTC().Format(time.RFC3339),
-	}
+	body := meJSON{User: toUserJSON(me.User), SessionExpiresAt: me.SessionExpiresAt.UTC().Format(time.RFC3339)}
 	if me.Workstation != nil {
-		body.Workstation = &workstationJSON{
-			ID: me.Workstation.ID.String(), Number: me.Workstation.Number, Label: me.Workstation.Label,
-			IPAddress: me.Workstation.IPAddress, Active: me.Workstation.Active,
-		}
+		ws := toWorkstationJSON(*me.Workstation)
+		body.Workstation = &ws
 	}
+	writeJSON(w, r, status, body)
+}
+
+// toUserJSON/toWorkstationJSON are shared with admin.go's list/create/patch
+// responses — every endpoint that renders a User or Workstation uses the
+// same shape (openapi.yaml's User/Workstation schemas).
+func toUserJSON(u auth.User) userJSON {
+	return userJSON{
+		ID: u.ID.String(), Login: u.Login, FullName: u.FullName,
+		Role: string(u.Role), ServiceCode: u.ServiceCode, Level: string(u.Level), Active: u.Active,
+	}
+}
+
+func toWorkstationJSON(w auth.Workstation) workstationJSON {
+	return workstationJSON{
+		ID: w.ID.String(), Number: w.Number, Label: w.Label, IPAddress: w.IPAddress, Active: w.Active,
+	}
+}
+
+// writeJSON writes body as the response with the shared JSON headers.
+func writeJSON(w http.ResponseWriter, r *http.Request, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)

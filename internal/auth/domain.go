@@ -171,6 +171,28 @@ type Patch struct {
 	Active      *bool
 }
 
+// UserUpdate is the storage-layer partial update for one user — lower-
+// level than Patch: PasswordHash is already hashed (Service.UpdateUser
+// calls HashPassword on Patch.Password before building this; the store
+// never sees a plaintext password), and login is absent because it is
+// immutable after creation (openapi.yaml UserPatch has no login field).
+// Each field pairs a value with its own "touched" flag instead of relying
+// on a nil pointer to mean "leave unchanged", so ServiceCode can be set to
+// NULL without a double pointer — the same reasoning as Patch.ServiceCode,
+// just spelled explicitly here since the store has no room for the
+// empty-string convention (a stored NULL and a stored "" are genuinely
+// different values, unlike at the Patch/API boundary).
+type UserUpdate struct {
+	PasswordHash    *string
+	PasswordHashSet bool
+	FullName        *string
+	Role            *Role
+	ServiceCode     *string
+	ServiceCodeSet  bool
+	Level           *Level
+	Active          *bool
+}
+
 var (
 	// ErrInvalidCredentials covers both an unknown login and a login/
 	// password mismatch — the caller must never let a client tell the two

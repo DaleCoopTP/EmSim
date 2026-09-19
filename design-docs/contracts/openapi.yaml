@@ -70,6 +70,7 @@ paths:
     get:
       tags: [admin]
       summary: Список пользователей
+      description: Отсортирован по login.
       parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/User' } }, total: { type: integer } } } } } }
@@ -86,10 +87,13 @@ paths:
     patch:
       tags: [admin]
       summary: Изменить пользователя (ФИО, роль, служба, активность, пароль)
+      description: Частичное обновление — поле, отсутствующее в теле, не меняется. service_code:null очищает поле (обязателен для trainee, запрещён для admin/instructor — иное сочетание роли и service_code даёт 422). Смена пароля или active:false отзывает все сессии пользователя.
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UserPatch' } } } }
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Правка сделала бы активного admin нулём (нельзя понизить или деактивировать последнего), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { $ref: '#/components/responses/Validation' }
   /admin/workstations:
     get:
       tags: [admin]
@@ -99,9 +103,11 @@ paths:
     put:
       tags: [admin]
       summary: Заменить список рабочих мест
+      description: Не удаляет строки. Каждое РМ из тела — upsert по number (id и active игнорируются на входе, РМ активируется); РМ, чей number не встретился в теле, деактивируется, а не удаляется. Дубликат number в теле — 422.
       requestBody: { required: true, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Workstation' } } } } }
       responses:
-        '200': { description: OK }
+        '200': { description: Актуальный список РМ после замены (включая деактивированные), content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Workstation' } } } } }
+        '422': { $ref: '#/components/responses/Validation' }
   /admin/import/classifier:
     post:
       tags: [admin]

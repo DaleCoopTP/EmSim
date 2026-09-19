@@ -95,6 +95,7 @@ func newPublicHandler(pool *pgxpool.Pool, cfg config.API) http.Handler {
 	authStore := authpg.NewStore(pool)
 	authService := auth.NewService(authStore, cfg.SessionTTL, nil)
 	authhttp.NewHandlers(authService, cfg.CookieSecure).Register(mux)
+	authhttp.NewAdminHandlers(authService).Register(mux)
 
 	return httpapi.WrapPublic(mux)
 }

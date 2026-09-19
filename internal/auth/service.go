@@ -42,21 +42,30 @@ type Store interface {
 
 	UserByLogin(ctx context.Context, tx pgx.Tx, login string) (User, error)
 	UserByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (User, error)
+	ListUsers(ctx context.Context, tx pgx.Tx, page, pageSize int) ([]User, int, error)
+	InsertUser(ctx context.Context, tx pgx.Tx, u User) (User, error)
+	UpdateUser(ctx context.Context, tx pgx.Tx, id uuid.UUID, update UserUpdate) (User, error)
+	CountActiveAdmins(ctx context.Context, tx pgx.Tx) (int, error)
 
 	WorkstationByNumber(ctx context.Context, tx pgx.Tx, number int) (Workstation, error)
 	WorkstationByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Workstation, error)
+	ListWorkstations(ctx context.Context, tx pgx.Tx) ([]Workstation, error)
+	UpsertWorkstations(ctx context.Context, tx pgx.Tx, workstations []Workstation) ([]Workstation, error)
+	DeactivateWorkstationsNotIn(ctx context.Context, tx pgx.Tx, keepNumbers []int) error
 
 	InsertSession(ctx context.Context, tx pgx.Tx, session Session, ttl time.Duration) (Session, error)
 	SessionByID(ctx context.Context, tx pgx.Tx, id []byte) (SessionLookup, error)
 	TouchSession(ctx context.Context, tx pgx.Tx, id []byte, staleAfter, ttl time.Duration) error
 	DeleteSession(ctx context.Context, tx pgx.Tx, id []byte) error
+	DeleteUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error
 
 	AuditRecord(ctx context.Context, tx pgx.Tx, entry audit.Entry) error
 }
 
-// Service implements the auth module's login/logout/session use cases
-// (slice-planning.md §2). Admin user/workstation management (CreateUser,
-// UpdateUser, ReplaceWorkstations) is added in the next commit of slice 1.
+// Service implements the auth module's login/session use cases
+// (slice-planning.md §2) and its admin user/workstation management
+// (CreateUser, UpdateUser, ListUsers, ListWorkstations,
+// ReplaceWorkstations — see admin.go).
 type Service struct {
 	store   Store
 	limiter *LoginLimiter

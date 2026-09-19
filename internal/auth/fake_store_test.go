@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -38,6 +39,7 @@ type fakeStore struct {
 	// Hooks a test can set to force a specific method to fail, simulating
 	// a storage error unrelated to the input's own shape.
 	failInsertSession bool
+	failInsertUser    bool
 }
 
 func newFakeStore() *fakeStore {
@@ -135,6 +137,87 @@ func (f *fakeStore) UserByID(_ context.Context, _ pgx.Tx, id uuid.UUID) (User, e
 	return u, nil
 }
 
+func (f *fakeStore) ListUsers(_ context.Context, _ pgx.Tx, page, pageSize int) ([]User, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 50
+	}
+	all := make([]User, 0, len(f.usersByID))
+	for _, u := range f.usersByID {
+		all = append(all, u)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Login < all[j].Login })
+
+	total := len(all)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := min(start+pageSize, total)
+	return append([]User{}, all[start:end]...), total, nil
+}
+
+func (f *fakeStore) InsertUser(_ context.Context, _ pgx.Tx, u User) (User, error) {
+	if f.failInsertUser {
+		return User{}, ErrStorage
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, exists := f.usersByLogin[u.Login]; exists {
+		return User{}, ErrLoginTaken
+	}
+	u.CreatedAt = time.Now()
+	f.usersByLogin[u.Login] = u
+	f.usersByID[u.ID] = u
+	return u, nil
+}
+
+func (f *fakeStore) UpdateUser(_ context.Context, _ pgx.Tx, id uuid.UUID, update UserUpdate) (User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.usersByID[id]
+	if !ok {
+		return User{}, ErrNotFound
+	}
+	if update.PasswordHashSet {
+		u.PasswordHash = *update.PasswordHash
+	}
+	if update.FullName != nil {
+		u.FullName = *update.FullName
+	}
+	if update.Role != nil {
+		u.Role = *update.Role
+	}
+	if update.ServiceCodeSet {
+		u.ServiceCode = update.ServiceCode
+	}
+	if update.Level != nil {
+		u.Level = *update.Level
+	}
+	if update.Active != nil {
+		u.Active = *update.Active
+	}
+	f.usersByID[id] = u
+	f.usersByLogin[u.Login] = u
+	return u, nil
+}
+
+func (f *fakeStore) CountActiveAdmins(_ context.Context, _ pgx.Tx) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	count := 0
+	for _, u := range f.usersByID {
+		if u.Role == RoleAdmin && u.Active {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (f *fakeStore) WorkstationByNumber(_ context.Context, _ pgx.Tx, number int) (Workstation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -153,6 +236,58 @@ func (f *fakeStore) WorkstationByID(_ context.Context, _ pgx.Tx, id uuid.UUID) (
 		return Workstation{}, ErrNotFound
 	}
 	return w, nil
+}
+
+func (f *fakeStore) ListWorkstations(_ context.Context, _ pgx.Tx) ([]Workstation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	all := make([]Workstation, 0, len(f.workstationsByID))
+	for _, w := range f.workstationsByID {
+		all = append(all, w)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Number < all[j].Number })
+	return all, nil
+}
+
+// UpsertWorkstations mirrors internal/auth/postgres.Store.UpsertWorkstations:
+// matched by Number, an existing row keeps its id and is reactivated, a
+// new one is assigned a fresh one.
+func (f *fakeStore) UpsertWorkstations(_ context.Context, _ pgx.Tx, workstations []Workstation) ([]Workstation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	result := make([]Workstation, 0, len(workstations))
+	for _, w := range workstations {
+		if existing, ok := f.workstationsByNumber[w.Number]; ok {
+			existing.Label, existing.IPAddress, existing.Active = w.Label, w.IPAddress, true
+			f.workstationsByNumber[w.Number] = existing
+			f.workstationsByID[existing.ID] = existing
+			result = append(result, existing)
+			continue
+		}
+		w.ID = uuid.New()
+		w.Active = true
+		f.workstationsByNumber[w.Number] = w
+		f.workstationsByID[w.ID] = w
+		result = append(result, w)
+	}
+	return result, nil
+}
+
+func (f *fakeStore) DeactivateWorkstationsNotIn(_ context.Context, _ pgx.Tx, keepNumbers []int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	keep := make(map[int]struct{}, len(keepNumbers))
+	for _, n := range keepNumbers {
+		keep[n] = struct{}{}
+	}
+	for number, w := range f.workstationsByNumber {
+		if _, ok := keep[number]; !ok && w.Active {
+			w.Active = false
+			f.workstationsByNumber[number] = w
+			f.workstationsByID[w.ID] = w
+		}
+	}
+	return nil
 }
 
 func (f *fakeStore) InsertSession(_ context.Context, _ pgx.Tx, session Session, ttl time.Duration) (Session, error) {
@@ -210,6 +345,17 @@ func (f *fakeStore) DeleteSession(_ context.Context, _ pgx.Tx, id []byte) error 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.sessions, string(id))
+	return nil
+}
+
+func (f *fakeStore) DeleteUserSessions(_ context.Context, _ pgx.Tx, userID uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, session := range f.sessions {
+		if session.UserID == userID {
+			delete(f.sessions, id)
+		}
+	}
 	return nil
 }
 

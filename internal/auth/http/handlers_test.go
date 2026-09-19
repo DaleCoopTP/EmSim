@@ -40,6 +40,35 @@ type fakeService struct {
 
 	meResult auth.Me
 	meErr    error
+
+	createUserResult auth.User
+	createUserErr    error
+	createUserCalls  []auth.NewUser
+
+	updateUserResult auth.User
+	updateUserErr    error
+	updateUserCalls  []updateUserCall
+
+	listUsersResult []auth.User
+	listUsersTotal  int
+	listUsersErr    error
+	listUsersCalls  []pageCall
+
+	listWorkstationsResult []auth.Workstation
+	listWorkstationsErr    error
+
+	replaceWorkstationsResult []auth.Workstation
+	replaceWorkstationsErr    error
+	replaceWorkstationsCalls  [][]auth.Workstation
+}
+
+type updateUserCall struct {
+	id    uuid.UUID
+	patch auth.Patch
+}
+
+type pageCall struct {
+	page, pageSize int
 }
 
 func (f *fakeService) Login(_ context.Context, req auth.LoginRequest, _ string) (auth.LoginResult, error) {
@@ -73,13 +102,66 @@ func (f *fakeService) Me(_ context.Context, _ auth.Principal) (auth.Me, error) {
 	return f.meResult, f.meErr
 }
 
+func (f *fakeService) CreateUser(_ context.Context, n auth.NewUser, _ auth.Principal, _ string) (auth.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.createUserCalls = append(f.createUserCalls, n)
+	return f.createUserResult, f.createUserErr
+}
+
+func (f *fakeService) UpdateUser(_ context.Context, id uuid.UUID, patch auth.Patch, _ auth.Principal, _ string) (auth.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updateUserCalls = append(f.updateUserCalls, updateUserCall{id: id, patch: patch})
+	return f.updateUserResult, f.updateUserErr
+}
+
+func (f *fakeService) ListUsers(_ context.Context, page, pageSize int) ([]auth.User, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listUsersCalls = append(f.listUsersCalls, pageCall{page: page, pageSize: pageSize})
+	return f.listUsersResult, f.listUsersTotal, f.listUsersErr
+}
+
+func (f *fakeService) ListWorkstations(_ context.Context) ([]auth.Workstation, error) {
+	return f.listWorkstationsResult, f.listWorkstationsErr
+}
+
+func (f *fakeService) ReplaceWorkstations(_ context.Context, workstations []auth.Workstation, _ auth.Principal, _ string) ([]auth.Workstation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.replaceWorkstationsCalls = append(f.replaceWorkstationsCalls, workstations)
+	return f.replaceWorkstationsResult, f.replaceWorkstationsErr
+}
+
 var _ service = (*fakeService)(nil)
+var _ adminService = (*fakeService)(nil)
 
 func newTestHandlers(svc *fakeService, cookieSecure bool) (*Handlers, *http.ServeMux) {
 	h := NewHandlers(svc, cookieSecure)
 	mux := httpapi.NewMux()
 	h.Register(mux)
 	return h, mux
+}
+
+func newTestAdminMux(svc *fakeService) *http.ServeMux {
+	mux := httpapi.NewMux()
+	NewAdminHandlers(svc).Register(mux)
+	return mux
+}
+
+// authedAdminRequest builds a request that will authenticate as an admin
+// through fakeService's Authenticate (svc.validToken/svc.principal must
+// already be set to an admin Principal).
+func authedAdminRequest(method, path string, body *strings.Reader, token string) *http.Request {
+	var r *http.Request
+	if body != nil {
+		r = httptest.NewRequest(method, path, body)
+	} else {
+		r = httptest.NewRequest(method, path, nil)
+	}
+	r.AddCookie(&http.Cookie{Name: CookieName, Value: token})
+	return r
 }
 
 // wrapped runs a request through the same middleware chain cmd/emsim/api.go

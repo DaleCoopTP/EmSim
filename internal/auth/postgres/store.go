@@ -93,13 +93,16 @@ func (s *Store) UserByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (auth.Use
 }
 
 // ListUsers returns page (1-based) of pageSize users ordered by login,
-// alongside the total row count. page/pageSize below 1 are treated as 1/20.
+// alongside the total row count. page/pageSize below 1 fall back to 1/50 —
+// openapi.yaml's Page/PageSize parameters default to the same values; the
+// HTTP handler is what actually enforces PageSize's max of 200, this is
+// just a safety net for a caller that passes 0.
 func (s *Store) ListUsers(ctx context.Context, tx pgx.Tx, page, pageSize int) ([]auth.User, int, error) {
 	if page < 1 {
 		page = 1
 	}
 	if pageSize < 1 {
-		pageSize = 20
+		pageSize = 50
 	}
 
 	var total int
@@ -153,30 +156,14 @@ func (s *Store) InsertUser(ctx context.Context, tx pgx.Tx, u auth.User) (auth.Us
 	return u, nil
 }
 
-// UserUpdate is the storage-layer partial update for one user — lower-
-// level than auth.Patch: PasswordHash is already hashed (service.go calls
-// auth.HashPassword on auth.Patch.Password before building this; the store
-// never sees a plaintext password), and login is absent because it is
-// immutable after creation (openapi.yaml UserPatch has no login field).
-// Each field pairs a value with its own "touched" flag instead of relying
-// on a nil pointer to mean "leave unchanged", so ServiceCode can be set to
-// NULL without a double pointer.
-type UserUpdate struct {
-	PasswordHash    *string
-	PasswordHashSet bool
-	FullName        *string
-	Role            *auth.Role
-	ServiceCode     *string
-	ServiceCodeSet  bool
-	Level           *auth.Level
-	Active          *bool
-}
-
 // UpdateUser applies update to the user identified by id and returns the
 // resulting row. An update touching no fields is a no-op read — it still
 // returns the current row, so a caller building an update from an
 // all-nil-fields Patch does not need to special-case "nothing to do".
-func (s *Store) UpdateUser(ctx context.Context, tx pgx.Tx, id uuid.UUID, update UserUpdate) (auth.User, error) {
+// UserUpdate itself lives in internal/auth (domain.go), not here, for the
+// same reason SessionLookup does: auth.Store's interface (service.go)
+// references it and cannot import its own adapter.
+func (s *Store) UpdateUser(ctx context.Context, tx pgx.Tx, id uuid.UUID, update auth.UserUpdate) (auth.User, error) {
 	var sets []string
 	var args []any
 	add := func(column string, value any) {
