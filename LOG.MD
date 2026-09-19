@@ -107,3 +107,31 @@ Open issues / risks:
 
 Next:
 - Start slice 1 backend (auth, users, workstations, sessions) against the accepted contracts.
+
+## 2026-09-19T17:40:00+03:00 — Claude Sonnet 5 — slice 1 backend complete
+
+Status: completed
+Slice: 1
+
+Changed:
+- `internal/platform/httpapi`, `internal/platform/audit` (+`migrations/00002_platform_audit_log.sql`): shared request-id/no-store/Origin-check/error-envelope middleware; transactional audit writer.
+- `internal/auth` (+`postgres`, `+http`, `+migrations/00003_auth_users_workstations_sessions.sql`): domain, argon2id passwords, authz table, login/logout/me/session middleware, admin users+workstations CRUD, `BootstrapAdmin`.
+- `cmd/emsim/bootstrap.go`: `bootstrap-admin` subcommand, idempotent (no-op once an active admin exists); wired into `main.go` dispatch.
+- `compose.yaml` (+`.env.example`): one-shot `bootstrap` service between `migrate` and `api`; `api` gets `COOKIE_SECURE=false` for the TLS-less demo profile.
+- `test/integration/api_process_test.go`: builds the real binary and drives `migrate → bootstrap-admin (×2) → api` purely over HTTP — admin login, workstation/instructor/trainee creation, logout invalidation, trainee login with workstation, session survives a simulated reload, 403 for a non-admin on `/admin/*`, wrong-password 401.
+- `README.md`: demo quick start with `bootstrap`, curl walkthrough, description of both process-level integration tests.
+
+Decisions:
+- `BootstrapAdmin` lives on `auth.Service` (audits `auth.bootstrap_admin` with a nil actor), not as ad hoc SQL in `cmd/emsim`, so it shares validation/hashing/audit with the rest of user creation.
+- Backend-only slice 1 (no SPA yet, commits C0–C7 of the approved plan); UI (C8 web scaffold, C9 login/admin screens) is the remaining Definition-of-Done item before the slice counts as done end-to-end.
+
+Validation:
+- `make verify` — passed.
+- `make test-integration` — passed (includes the new `TestAPIProcessAuthHappyPath`, run standalone in 3.7s).
+- `python3 design-docs/contracts/check.py` — passed.
+
+Open issues / risks:
+- No web client yet: slice-planning.md's Definition of Done for slice 1 requires a working UI before the slice is considered complete (C8/C9 still pending).
+
+Next:
+- C8: SPA scaffold (Vite+React+TS, `openapi-typescript` types, `web/embed.go`, static+SPA-fallback serving from `api`), then C9: login and role-home/admin screens.

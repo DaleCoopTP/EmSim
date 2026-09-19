@@ -324,3 +324,66 @@ func TestReplaceWorkstationsRejectsNonPositiveNumber(t *testing.T) {
 		t.Fatalf("ReplaceWorkstations() error = %v, want a number ValidationError", err)
 	}
 }
+
+func TestBootstrapAdminCreatesOnEmptyInstallation(t *testing.T) {
+	store := newFakeStore()
+	service := newTestService(store)
+
+	created, err := service.BootstrapAdmin(context.Background(), "bootstrap-admin", "correct-horse")
+	if err != nil {
+		t.Fatalf("BootstrapAdmin() error = %v", err)
+	}
+	if !created {
+		t.Fatal("created = false, want true on an empty installation")
+	}
+	u, err := store.UserByLogin(context.Background(), fakeTx{}, "bootstrap-admin")
+	if err != nil {
+		t.Fatalf("UserByLogin() error = %v", err)
+	}
+	if u.Role != RoleAdmin || !u.Active {
+		t.Fatalf("created user = %+v, want an active admin", u)
+	}
+	ok, err := VerifyPassword(u.PasswordHash, "correct-horse")
+	if err != nil || !ok {
+		t.Fatalf("stored hash does not verify the given password: ok=%v err=%v", ok, err)
+	}
+
+	entries := store.auditEntriesByAction("auth.bootstrap_admin")
+	if len(entries) != 1 || entries[0].ActorID != nil || *entries[0].ResourceID != u.ID {
+		t.Fatalf("audit entries = %+v", entries)
+	}
+}
+
+func TestBootstrapAdminIsNoopWhenAdminExists(t *testing.T) {
+	store := newFakeStore()
+	testAdminActor(store) // pre-existing active admin
+	service := newTestService(store)
+
+	created, err := service.BootstrapAdmin(context.Background(), "second-admin", "correct-horse")
+	if err != nil {
+		t.Fatalf("BootstrapAdmin() error = %v", err)
+	}
+	if created {
+		t.Fatal("created = true, want false when an active admin already exists")
+	}
+	if _, err := store.UserByLogin(context.Background(), fakeTx{}, "second-admin"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("UserByLogin(second-admin) error = %v, want ErrNotFound", err)
+	}
+	if len(store.auditEntriesByAction("auth.bootstrap_admin")) != 0 {
+		t.Fatal("audit entry recorded for a no-op bootstrap")
+	}
+}
+
+func TestBootstrapAdminRejectsInvalidCredentials(t *testing.T) {
+	store := newFakeStore()
+	service := newTestService(store)
+
+	_, err := service.BootstrapAdmin(context.Background(), "bad login", "correct-horse")
+	var ve *ValidationError
+	if !errors.As(err, &ve) || ve.Field != "login" {
+		t.Fatalf("BootstrapAdmin() error = %v, want a login ValidationError", err)
+	}
+	if len(store.auditEntriesByAction("auth.bootstrap_admin")) != 0 {
+		t.Fatal("audit entry recorded for a rejected bootstrap")
+	}
+}

@@ -1,7 +1,9 @@
 // Command emsim is the single binary for the EmSim server: subcommands select
 // the role a process plays (ADR-001). "migrate" applies the database schema,
 // "api" serves the operator/instructor HTTP API and SSE, "worker" claims and
-// executes background tasks (LLM/STT/TTS, reports, scenario generation).
+// executes background tasks (LLM/STT/TTS, reports, scenario generation),
+// "bootstrap-admin" creates the initial admin account for an empty
+// installation (slice-planning.md §2).
 package main
 
 import (
@@ -14,7 +16,7 @@ import (
 )
 
 var (
-	errCommandRequired = errors.New("subcommand is required: migrate | api | worker")
+	errCommandRequired = errors.New("subcommand is required: migrate | api | worker | bootstrap-admin")
 	errUnknownCommand  = errors.New("unknown subcommand")
 	errNotImplemented  = errors.New("subcommand is not implemented yet")
 )
@@ -45,13 +47,16 @@ func run(ctx context.Context, args []string) error {
 		return runAPI(ctx, rest)
 	case "worker":
 		return runWorker(ctx, rest)
+	case "bootstrap-admin":
+		return runBootstrapAdmin(ctx, rest)
 	default:
 		return errUnknownCommand
 	}
 }
 
 // runMigrate lives in migrate.go, runAPI in api.go, runWorker in worker.go
-// (+ worker_admin.go/worker_composition.go).
+// (+ worker_admin.go/worker_composition.go), runBootstrapAdmin in
+// bootstrap.go.
 
 func errorCode(err error) string {
 	switch {

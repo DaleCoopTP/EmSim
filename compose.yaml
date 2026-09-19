@@ -37,6 +37,21 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # One-shot: creates the initial admin account (slice-planning.md §2)
+  # when the installation has none yet. Idempotent — safe to run on every
+  # "docker compose up".
+  bootstrap:
+    image: emsim:local
+    command: ["bootstrap-admin"]
+    environment:
+      DATABASE_URL: *database-url
+      BOOTSTRAP_ADMIN_LOGIN: ${BOOTSTRAP_ADMIN_LOGIN:-admin}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-local-only-admin-password}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
   api:
     image: emsim:local
     command: ["api"]
@@ -44,11 +59,15 @@ services:
       DATABASE_URL: *database-url
       API_LISTEN_ADDR: 0.0.0.0:8080
       ADMIN_LISTEN_ADDR: 0.0.0.0:8081
+      # No Caddy/TLS in front in the demo profile (RFC-001 §4.3): a
+      # Secure cookie would never be sent back by the browser over plain
+      # HTTP, so the session would appear to silently not persist.
+      COOKIE_SECURE: "false"
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
       - "127.0.0.1:${API_ADMIN_PORT:-8081}:8081"
     depends_on:
-      migrate:
+      bootstrap:
         condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:

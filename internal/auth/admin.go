@@ -100,6 +100,54 @@ func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, patch Patch, act
 	return updated, nil
 }
 
+// BootstrapAdmin creates the initial admin account for an empty
+// installation (slice-planning.md §2: "первоначальная учётная запись
+// администратора для пустой установки"; cmd/emsim's "bootstrap-admin"
+// subcommand). It is idempotent by design rather than by retry: if an
+// active admin already exists, it changes nothing and reports
+// created=false, so a compose one-shot service can run it on every
+// startup without ever creating a second admin or touching the first
+// one. There is no authenticated actor before the very first admin
+// exists, so the audit row carries a nil ActorID.
+func (s *Service) BootstrapAdmin(ctx context.Context, login, password string) (bool, error) {
+	n := NewUser{Login: login, Password: password, FullName: "Administrator", Role: RoleAdmin, Level: LevelEasy}
+	if err := ValidateNewUser(n); err != nil {
+		return false, err
+	}
+	hash, err := HashPassword(n.Password, DefaultParams)
+	if err != nil {
+		return false, ErrStorage
+	}
+	candidate := User{
+		ID: uuid.New(), Login: n.Login, PasswordHash: hash, FullName: n.FullName,
+		Role: n.Role, Level: n.LevelOrDefault(), Active: true,
+	}
+
+	var created bool
+	err = s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		count, err := s.store.CountActiveAdmins(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if count > 0 {
+			return nil
+		}
+		u, err := s.store.InsertUser(ctx, tx, candidate)
+		if err != nil {
+			return err
+		}
+		created = true
+		return s.store.AuditRecord(ctx, tx, audit.Entry{
+			ActorRole: "system", Action: "auth.bootstrap_admin",
+			ResourceType: "user", ResourceID: &u.ID, Outcome: audit.OutcomeOK,
+		})
+	})
+	if err != nil {
+		return false, err
+	}
+	return created, nil
+}
+
 // wouldLoseLastActiveAdmin reports whether patch, applied to current,
 // would leave current no longer counted as an active admin — the trigger
 // to check CountActiveAdmins at all. A user who is not currently an active

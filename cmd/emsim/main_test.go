@@ -44,6 +44,12 @@ func TestRunDispatchesKnownSubcommands(t *testing.T) {
 	if err := run(context.Background(), []string{"api"}); !errors.Is(err, config.ErrInvalidAPIConfiguration) {
 		t.Fatalf(`run(["api"]) error = %v, want config.ErrInvalidAPIConfiguration`, err)
 	}
+	for _, name := range []string{"BOOTSTRAP_ADMIN_LOGIN", "BOOTSTRAP_ADMIN_PASSWORD"} {
+		t.Setenv(name, "")
+	}
+	if err := run(context.Background(), []string{"bootstrap-admin"}); !errors.Is(err, errBootstrapCredentialsRequired) {
+		t.Fatalf(`run(["bootstrap-admin"]) error = %v, want errBootstrapCredentialsRequired`, err)
+	}
 }
 
 func TestErrorCodeIsWhitelistedAndStable(t *testing.T) {
