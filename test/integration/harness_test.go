@@ -139,7 +139,15 @@ func resetSchema(t *testing.T, ctx context.Context, databaseURL string) {
 		t.Fatalf("open PostgreSQL for reset: %v", err)
 	}
 	defer pool.Close()
-	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS audit_log; DROP TABLE IF EXISTS tasks; DROP TABLE IF EXISTS goose_db_version;`); err != nil {
+	// sessions references users and workstations, so it must drop first.
+	if _, err := pool.Exec(ctx, `
+		DROP TABLE IF EXISTS sessions;
+		DROP TABLE IF EXISTS audit_log;
+		DROP TABLE IF EXISTS tasks;
+		DROP TABLE IF EXISTS users;
+		DROP TABLE IF EXISTS workstations;
+		DROP TABLE IF EXISTS goose_db_version;
+	`); err != nil {
 		t.Fatalf("reset schema: %v", err)
 	}
 }
@@ -216,7 +224,7 @@ func assertTableSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate application tables: %v", err)
 	}
-	want := []string{"audit_log", "tasks"}
+	want := []string{"audit_log", "sessions", "tasks", "users", "workstations"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("application tables = %v, want %v", got, want)
 	}
@@ -228,7 +236,7 @@ func assertApplicationTablesAbsent(t *testing.T, ctx context.Context, pool *pgxp
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		FROM pg_catalog.pg_tables
-		WHERE schemaname = 'public' AND tablename IN ('audit_log', 'tasks')
+		WHERE schemaname = 'public' AND tablename IN ('audit_log', 'sessions', 'tasks', 'users', 'workstations')
 	`).Scan(&count); err != nil {
 		t.Fatalf("count application tables: %v", err)
 	}

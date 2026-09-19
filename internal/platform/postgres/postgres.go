@@ -1,10 +1,10 @@
 // internal/postgres/postgres.go; adapted: Ready() checks for the set of
-// platform tables actually migrated so far — "tasks" and, from migration
-// 00002, "audit_log" — not the domain tables (runs/run_items/dialogues/
-// evaluations/run_results) that were not ported — see
-// docs/technical-discovery.md §3.5. applicationTables grows as later
-// migrations land; it is not meant to enumerate every table in the final
-// schema.sql.
+// tables actually migrated so far — "tasks" (00001), "audit_log" (00002),
+// and now "users"/"workstations"/"sessions" (00003) — not every domain
+// table the eventual schema.sql has (most of it, e.g. runs/items/
+// dialogues, is not ported/built yet — see docs/technical-discovery.md
+// §3.5). applicationTables grows as later migrations land; it is not
+// meant to enumerate the final schema up front.
 package postgres
 
 import (
@@ -25,12 +25,12 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-const ExpectedSchemaVersion int64 = 2
+const ExpectedSchemaVersion int64 = 3
 
 // applicationTables lists the platform tables Ready() requires to exist,
 // alongside the expected goose version — a version match alone would not
 // catch a migration that ran but left the table set incomplete.
-var applicationTables = []string{"audit_log", "tasks"}
+var applicationTables = []string{"audit_log", "sessions", "tasks", "users", "workstations"}
 
 var (
 	ErrDatabaseURLRequired = errors.New("database URL is required")
