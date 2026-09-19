@@ -88,11 +88,20 @@ type ScenarioRecord struct {
 
 // ScenarioVersionRecord is one scenario_versions row.
 type ScenarioVersionRecord struct {
-	ID           uuid.UUID
-	ScenarioID   uuid.UUID
-	Version      int
-	Status       string
-	Body         Body
+	ID         uuid.UUID
+	ScenarioID uuid.UUID
+	Version    int
+	Status     string
+	Body       Body
+	// BodyJSON is the exact canonical JSON bytes Digest was computed
+	// from. InsertScenarioVersion (postgres/store.go) writes these bytes
+	// to scenario_versions.body verbatim instead of re-marshaling Body:
+	// Body has no omitempty, so a field a file legitimately omits
+	// (hints, generation, reference.scoring, ...) would otherwise
+	// round-trip into an explicit null that matches neither Digest nor
+	// scenario.schema.json. Reads (scanScenarioVersion) populate it from
+	// the stored column too, so a wire response can serve it as-is.
+	BodyJSON     []byte
 	Digest       [32]byte
 	Difficulty   int
 	SourceTaskID *uuid.UUID
@@ -118,7 +127,11 @@ type ScenarioDetail struct {
 	ScenarioSummary
 	VersionID uuid.UUID
 	Body      Body
-	Digest    [32]byte
+	// BodyJSON is ScenarioVersionRecord.BodyJSON — the canonical bytes
+	// Digest was computed from; internal/content/http serves this
+	// verbatim as the wire "body" instead of re-marshaling Body.
+	BodyJSON []byte
+	Digest   [32]byte
 }
 
 // VersionSummary is one row of GET /scenarios/{id}/versions —

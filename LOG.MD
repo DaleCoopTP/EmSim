@@ -380,3 +380,25 @@ Open issues / risks:
 
 Next:
 - C6 — `web/src/routes/instructor/` catalogue list + detail view (IncidentCard, Эталон, События, Звонки, Версии), reusing `CardPreview`/`ScenarioReference`.
+
+## 2026-09-19T23:36:52+03:00 — Claude — slice 2: fix two review findings before C6
+
+Status: completed
+Slice: 2 (`slice-2-plan.md`) — pre-C6 fixes, found by review of the C1–C5 commits.
+
+Changed:
+- `internal/content/import.go`: `ImportScenarios` now computes each file's stored body as `Canonical(bodyRaw(raw))` (the exact bytes `Digest` hashes) instead of letting `postgres.Store.InsertScenarioVersion` re-marshal the typed `Body` struct. The typed struct has no `omitempty`, so a file's legitimately omitted optional field (`hints`, `generation`, `reference.scoring`, ...) was round-tripping into an explicit `null` — the stored `body` no longer matched `digest`, and a served body with those phantom nulls could fail `scenario.schema.json` (`type: array`/`object` rejects `null`). `ScenarioVersionRecord`/`ScenarioDetail` (`store.go`) gained a `BodyJSON []byte` field carrying these canonical bytes end to end; `postgres/store.go`'s `InsertScenarioVersion` writes `v.BodyJSON` verbatim and `scanScenarioVersion` now also returns the raw column bytes on read; `internal/content/http`'s `scenarioJSON.Body` is `json.RawMessage(d.BodyJSON)` instead of a re-marshaled `content.Body`, so `GET /scenarios/{id}` serves the same bytes the digest was computed from (Postgres reformats jsonb on output — spacing differs from `Canonical`'s compact form — so exact reproduction is verified by decoding the stored bytes and re-running `content.Canonical`/`content.Digest`, not by raw byte comparison).
+- `internal/content/import.go`: `importOneScenarioVersion`'s version-rule switch merged the `version == maxVersion` and `version < maxVersion` branches into one `version <= maxVersion` case that compares the file's digest against whatever is already stored at that version number (approved or superseded) and no-ops on a match. Previously any `version < maxVersion` was unconditionally `version_regression`, so replaying a full seed directory (including an older file whose version a later import had since superseded) started failing the moment a second version existed — breaking idempotent reseeding (`docker compose up` / `emsim import seed` re-runs) as soon as any scenario got a v2.
+- `internal/content/http/handlers_test.go`: `TestScenarioDetailReturnsFullBody`'s fixture now sets `BodyJSON` (via `json.Marshal` of the same `content.Body`, standing in for what a real DB read populates) since the handler no longer reads `Body` for the wire response.
+
+Validation:
+- `go build ./...`, `go vet ./...`, `go vet -tags=integration ./...` — clean.
+- `go test ./...` and `make verify` (staticcheck included) — all green.
+- `go test -tags=integration -count=1 ./test/integration/...` — all green, including two new assertions in `content_import_test.go`: (1) `TestContentImportSeedEndToEnd` decodes the stored `pilot-tree-02` body and checks `content.Digest` of it reproduces the stored digest, and that the stored body has no `"hints"`/`"generation"` keys; (2) `TestContentImportScenarioVersionRules` re-imports a full `{v1, v2}` batch after v2 has superseded v1 and asserts it succeeds with `Unchanged=2` and both versions' status unchanged (this reproduces the exact regression: it failed with `version_regression` before this fix, confirmed locally before applying the fix).
+- `python3 design-docs/contracts/check.py` — unaffected, clean (no contract files touched).
+
+Open issues / risks:
+- None new. C1–C5 stand as before; these were correctness fixes within already-committed scope, not new functionality.
+
+Next:
+- C6 — `web/src/routes/instructor/` catalogue list + detail view (IncidentCard, Эталон, События, Звонки, Версии), reusing `CardPreview`/`ScenarioReference`.

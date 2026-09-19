@@ -283,18 +283,23 @@ func toScenarioSummaryJSON(s content.ScenarioSummary) scenarioSummaryJSON {
 // scenarioJSON is openapi.yaml's Scenario (ScenarioSummary + body/
 // version_id/digest); scenarioSummaryJSON is embedded unqualified so its
 // fields flatten into the same JSON object, matching the contract's
-// allOf composition.
+// allOf composition. Body is json.RawMessage (d.BodyJSON) rather than
+// content.Body: re-marshaling the typed struct has no omitempty, so an
+// optional field the approved file omitted (hints, generation,
+// reference.scoring, ...) would come back as an explicit null that
+// matches neither Digest nor scenario.schema.json — serving the stored
+// canonical bytes as-is keeps the response byte-consistent with Digest.
 type scenarioJSON struct {
 	scenarioSummaryJSON
-	Body      content.Body `json:"body"`
-	VersionID string       `json:"version_id"`
-	Digest    string       `json:"digest"`
+	Body      json.RawMessage `json:"body"`
+	VersionID string          `json:"version_id"`
+	Digest    string          `json:"digest"`
 }
 
 func toScenarioJSON(d content.ScenarioDetail) scenarioJSON {
 	return scenarioJSON{
 		scenarioSummaryJSON: toScenarioSummaryJSON(d.ScenarioSummary),
-		Body:                d.Body,
+		Body:                json.RawMessage(d.BodyJSON),
 		VersionID:           d.VersionID.String(),
 		Digest:              hex.EncodeToString(d.Digest[:]),
 	}

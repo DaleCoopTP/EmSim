@@ -84,6 +84,7 @@ func (s *Service) ScenarioDetail(ctx context.Context, id uuid.UUID) (ScenarioDet
 			ScenarioSummary: ScenarioSummary{ScenarioRecord: sc, Version: v.Version, HasEvents: len(v.Body.Events) > 0},
 			VersionID:       v.ID,
 			Body:            v.Body,
+			BodyJSON:        v.BodyJSON,
 			Digest:          v.Digest,
 		}
 		return nil

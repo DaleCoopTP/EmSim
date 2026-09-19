@@ -230,17 +230,26 @@ func TestScenarioDetailBadUUIDMapsTo404(t *testing.T) {
 func TestScenarioDetailReturnsFullBody(t *testing.T) {
 	id := uuid.New()
 	versionID := uuid.New()
+	body := content.Body{
+		TargetService: "dds_district",
+		Reference:     content.Reference{PrimaryDecision: content.PrimaryDecision{Status: content.ReactionAccepted}, Notes: "instructor-only note"},
+		Difficulty:    2, ExerciseType: content.ExerciseTypeDDSProcessing,
+	}
+	// BodyJSON stands in for what a real read populates it with
+	// (postgres/store.go's scanScenarioVersion, from scenario_versions.body)
+	// — the handler now serves it verbatim rather than re-marshaling Body.
+	bodyJSON, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
 	detail := content.ScenarioDetail{
 		ScenarioSummary: content.ScenarioSummary{
 			ScenarioRecord: content.ScenarioRecord{ID: id, Title: "T", TargetService: "dds_district", Difficulty: 2, Origin: "manual", Status: "approved"},
 			Version:        1,
 		},
 		VersionID: versionID,
-		Body: content.Body{
-			TargetService: "dds_district",
-			Reference:     content.Reference{PrimaryDecision: content.PrimaryDecision{Status: content.ReactionAccepted}, Notes: "instructor-only note"},
-			Difficulty:    2, ExerciseType: content.ExerciseTypeDDSProcessing,
-		},
+		Body:      body,
+		BodyJSON:  bodyJSON,
 	}
 	auth := &fakeAuth{validToken: "tok", principal: instructorPrincipal()}
 	mux := newTestMux(&fakeContentService{detailResult: detail}, auth)

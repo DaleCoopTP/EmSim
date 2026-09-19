@@ -11,7 +11,9 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -180,6 +182,28 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 		t.Fatalf("pilot-tree-02 field_corrections = %+v, want one entry with expected_value ЮАО", detail.Body.Reference.FieldCorrections)
 	}
 
+	// The stored/served body must reproduce its own digest. jsonb
+	// reformats on output (e.g. ": "/", " spacing), so this decodes what
+	// came back and re-canonicalizes it — content.Canonical is a pure
+	// function of the JSON *value*, so this is byte-identical to what
+	// content.Digest hashed at import time as long as the stored body is
+	// the same value, unlike a re-marshaled typed Body (which, having no
+	// omitempty, would turn the seed file's omitted "hints"/"generation"
+	// into explicit nulls neither the digest nor scenario.schema.json
+	// would accept).
+	var storedRaw any
+	dec := json.NewDecoder(bytes.NewReader(detail.BodyJSON))
+	dec.UseNumber()
+	if err := dec.Decode(&storedRaw); err != nil {
+		t.Fatalf("decode stored body: %v", err)
+	}
+	if got := content.Digest(storedRaw); got != detail.Digest {
+		t.Fatalf("content.Digest(decoded stored body) = %x, want digest %x", got, detail.Digest)
+	}
+	if strings.Contains(string(detail.BodyJSON), `"hints"`) || strings.Contains(string(detail.BodyJSON), `"generation"`) {
+		t.Fatalf("stored body must omit fields the seed file itself omits, got: %s", detail.BodyJSON)
+	}
+
 	versions, err := svc.ScenarioVersions(ctx, case02ID)
 	if err != nil {
 		t.Fatalf("ScenarioVersions: %v", err)
@@ -328,6 +352,38 @@ func TestContentImportScenarioVersionRules(t *testing.T) {
 		case 2:
 			if v.Status != "approved" {
 				t.Fatalf("v2.status = %q, want approved", v.Status)
+			}
+		}
+	}
+
+	// Replaying the whole directory — including v1.json, whose version is
+	// now superseded — must stay idempotent: a historical version with an
+	// unchanged digest is a no-op, not version_regression, so re-running
+	// `import scenarios` on a seed directory after a new version has been
+	// added (the ordinary "docker compose up" / re-seed path) does not fail.
+	replay, err := svc.ImportScenarios(ctx, map[string]io.Reader{"v1.json": strings.NewReader(v1), "v2.json": strings.NewReader(v2)}, actorID, actorRole, "r2b")
+	if err != nil {
+		t.Fatalf("replaying v1+v2 after v2 superseded v1: %v", err)
+	}
+	if replay.NewScenarios != 0 || replay.NewVersions != 0 || replay.Unchanged != 2 {
+		t.Fatalf("replay of v1+v2 = %+v, want all Unchanged=2", replay)
+	}
+	versionsAfterReplay, err := svc.ScenarioVersions(ctx, scenarioID)
+	if err != nil {
+		t.Fatalf("ScenarioVersions after replay: %v", err)
+	}
+	if len(versionsAfterReplay) != 2 {
+		t.Fatalf("versions after replay = %+v, want 2", versionsAfterReplay)
+	}
+	for _, v := range versionsAfterReplay {
+		switch v.Version {
+		case 1:
+			if v.Status != "superseded" {
+				t.Fatalf("v1.status after replay = %q, want still superseded", v.Status)
+			}
+		case 2:
+			if v.Status != "approved" {
+				t.Fatalf("v2.status after replay = %q, want still approved", v.Status)
 			}
 		}
 	}

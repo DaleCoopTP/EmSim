@@ -2,6 +2,7 @@ package content
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -219,9 +220,10 @@ func (s *Service) ImportScenarios(ctx context.Context, files map[string]io.Reade
 	sort.Strings(names)
 
 	type decodedFile struct {
-		name   string
-		file   File
-		digest [32]byte
+		name     string
+		file     File
+		digest   [32]byte
+		bodyJSON []byte
 	}
 	items := make([]decodedFile, 0, len(names))
 	seenKeyVersion := make(map[string]string, len(names))
@@ -233,16 +235,26 @@ func (s *Service) ImportScenarios(ctx context.Context, files map[string]io.Reade
 		if err := s.schemaValidator.ValidateFile(raw); err != nil {
 			return ScenarioImportCount{}, fmt.Errorf("%s: %w: %v", name, ErrSchemaInvalid, err)
 		}
-		digest, err := BodyDigest(raw)
+		// bodyJSON is Canonical(bodyRaw(raw)) — the exact bytes digest
+		// hashes. Storing these verbatim (importOneScenarioVersion below)
+		// instead of re-marshaling the typed Body struct keeps
+		// scenario_versions.body reproducing its own digest: the typed
+		// struct has no omitempty, so an omitted optional field (hints,
+		// generation, reference.scoring, ...) would otherwise round-trip
+		// into an explicit null that neither matches digest nor passes
+		// scenario.schema.json.
+		body, err := bodyRaw(raw)
 		if err != nil {
 			return ScenarioImportCount{}, fmt.Errorf("%s: %w", name, err)
 		}
+		bodyJSON := Canonical(body)
+		digest := sha256.Sum256(bodyJSON)
 		key := fmt.Sprintf("%s@%d", file.Key, file.Version)
 		if other, dup := seenKeyVersion[key]; dup {
 			return ScenarioImportCount{}, fmt.Errorf("%s: %s and %s both claim (key=%s, version=%d)", name, other, name, file.Key, file.Version)
 		}
 		seenKeyVersion[key] = name
-		items = append(items, decodedFile{name: name, file: file, digest: digest})
+		items = append(items, decodedFile{name: name, file: file, digest: digest, bodyJSON: bodyJSON})
 	}
 
 	var result ScenarioImportCount
@@ -252,7 +264,7 @@ func (s *Service) ImportScenarios(ctx context.Context, files map[string]io.Reade
 			if err := Validate(it.file.Body, catalog); err != nil {
 				return fmt.Errorf("%s: %w", it.name, err)
 			}
-			change, err := s.importOneScenarioVersion(ctx, tx, it.file, it.digest, actorID)
+			change, err := s.importOneScenarioVersion(ctx, tx, it.file, it.digest, it.bodyJSON, actorID)
 			if err != nil {
 				return fmt.Errorf("%s: %w", it.name, err)
 			}
@@ -294,12 +306,15 @@ const (
 //     (approved) version.
 //   - known key: title/target_service/origin are fixed by the key — any
 //     change is ErrConflict, even if the body would otherwise be
-//     identical; version == current max: no-op if the digest matches,
-//     else ErrConflict (someone tried to redefine an existing version);
-//     version < max: ErrConflict (an old version can't be "returned to");
-//     version == max+1: creates the new approved version and supersedes
-//     the previous one; version > max+1: ErrConflict (no gaps).
-func (s *Service) importOneScenarioVersion(ctx context.Context, tx pgx.Tx, file File, digest [32]byte, actorID uuid.UUID) (scenarioChange, error) {
+//     identical; version <= current max: no-op if the stored version at
+//     that number has the same digest (a full seed directory, including
+//     an older file whose version a later import has since superseded,
+//     stays idempotent even after a new version appears), else
+//     ErrConflict (someone tried to redefine an existing version's
+//     content); version == max+1: creates the new approved version and
+//     supersedes the previous one; version > max+1: ErrConflict (no
+//     gaps).
+func (s *Service) importOneScenarioVersion(ctx context.Context, tx pgx.Tx, file File, digest [32]byte, bodyJSON []byte, actorID uuid.UUID) (scenarioChange, error) {
 	existing, err := s.store.ScenarioByKey(ctx, tx, file.Key)
 	if errors.Is(err, ErrNotFound) {
 		if file.Version != 1 {
@@ -316,7 +331,7 @@ func (s *Service) importOneScenarioVersion(ctx context.Context, tx pgx.Tx, file 
 		}
 		if _, err := s.store.InsertScenarioVersion(ctx, tx, ScenarioVersionRecord{
 			ID: uuid.New(), ScenarioID: scenarioID, Version: 1, Status: "approved",
-			Body: file.Body, Digest: digest, Difficulty: file.Body.Difficulty, CreatedBy: actorID,
+			Body: file.Body, BodyJSON: bodyJSON, Digest: digest, Difficulty: file.Body.Difficulty, CreatedBy: actorID,
 		}); err != nil {
 			return 0, err
 		}
@@ -342,7 +357,14 @@ func (s *Service) importOneScenarioVersion(ctx context.Context, tx pgx.Tx, file 
 	}
 
 	switch {
-	case file.Version == maxVersion:
+	case file.Version <= maxVersion:
+		// A version number at or below the current max already exists
+		// (versions are created contiguously, never with gaps): replaying
+		// its file — whether it is still approved or has since been
+		// superseded by a later version — is a no-op when the content
+		// matches, so re-running a full seed directory stays idempotent
+		// after a second version appears. Only a genuine redefinition at
+		// that version number is a conflict.
 		current, err := s.store.VersionByNumber(ctx, tx, existing.ID, file.Version)
 		if err != nil {
 			return 0, err
@@ -351,8 +373,6 @@ func (s *Service) importOneScenarioVersion(ctx context.Context, tx pgx.Tx, file 
 			return 0, conflict(fmt.Sprintf("scenario:%s@%d", file.Key, file.Version), "content_changed")
 		}
 		return scenarioChangeNone, nil
-	case file.Version < maxVersion:
-		return 0, conflict(fmt.Sprintf("scenario:%s@%d", file.Key, file.Version), "version_regression")
 	case file.Version > maxVersion+1:
 		return 0, conflict(fmt.Sprintf("scenario:%s@%d", file.Key, file.Version), "version_gap")
 	}
@@ -362,7 +382,7 @@ func (s *Service) importOneScenarioVersion(ctx context.Context, tx pgx.Tx, file 
 	}
 	if _, err := s.store.InsertScenarioVersion(ctx, tx, ScenarioVersionRecord{
 		ID: uuid.New(), ScenarioID: existing.ID, Version: file.Version, Status: "approved",
-		Body: file.Body, Digest: digest, Difficulty: file.Body.Difficulty, CreatedBy: actorID,
+		Body: file.Body, BodyJSON: bodyJSON, Digest: digest, Difficulty: file.Body.Difficulty, CreatedBy: actorID,
 	}); err != nil {
 		return 0, err
 	}

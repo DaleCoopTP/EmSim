@@ -280,6 +280,7 @@ func scanScenarioVersion(row pgx.Row) (content.ScenarioVersionRecord, error) {
 	if err := json.Unmarshal(bodyJSON, &v.Body); err != nil {
 		return content.ScenarioVersionRecord{}, content.ErrStorage
 	}
+	v.BodyJSON = bodyJSON
 	if len(digest) != len(v.Digest) {
 		return content.ScenarioVersionRecord{}, content.ErrStorage
 	}
@@ -346,10 +347,11 @@ func (s *Store) ListVersions(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUI
 // non-"approved" status naturally leaves both NULL, satisfying
 // migrations/00004's scenario_versions_approval_shape CHECK.
 func (s *Store) InsertScenarioVersion(ctx context.Context, tx pgx.Tx, v content.ScenarioVersionRecord) (content.ScenarioVersionRecord, error) {
-	bodyJSON, err := json.Marshal(v.Body)
-	if err != nil {
-		return content.ScenarioVersionRecord{}, content.ErrStorage
-	}
+	// v.BodyJSON (content.ScenarioVersionRecord's doc comment) is written
+	// verbatim rather than re-marshaling v.Body: v.Body has no omitempty,
+	// so an optional field a file legitimately omits would come back as
+	// an explicit null, and the stored body would stop reproducing v.Digest.
+	bodyJSON := v.BodyJSON
 	// approved_by repeats v.CreatedBy as its own $11 (not a second use of
 	// $10) — PostgreSQL's parameter type inference otherwise reports
 	// "inconsistent types deduced" when the same placeholder backs both a
