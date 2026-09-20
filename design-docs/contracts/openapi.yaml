@@ -318,7 +318,7 @@ paths:
     post:
       tags: [lessons]
       summary: Стоп; барьер для поздних команд; закрытие карточек — фоновая задача
-      description: Не реализовано в срезе 3 (slice-planning.md §5, stop появляется в срезе 4); контракт зарезервирован.
+      description: Под барьером фиксирует stopped_at, epoch и cutoff открытых карточек; worker завершает их фоново.
       requestBody: { content: { application/json: { schema: { type: object, properties: { reason: { type: string, maxLength: 500 } } } } } }
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Lesson' } } } }
@@ -327,7 +327,7 @@ paths:
     get:
       tags: [lessons]
       summary: Снапшот монитора при уже открытом и буферизуемом SSE-потоке
-      description: Не реализовано в срезе 3 (монитор — срез 4); контракт зарезервирован.
+      description: Клиент открывает stream, буферизует, затем читает этот snapshot.
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Monitor' } } } }
   /lessons/{lessonId}/stream:
@@ -335,7 +335,7 @@ paths:
     get:
       tags: [lessons]
       summary: SSE-поток событий занятия (преподаватель)
-      description: Не реализовано в срезе 3 (SSE появляется в срезе 4); обучаемый в срезе 3 узнаёт об изменениях опросом API.
+      description: stream.ready → snapshot monitor → invalidations; resync повторяет процедуру.
       parameters:
         - { name: Last-Event-ID, in: header, schema: { type: string }, description: Автоматический reconnect; cursor формата epoch:counter }
         - { name: cursor, in: query, schema: { type: string }, description: Сохранённый cursor для нового EventSource; при наличии заголовка приоритет у Last-Event-ID }
@@ -368,7 +368,6 @@ paths:
       tags: [trainee]
       summary: SSE-инвалидации обучаемого
       description: stream.ready → клиент буферизует → GET my/run, весь my/items и открытые карточки → применяет invalidations. resync повторяет процедуру; неизвестный epoch не считается восстановленной доставкой.
-      x-slice-3-status: Не реализовано в срезе 3 (SSE — срез 4); обучаемый узнаёт об изменениях опросом my/run и my/items.
       parameters:
         - { name: Last-Event-ID, in: header, schema: { type: string }, description: Автоматический reconnect; cursor формата epoch:counter }
         - { name: cursor, in: query, schema: { type: string }, description: Сохранённый cursor для нового EventSource; при наличии заголовка приоритет у Last-Event-ID }
@@ -925,7 +924,7 @@ components:
       properties:
         workstation_no: { type: integer }
         user_id: { type: string, format: uuid, description: 'Обязателен (срез 3, ADR-017/slice-planning.md §4): вариант "кто залогинится на РМ" (NULL) в MVP не поддерживается.' }
-        scenario_version_ids: { type: array, minItems: 1, maxItems: 1, items: { type: string, format: uuid }, description: 'Ровно одна версия сценария в срезе 3; несколько версий в очереди одного РМ — срез 4.' }
+        scenario_version_ids: { type: array, minItems: 1, items: { type: string, format: uuid }, description: 'Упорядоченная очередь версий сценариев для пары РМ и обучаемого.' }
 
     LessonOptions:
       type: object
@@ -963,12 +962,13 @@ components:
           type: array
           items:
             type: object
+            required: [workstation_no, user, run_id, online, active_items, queue_left, done]
             properties:
               workstation_no: { type: integer }
               user: { $ref: '#/components/schemas/User' }
               run_id: { type: string, format: uuid }
               online: { type: boolean }
-              current_item: { $ref: '#/components/schemas/ItemSummary' }
+              active_items: { type: array, items: { $ref: '#/components/schemas/ItemSummary' }, description: 'Все незавершённые карточки, ordinal ascending; hard может содержать несколько.' }
               queue_left: { type: integer }
               done: { type: integer }
               last_action: { $ref: '#/components/schemas/Action' }
@@ -1028,6 +1028,10 @@ components:
         closed_at:
           type: string
           format: date-time
+          nullable: true
+        spawned_from_item_id:
+          type: string
+          format: uuid
           nullable: true
         close_reason:
           type: string
@@ -1362,7 +1366,7 @@ components:
 
     DeliveredEvent:
       type: object
-      required: [key, delivery, delivered_at]
+      required: [key, delivery, text, delivered_at, late]
       properties:
         key: { type: string }
         delivery: { type: string, enum: [notice, phone_incoming, spawn_card] }

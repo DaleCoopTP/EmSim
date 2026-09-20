@@ -225,6 +225,7 @@ CREATE TABLE lessons (
     created_at    timestamptz NOT NULL DEFAULT now(),
     started_at    timestamptz,
     stopped_at    timestamptz,
+    stop_reason   text CHECK (stop_reason IS NULL OR length(stop_reason) <= 500),
     finished_at   timestamptz,
     CONSTRAINT lessons_timing_object CHECK (jsonb_typeof(timing) = 'object'),
     CONSTRAINT lessons_state_shape CHECK (
