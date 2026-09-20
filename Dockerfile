@@ -39,4 +39,5 @@ COPY --from=build /out/emsim /app/emsim
 # seed/ (slice 2's C3 pilot catalogue) is read by "emsim import seed
 # --actor ... /app/seed" — compose.yaml's one-shot "seed" service.
 COPY seed /app/seed
+RUN mkdir /app/blobs && chown 65532:65532 /app/blobs
 ENTRYPOINT ["/app/emsim"]
