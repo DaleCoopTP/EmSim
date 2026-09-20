@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"emsim/internal/content"
 	contentpg "emsim/internal/content/postgres"
 	pgstore "emsim/internal/platform/postgres"
+	"emsim/internal/platform/tasks"
 	"emsim/internal/training"
 	"emsim/internal/training/dds"
 	trainingpg "emsim/internal/training/postgres"
@@ -37,6 +39,30 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// mustTaskEnqueuer builds a *tasks.Store whose Registry has
+// training.KindLessonClose registered — the same Spec cmd/emsim's
+// registerKinds (worker_composition.go) uses, duplicated here rather
+// than imported since that lives in package main. Only the Spec's shape
+// matters for what these tests assert (EnqueueTx needs a registered
+// Kind to look up priority/max_attempts from); the exact numbers are not
+// under test here. A failure can only mean the literal Spec below is
+// malformed — a compile-time-equivalent invariant, not a runtime
+// condition — so this panics rather than taking a *testing.T, keeping
+// every existing newTrainingService(pool) call site unchanged.
+func mustTaskEnqueuer(pool *pgxpool.Pool) *tasks.Store {
+	registry, err := tasks.NewRegistry(tasks.DefaultPolicy())
+	if err != nil {
+		panic("mustTaskEnqueuer: " + err.Error())
+	}
+	if err := registry.Register(tasks.Spec{
+		Name: training.KindLessonClose, Pool: "short", MaxAttempts: 5,
+		Lease: 2 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 100,
+	}); err != nil {
+		panic("mustTaskEnqueuer: " + err.Error())
+	}
+	return tasks.NewStore(pool, registry)
+}
+
 func newTrainingService(pool *pgxpool.Pool) *training.Service {
 	authStore := authpg.NewStore(pool)
 	contentStore := contentpg.NewStore(pool)
@@ -44,6 +70,7 @@ func newTrainingService(pool *pgxpool.Pool) *training.Service {
 		trainingpg.NewStore(pool),
 		authStore, authStore,
 		contentStore, contentStore,
+		mustTaskEnqueuer(pool),
 		map[content.ExerciseType]training.Exercise{content.ExerciseTypeDDSProcessing: dds.Exercise},
 	)
 }
@@ -787,7 +814,7 @@ func TestTrainingCloseRollsBackOnEvidenceFailure(t *testing.T) {
 	authStore := authpg.NewStore(pool)
 	contentStore := contentpg.NewStore(pool)
 	service := training.NewService(
-		trainingpg.NewStore(pool), authStore, authStore, contentStore, contentStore,
+		trainingpg.NewStore(pool), authStore, authStore, contentStore, contentStore, mustTaskEnqueuer(pool),
 		map[content.ExerciseType]training.Exercise{
 			content.ExerciseTypeDDSProcessing: failingEvidenceExercise{Exercise: dds.Exercise},
 		},
@@ -1045,5 +1072,197 @@ func TestTrainingControlReportAfterClose(t *testing.T) {
 	}
 	if reportCountAfterReplay != 1 {
 		t.Fatalf("control_reports rows after replay = %d, want 1 (replay must not insert again)", reportCountAfterReplay)
+	}
+}
+
+// TestTrainingStopBarrierAndDurableClose is slice-4-plan.md's C8: Stop
+// sets the barrier (epoch, stopped_at, per-item stop_cutoff_log_seq),
+// rejects a late command as lesson_stopped, is idempotent on repeat, and
+// enqueues exactly one lesson.close task; CloseStoppedLesson (the task's
+// domain half, run here directly rather than through package main's
+// lessonCloseHandler) then interrupts the still-open item at the
+// lesson's own stopped_at, is safe to retry, finishes the run/lesson,
+// and produces evidence with a populated singular "interruption".
+func TestTrainingStopBarrierAndDurableClose(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	_, trainee, workstationID, lesson := setupPilotLesson(t, ctx, pool, service, "ЮАО")
+	instructorActor := principal(auth.User{ID: lesson.InstructorID, Role: auth.RoleInstructor}, uuid.Nil)
+	if _, err := service.Start(ctx, instructorActor, lesson.ID, "req-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	actor := principal(trainee, workstationID)
+	items, err := service.MyItems(ctx, actor)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("MyItems = %+v, %v", items, err)
+	}
+	item := items[0]
+
+	if _, err := service.Execute(ctx, actor, item.ID, training.Command{
+		CommandID: uuid.New(), ExpectedSeq: 0, Type: training.CommandOpen, Payload: []byte(`{}`),
+	}, "req-open"); err != nil {
+		t.Fatalf("Execute(open): %v", err)
+	}
+	acceptReceipt, err := service.Execute(ctx, actor, item.ID, training.Command{
+		CommandID: uuid.New(), ExpectedSeq: 1, Type: training.CommandSetStatus, Payload: []byte(`{"status":"accepted"}`),
+	}, "req-accept")
+	if err != nil || acceptReceipt.Outcome != training.OutcomeApplied {
+		t.Fatalf("Execute(accept): %+v, %v", acceptReceipt, err)
+	}
+
+	reason := "2 минуты до звонка"
+	stopped, err := service.Stop(ctx, instructorActor, lesson.ID, &reason, "req-stop")
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if stopped.State != training.LessonStopped || stopped.Epoch != 1 || stopped.StopReason == nil || *stopped.StopReason != reason {
+		t.Fatalf("stopped lesson = %+v", stopped)
+	}
+	if stopped.StoppedAt == nil {
+		t.Fatal("stopped.StoppedAt is nil")
+	}
+
+	var cutoff *int64
+	if err := pool.QueryRow(ctx, `SELECT stop_cutoff_log_seq FROM items WHERE id=$1`, item.ID).Scan(&cutoff); err != nil {
+		t.Fatalf("read cutoff: %v", err)
+	}
+	if cutoff == nil || *cutoff != 2 {
+		t.Fatalf("stop_cutoff_log_seq = %v, want 2 (open+accept)", cutoff)
+	}
+
+	var taskCount int
+	var dedupKey string
+	if err := pool.QueryRow(ctx, `SELECT count(*), max(dedup_key) FROM tasks WHERE kind='lesson.close' AND scope_id=$1`, lesson.ID).Scan(&taskCount, &dedupKey); err != nil {
+		t.Fatalf("read task: %v", err)
+	}
+	if taskCount != 1 || dedupKey != fmt.Sprintf("lesson.close:%s:1", lesson.ID) {
+		t.Fatalf("task count=%d dedup_key=%q", taskCount, dedupKey)
+	}
+
+	rejected, err := service.Execute(ctx, actor, item.ID, training.Command{
+		CommandID: uuid.New(), ExpectedSeq: 2, Type: training.CommandSetStatus, Payload: []byte(`{"status":"responding"}`),
+	}, "req-late")
+	if err != nil {
+		t.Fatalf("Execute(late): %v", err)
+	}
+	if rejected.Outcome != training.OutcomeRejected || rejected.ErrorCode == nil || *rejected.ErrorCode != training.RejectLessonStopped {
+		t.Fatalf("late command receipt = %+v", rejected)
+	}
+
+	stoppedAgain, err := service.Stop(ctx, instructorActor, lesson.ID, nil, "req-stop-2")
+	if err != nil {
+		t.Fatalf("repeat Stop: %v", err)
+	}
+	if stoppedAgain.Epoch != 1 || stoppedAgain.StoppedAt == nil || !stoppedAgain.StoppedAt.Equal(*stopped.StoppedAt) {
+		t.Fatalf("repeat stop changed state: %+v", stoppedAgain)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM tasks WHERE kind='lesson.close' AND scope_id=$1`, lesson.ID).Scan(&taskCount); err != nil {
+		t.Fatalf("recount tasks: %v", err)
+	}
+	if taskCount != 1 {
+		t.Fatalf("repeat stop created %d tasks, want 1", taskCount)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := service.CloseStoppedLesson(ctx, tx, lesson.ID); err != nil {
+		t.Fatalf("CloseStoppedLesson: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// A second, retried attempt (this task's own at-least-once delivery,
+	// or a worker crash between commit and tasks.done) must be a no-op.
+	tx2, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin retry: %v", err)
+	}
+	defer func() { _ = tx2.Rollback(ctx) }()
+	if err := service.CloseStoppedLesson(ctx, tx2, lesson.ID); err != nil {
+		t.Fatalf("CloseStoppedLesson (retry): %v", err)
+	}
+	if err := tx2.Commit(ctx); err != nil {
+		t.Fatalf("commit retry: %v", err)
+	}
+
+	var itemState, closeReason string
+	var closedAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT state, close_reason, closed_at FROM items WHERE id=$1`, item.ID).Scan(&itemState, &closeReason, &closedAt); err != nil {
+		t.Fatalf("read item: %v", err)
+	}
+	if itemState != "interrupted" || closeReason != "interrupted" {
+		t.Fatalf("item state=%s close_reason=%s, want interrupted/interrupted", itemState, closeReason)
+	}
+	if !closedAt.Equal(*stopped.StoppedAt) {
+		t.Fatalf("closed_at=%s, want stopped_at=%s (worker delay must not count)", closedAt, *stopped.StoppedAt)
+	}
+
+	var runState, lessonState string
+	if err := pool.QueryRow(ctx, `SELECT state FROM runs WHERE id=$1`, item.RunID).Scan(&runState); err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT state FROM lessons WHERE id=$1`, lesson.ID).Scan(&lessonState); err != nil {
+		t.Fatalf("read lesson: %v", err)
+	}
+	if runState != "finished" || lessonState != "finished" {
+		t.Fatalf("run=%s lesson=%s, want both finished", runState, lessonState)
+	}
+
+	var evidenceCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM evidence WHERE item_id=$1`, item.ID).Scan(&evidenceCount); err != nil {
+		t.Fatalf("count evidence: %v", err)
+	}
+	if evidenceCount != 1 {
+		t.Fatalf("evidence rows = %d, want 1 (the retry must not insert a second)", evidenceCount)
+	}
+	var evidenceBody []byte
+	if err := pool.QueryRow(ctx, `SELECT body FROM evidence WHERE item_id=$1`, item.ID).Scan(&evidenceBody); err != nil {
+		t.Fatalf("read evidence: %v", err)
+	}
+	var body training.EvidenceBody
+	if err := json.Unmarshal(evidenceBody, &body); err != nil {
+		t.Fatalf("unmarshal evidence: %v", err)
+	}
+	if body.CloseReason != training.CloseInterrupted {
+		t.Fatalf("evidence close_reason = %q, want interrupted", body.CloseReason)
+	}
+	if body.Interruption == nil || body.Interruption.Reason != "stop" || !body.Interruption.StoppedAt.Equal(*stopped.StoppedAt) {
+		t.Fatalf("evidence interruption = %+v", body.Interruption)
+	}
+	if body.CutoffLogSeq != 2 {
+		t.Fatalf("evidence cutoff_log_seq = %d, want 2", body.CutoffLogSeq)
+	}
+	if body.Derived.PrimaryStatus == nil || *body.Derived.PrimaryStatus != content.ReactionAccepted {
+		t.Fatalf("evidence primary_status = %v, want accepted", body.Derived.PrimaryStatus)
+	}
+
+	// control_report remains available on the now-interrupted item, and
+	// the worker's own close never wrote a new action row (seq/log_seq
+	// are unchanged from before it ran).
+	crReceipt, err := service.Execute(ctx, actor, item.ID, training.Command{
+		CommandID: uuid.New(), ExpectedSeq: 2, Type: training.CommandControlReport,
+		Payload: []byte(`{"text":"не успел закрыть до стопа"}`),
+	}, "req-cr")
+	if err != nil || crReceipt.Outcome != training.OutcomeApplied {
+		t.Fatalf("control_report after interrupt = %+v, %v", crReceipt, err)
+	}
+
+	// Stop on the now-finished lesson stays idempotent.
+	stoppedAfterFinish, err := service.Stop(ctx, instructorActor, lesson.ID, nil, "req-stop-3")
+	if err != nil {
+		t.Fatalf("Stop after finish: %v", err)
+	}
+	if stoppedAfterFinish.State != training.LessonFinished {
+		t.Fatalf("Stop after finish state = %s, want finished", stoppedAfterFinish.State)
 	}
 }

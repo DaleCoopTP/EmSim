@@ -182,6 +182,41 @@ func (s *Store) StartLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, starte
 	return scanLesson(tx.QueryRow(ctx, query, id, startedAt))
 }
 
+func (s *Store) StopLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, stoppedAt time.Time, reason *string, epoch int64) (training.Lesson, error) {
+	query := `
+		UPDATE lessons SET state = 'stopped', stopped_at = $2, stop_reason = $3, epoch = $4
+		WHERE id = $1 AND state = 'running'
+		RETURNING ` + lessonColumns
+	return scanLesson(tx.QueryRow(ctx, query, id, stoppedAt, reason, epoch))
+}
+
+func (s *Store) SetStopCutoffForOpenItems(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `
+		UPDATE items SET stop_cutoff_log_seq = items.log_seq
+		FROM runs
+		WHERE items.run_id = runs.id AND runs.lesson_id = $1
+		  AND items.state IN ('offered', 'opened', 'in_progress')
+		  AND items.stop_cutoff_log_seq IS NULL
+		RETURNING items.id
+	`, lessonID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, mapErr(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return ids, nil
+}
+
 // ------------------------------------------------------------ assignments
 
 const assignmentColumns = `a.lesson_id, a.workstation_id, w.number, a.user_id, a.scenario_version_ids`
@@ -356,8 +391,15 @@ func (s *Store) FinishRun(ctx context.Context, tx pgx.Tx, id uuid.UUID, finished
 	return nil
 }
 
+// FinishLesson transitions a lesson to finished from either state it can
+// naturally reach that from: running (every run's queue exhausted while
+// the lesson was still live, slice 3) or stopped (C8's
+// CloseStoppedLesson, once every item the stop barrier left open has
+// been interrupted). draft can never finish, and finished is already
+// terminal, so this WHERE clause covers every real caller without
+// needing a second, near-identical method.
 func (s *Store) FinishLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, finishedAt time.Time) error {
-	tag, err := tx.Exec(ctx, `UPDATE lessons SET state = 'finished', finished_at = $2 WHERE id = $1 AND state = 'running'`, id, finishedAt)
+	tag, err := tx.Exec(ctx, `UPDATE lessons SET state = 'finished', finished_at = $2 WHERE id = $1 AND state IN ('running', 'stopped')`, id, finishedAt)
 	if err != nil {
 		return mapErr(err)
 	}

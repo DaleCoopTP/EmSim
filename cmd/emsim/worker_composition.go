@@ -17,6 +17,7 @@ import (
 	"emsim/internal/platform/config"
 	"emsim/internal/platform/observability"
 	"emsim/internal/platform/tasks"
+	"emsim/internal/training"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,10 +29,26 @@ import (
 // W0: "задача noop проходит очередь").
 const kindSystemNoop tasks.Kind = "system.noop"
 
+// registerKinds is the single place every task kind's Spec is declared
+// (docs/technical-discovery.md §6), shared by both processes that touch
+// the queue: the worker (which needs it to run handlers) and the api
+// process (which needs it to enqueue training.KindLessonClose with the
+// right priority/max_attempts — EnqueueTx reads those from the Registry,
+// not from the caller, see internal/training/service.go's Stop). A Spec
+// mismatch between what api enqueues and what worker expects cannot
+// happen because both call this exact function.
 func registerKinds(registry *tasks.Registry) error {
-	return registry.Register(tasks.Spec{
+	if err := registry.Register(tasks.Spec{
 		Name: kindSystemNoop, Pool: "short", MaxAttempts: 3,
 		Lease: 2 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 10,
+	}); err != nil {
+		return err
+	}
+	// slice-4-plan.md's C8 spec: pool short, priority 100, lease 2
+	// minutes, 5 attempts, retry base 200ms.
+	return registry.Register(tasks.Spec{
+		Name: training.KindLessonClose, Pool: "short", MaxAttempts: 5,
+		Lease: 2 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 100,
 	})
 }
 
@@ -49,6 +66,38 @@ func noopHandler(pool *pgxpool.Pool, store *tasks.Store) tasks.Handler {
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return errors.New("noop commit failed")
+		}
+		return nil
+	})
+}
+
+// lessonCloseHandler is training.KindLessonClose's worker side (C8): the
+// domain close (trainingService.CloseStoppedLesson) and tasks.Terminal
+// commit in one transaction, the same fencing/atomicity noopHandler
+// already demonstrates for a trivial task — Terminal itself rejects a
+// stale lease (lost to the reaper or a second attempt after a crash), so
+// a lease that fails this commit simply leaves the domain change rolled
+// back for the next attempt to redo, never partially applied.
+func lessonCloseHandler(pool *pgxpool.Pool, store *tasks.Store, trainingService *training.Service) tasks.Handler {
+	return tasks.HandlerFunc(func(ctx context.Context, lease tasks.Lease) error {
+		if lease.ScopeID == nil {
+			return errors.New("lesson.close: task has no scope_id")
+		}
+		tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+		if err != nil {
+			return errors.New("lesson.close transaction failed")
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := trainingService.CloseStoppedLesson(ctx, tx, *lease.ScopeID); err != nil {
+			return err
+		}
+		if _, err := store.Terminal(ctx, tx, tasks.TerminalRequest{
+			Lease: lease, Now: time.Now().UTC(), Outcome: tasks.Done(nil),
+		}); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return errors.New("lesson.close commit failed")
 		}
 		return nil
 	})
@@ -95,6 +144,10 @@ func composePools(
 ) (tasks.Supervisor, error) {
 	handlers := tasks.NewHandlerRegistry()
 	if err := handlers.Register(kindSystemNoop, noopHandler(pool, store)); err != nil {
+		return nil, errors.New("handler configuration is invalid")
+	}
+	trainingService := newTrainingService(pool, store)
+	if err := handlers.Register(training.KindLessonClose, lessonCloseHandler(pool, store, trainingService)); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
 

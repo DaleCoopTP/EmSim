@@ -63,6 +63,9 @@ func (f *fakeTraining) ReplaceAssignments(_ context.Context, _ auth.Principal, _
 func (f *fakeTraining) Start(context.Context, auth.Principal, uuid.UUID, string) (training.Lesson, error) {
 	return f.lesson, f.readErr
 }
+func (f *fakeTraining) Stop(context.Context, auth.Principal, uuid.UUID, *string, string) (training.Lesson, error) {
+	return f.lesson, f.readErr
+}
 func (f *fakeTraining) Execute(context.Context, auth.Principal, uuid.UUID, training.Command, string) (training.Receipt, error) {
 	return f.executeReceipt, f.executeErr
 }

@@ -36,10 +36,9 @@ import (
 	"emsim/internal/platform/httpapi"
 	"emsim/internal/platform/observability"
 	pgstore "emsim/internal/platform/postgres"
+	"emsim/internal/platform/tasks"
 	"emsim/internal/training"
-	"emsim/internal/training/dds"
 	traininghttp "emsim/internal/training/http"
-	trainingpg "emsim/internal/training/postgres"
 	"emsim/web"
 
 	"github.com/google/uuid"
@@ -179,11 +178,7 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API) (http.Handler, observabil
 
 	contenthttp.NewHandlers(contentService, authService, cfg.CookieSecure).Register(apiMux)
 
-	contentStore := contentpg.NewStore(pool)
-	trainingService := training.NewService(
-		trainingpg.NewStore(pool), authStore, authStore, contentStore, contentStore,
-		map[content.ExerciseType]training.Exercise{content.ExerciseTypeDDSProcessing: dds.Exercise},
-	)
+	trainingService := newTrainingService(pool, mustTaskEnqueuer(pool))
 	traininghttp.NewHandlers(trainingService, authService, cfg.CookieSecure).Register(apiMux)
 
 	root := http.NewServeMux()
@@ -212,6 +207,26 @@ func mustSchemaValidator() *schema.Validator {
 		panic("emsim: failed to compile embedded scenario schemas: " + err.Error())
 	}
 	return validator
+}
+
+// mustTaskEnqueuer builds the api process's own *tasks.Store purely to
+// enqueue (training.Stop's KindLessonClose) — it never claims, and no
+// worker pool runs in this process. Its Registry is built by the exact
+// same registerKinds the worker calls (worker_composition.go), so the
+// Spec (priority/max_attempts) EnqueueTx reads is guaranteed identical
+// to what the worker will later run the task under. A failure here can
+// only mean a malformed Spec constant — a build-time invariant, the same
+// class of always-succeeds-in-practice precomputation as
+// mustSchemaValidator above.
+func mustTaskEnqueuer(pool *pgxpool.Pool) *tasks.Store {
+	registry, err := tasks.NewRegistry(tasks.DefaultPolicy())
+	if err != nil {
+		panic("emsim: invalid task queue policy: " + err.Error())
+	}
+	if err := registerKinds(registry); err != nil {
+		panic("emsim: invalid task kind registration: " + err.Error())
+	}
+	return tasks.NewStore(pool, registry)
 }
 
 func apiSchemaReady(ctx context.Context, pool *pgxpool.Pool) bool {

@@ -5,6 +5,7 @@ import (
 
 	"emsim/internal/auth"
 	"emsim/internal/content"
+	"emsim/internal/platform/tasks"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -55,4 +56,18 @@ type ScenarioReader interface {
 type ServiceReader interface {
 	ServiceByCode(ctx context.Context, tx pgx.Tx, code string) (content.ServiceRecord, error)
 	ListServices(ctx context.Context, tx pgx.Tx) ([]content.ServiceRecord, error)
+}
+
+// TaskEnqueuer is training's write access to platform's technical queue
+// (CLAUDE.md: "platform/tasks — a module writes only its own tables";
+// training enqueues into it, it never writes a tasks row directly). The
+// method signature matches *tasks.Store.EnqueueTx exactly, so that
+// concrete type satisfies this structurally — same pattern as
+// UserDirectory/ScenarioReader above. Stop (C8) uses this to enqueue
+// lesson.close atomically with the barrier it sets under lessons
+// FOR UPDATE (CLAUDE.md: "Preserve one database transaction where a
+// domain change, audit record, notification, and related background-
+// task enqueue must be atomic").
+type TaskEnqueuer interface {
+	EnqueueTx(ctx context.Context, tx pgx.Tx, request tasks.EnqueueRequest) (id uuid.UUID, created bool, err error)
 }

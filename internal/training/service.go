@@ -11,10 +11,20 @@ import (
 	"emsim/internal/auth"
 	"emsim/internal/content"
 	"emsim/internal/platform/audit"
+	"emsim/internal/platform/tasks"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
+
+// KindLessonClose is platform/tasks' kind for the durable worker-side
+// half of stop (RFC-001 §7.5/ADR-018): closing whatever items a stop
+// barrier left open, as interrupted, once the domain transaction that
+// set the barrier has committed. Exported so cmd/emsim's composition can
+// register its Spec (pool/priority/lease/attempts) and handler under the
+// exact same Kind this package enqueues — a mismatch there would leave
+// enqueued tasks with no worker ever claiming them.
+const KindLessonClose tasks.Kind = "lesson.close"
 
 // allowedFieldCorrectionPath mirrors internal/training/dds's own
 // constant — the application service needs it once, at assignment time,
@@ -37,13 +47,14 @@ type Service struct {
 	workstations  WorkstationDirectory
 	scenarios     ScenarioReader
 	services      ServiceReader
+	tasks         TaskEnqueuer
 	exerciseTypes map[content.ExerciseType]Exercise
 }
 
-func NewService(store Store, users UserDirectory, workstations WorkstationDirectory, scenarios ScenarioReader, services ServiceReader, exerciseTypes map[content.ExerciseType]Exercise) *Service {
+func NewService(store Store, users UserDirectory, workstations WorkstationDirectory, scenarios ScenarioReader, services ServiceReader, taskEnqueuer TaskEnqueuer, exerciseTypes map[content.ExerciseType]Exercise) *Service {
 	return &Service{
 		store: store, users: users, workstations: workstations,
-		scenarios: scenarios, services: services, exerciseTypes: exerciseTypes,
+		scenarios: scenarios, services: services, tasks: taskEnqueuer, exerciseTypes: exerciseTypes,
 	}
 }
 
@@ -309,6 +320,218 @@ func (s *Service) Start(ctx context.Context, actor auth.Principal, lessonID uuid
 		return Lesson{}, err
 	}
 	return result, nil
+}
+
+// Stop is RFC-001 §7.5's barrier, under the same lessons FOR UPDATE lock
+// Start uses: it freezes stopped_at/epoch and every open item's
+// stop_cutoff_log_seq, cancels their remaining scheduled events, and
+// atomically enqueues the durable worker-side close (KindLessonClose,
+// closeStoppedLessonTx) that actually interrupts them and finishes their
+// runs/lesson — this transaction never touches items beyond the cutoff
+// column, so it stays a short, low-contention barrier rather than a bulk
+// close. A repeat call on an already-stopped/finished lesson returns the
+// current row unchanged: no new epoch, no new task (ADR-018: "Повторный
+// stop ничего не меняет").
+func (s *Service) Stop(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, reason *string, requestID string) (Lesson, error) {
+	var result Lesson
+	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		lesson, err := s.store.LessonByID(ctx, tx, lessonID, LockUpdate)
+		if err != nil {
+			return err
+		}
+		if lesson.InstructorID != actor.UserID {
+			return ErrNotFound
+		}
+		switch lesson.State {
+		case LessonStopped, LessonFinished:
+			result = lesson
+			return nil
+		case LessonDraft:
+			return ErrConflict
+		}
+
+		now, err := s.store.Now(ctx, tx)
+		if err != nil {
+			return err
+		}
+		newEpoch := lesson.Epoch + 1
+
+		stopped, err := s.store.StopLesson(ctx, tx, lessonID, now, reason, newEpoch)
+		if err != nil {
+			return err
+		}
+
+		affected, err := s.store.SetStopCutoffForOpenItems(ctx, tx, lessonID)
+		if err != nil {
+			return err
+		}
+		for _, itemID := range affected {
+			if err := s.store.SkipRemainingItemEvents(ctx, tx, itemID, SkipReasonLessonStopped); err != nil {
+				return err
+			}
+		}
+
+		if err := s.store.AuditRecord(ctx, tx, audit.Entry{
+			ActorID: &actor.UserID, ActorRole: string(actor.Role), Action: "lesson.stop",
+			ResourceType: "lesson", ResourceID: &lessonID, Outcome: audit.OutcomeOK, RequestID: requestID,
+			Details: map[string]any{"epoch": newEpoch, "open_item_count": len(affected)},
+		}); err != nil {
+			return err
+		}
+
+		dedupKey := fmt.Sprintf("lesson.close:%s:%d", lessonID, newEpoch)
+		if _, _, err := s.tasks.EnqueueTx(ctx, tx, tasks.EnqueueRequest{
+			TaskID: uuid.New(), Kind: KindLessonClose, ScopeType: "lesson", ScopeID: &lessonID,
+			DedupKey: dedupKey, NextAttemptAt: now,
+		}); err != nil {
+			return err
+		}
+
+		result = stopped
+		return nil
+	})
+	if err != nil {
+		return Lesson{}, err
+	}
+	return result, nil
+}
+
+// CloseStoppedLesson is KindLessonClose's domain half (RFC-001 §7.5): it
+// interrupts every still-open item of a stopped lesson (closed_at =
+// lessons.stopped_at, close_reason=interrupted), seals evidence for each
+// at its own frozen stop_cutoff_log_seq, finishes each run once all its
+// items are terminal, and finishes the lesson once all its runs are.
+// Idempotent by construction — every write is either a conditional
+// UPDATE (ApplyItemDecision's own closed_at/close_reason COALESCE) or
+// guarded by the item/run/lesson's own current state, so a retried
+// attempt (this task's own at-least-once delivery, or a worker crash
+// mid-way through a prior attempt) safely picks up wherever the last one
+// left off. The caller (cmd/emsim's lessonCloseHandler) owns the
+// transaction so it can commit tasks.Terminal atomically with this —
+// CLAUDE.md: "domain effect and tasks.done fixed as one transaction."
+func (s *Service) CloseStoppedLesson(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID) error {
+	lesson, err := s.store.LessonByID(ctx, tx, lessonID, LockUpdate)
+	if err != nil {
+		return err
+	}
+	if lesson.State != LessonStopped {
+		// Already finished by an earlier attempt at this same task (or a
+		// lesson that somehow never reached stopped) — nothing left to do.
+		return nil
+	}
+	if lesson.StoppedAt == nil {
+		return fmt.Errorf("training: lesson %s is stopped with no stopped_at", lessonID)
+	}
+	exercise, err := s.exerciseFor(lesson.ExerciseType)
+	if err != nil {
+		return err
+	}
+	stoppedAt := *lesson.StoppedAt
+
+	runs, err := s.store.RunsByLesson(ctx, tx, lessonID)
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if run.State == RunFinished {
+			continue
+		}
+		items, err := s.store.ItemsByRun(ctx, tx, run.ID)
+		if err != nil {
+			return err
+		}
+		for _, peek := range items {
+			if peek.State == ItemClosed || peek.State == ItemInterrupted {
+				continue
+			}
+			item, err := s.store.ItemByID(ctx, tx, peek.ID, LockUpdate)
+			if err != nil {
+				return err
+			}
+			if item.State == ItemClosed || item.State == ItemInterrupted {
+				continue
+			}
+			if err := s.closeInterruptedItem(ctx, tx, exercise, item, stoppedAt); err != nil {
+				return err
+			}
+		}
+		items, err = s.store.ItemsByRun(ctx, tx, run.ID)
+		if err != nil {
+			return err
+		}
+		runFinished := true
+		for _, it := range items {
+			if it.State != ItemClosed && it.State != ItemInterrupted {
+				runFinished = false
+				break
+			}
+		}
+		if runFinished {
+			if err := s.store.FinishRun(ctx, tx, run.ID, stoppedAt); err != nil {
+				return err
+			}
+		}
+	}
+
+	runs, err = s.store.RunsByLesson(ctx, tx, lessonID)
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if run.State != RunFinished {
+			// A run this attempt could not finish (should not happen —
+			// every item was just closed above — but staying conservative
+			// costs nothing and a later retry will pick it up).
+			return nil
+		}
+	}
+	return s.store.FinishLesson(ctx, tx, lessonID, stoppedAt)
+}
+
+// closeInterruptedItem seals one stop-interrupted item: closed_at is the
+// lesson's own stopped_at (not clock_timestamp() — the worker's actual
+// delay must not count against the trainee, RFC-001 §7.5), the cutoff is
+// the log_seq Stop already froze (falling back to the item's current
+// log_seq only if that never got set — defensive, should not happen for
+// an item Stop's own SetStopCutoffForOpenItems already touched), and no
+// new action row is written: this is a server-side interruption, not a
+// client command.
+func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise Exercise, item Item, stoppedAt time.Time) error {
+	cutoff := item.LogSeq
+	if item.StopCutoffLogSeq != nil {
+		cutoff = *item.StopCutoffLogSeq
+	}
+	closeReason := CloseInterrupted
+	patch := ItemPatch{
+		LogSeq: item.LogSeq, Seq: item.Seq, Reaction: item.Reaction, State: ItemInterrupted, Card: item.Card,
+		ClosedAt: &stoppedAt, CloseReason: &closeReason,
+	}
+	if err := s.store.ApplyItemDecision(ctx, tx, item.ID, patch); err != nil {
+		return err
+	}
+	if err := s.store.SkipRemainingItemEvents(ctx, tx, item.ID, SkipReasonLessonStopped); err != nil {
+		return err
+	}
+
+	actions, err := s.store.ActionsByItem(ctx, tx, item.ID)
+	if err != nil {
+		return err
+	}
+	events, err := s.store.ItemEventsByItem(ctx, tx, item.ID)
+	if err != nil {
+		return err
+	}
+
+	closedItem := item
+	closedItem.State = ItemInterrupted
+	closedItem.ClosedAt = &stoppedAt
+	closedItem.CloseReason = &closeReason
+
+	evidence, err := exercise.Evidence(closedItem, actions, events, cutoff, stoppedAt)
+	if err != nil {
+		return err
+	}
+	return s.store.InsertEvidence(ctx, tx, item.ID, evidence)
 }
 
 func (s *Service) startOneAssignment(ctx context.Context, tx pgx.Tx, lesson Lesson, a Assignment, now time.Time) error {

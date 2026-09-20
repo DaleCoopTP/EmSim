@@ -74,6 +74,18 @@ type Store interface {
 	// StartLesson transitions draft -> running, setting started_at, under
 	// the row lock the caller already holds (LessonByID with LockUpdate).
 	StartLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, startedAt time.Time) (Lesson, error)
+	// StopLesson transitions running -> stopped under the row lock the
+	// caller already holds, setting stopped_at/stop_reason and the new
+	// epoch (RFC-001 §7.5's barrier). The WHERE clause's own state='running'
+	// guard is defense in depth — the caller has already checked this
+	// under LockUpdate — not a substitute for that check.
+	StopLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, stoppedAt time.Time, reason *string, epoch int64) (Lesson, error)
+	// SetStopCutoffForOpenItems freezes stop_cutoff_log_seq at each open
+	// item's current log_seq for every item of lessonID still in
+	// offered/opened/in_progress, returning their ids. A second call (e.g.
+	// a retried Stop) is a no-op for any item this already touched — the
+	// WHERE clause only matches stop_cutoff_log_seq IS NULL.
+	SetStopCutoffForOpenItems(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID) ([]uuid.UUID, error)
 
 	// ReplaceAssignments deletes and re-inserts lessonID's assignments in
 	// one statement pair — only ever called on a draft lesson (the

@@ -321,7 +321,8 @@ paths:
       description: Под барьером фиксирует stopped_at, epoch и cutoff открытых карточек; worker завершает их фоново.
       requestBody: { content: { application/json: { schema: { type: object, properties: { reason: { type: string, maxLength: 500 } } } } } }
       responses:
-        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Lesson' } } } }
+        '200': { description: 'OK; повтор на уже stopped/finished лекции возвращает тот же снимок без нового epoch/задачи', content: { application/json: { schema: { $ref: '#/components/schemas/Lesson' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
   /lessons/{lessonId}/monitor:
     parameters: [ { $ref: '#/components/parameters/LessonId' } ]
     get:

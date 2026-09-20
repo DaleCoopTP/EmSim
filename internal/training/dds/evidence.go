@@ -25,6 +25,7 @@ func (exercise) Evidence(item training.Item, actions []training.Action, events [
 	if interruptions == nil {
 		interruptions = []training.Interruption{}
 	}
+	interruption := buildEvidenceInterruption(*item.CloseReason, closedAt, events)
 	body := training.EvidenceBody{
 		Schema:            "emsim/evidence/v1",
 		ItemID:            item.ID,
@@ -62,11 +63,32 @@ func (exercise) Evidence(item training.Item, actions []training.Action, events [
 			PrimaryAt:  item.Deadlines.PrimaryAt,
 			CompleteAt: item.Deadlines.CompleteAt,
 		},
-		Interruption:  nil, // set by the stop/lesson.close worker (C8); a normal close never sets it
+		Interruption:  interruption,
 		ExerciseType:  content.ExerciseTypeDDSProcessing,
 		Interruptions: interruptions,
 	}
 	return training.SealEvidence(body)
+}
+
+// buildEvidenceInterruption fills evidence.schema.json's singular
+// "interruption" — distinct from "interruptions" (server-restart
+// markers, C6) — only for a stop-triggered close (close_reason=
+// interrupted, RFC-001 §7.5's lesson.close worker, C8). unreached_events
+// lists the keys of this item's own events the worker cancelled rather
+// than delivered (SkipReasonLessonStopped) — events that were already
+// terminal (delivered, or skipped for an unrelated reason) before stop
+// happened are not "unreached".
+func buildEvidenceInterruption(closeReason training.CloseReason, closedAt time.Time, events []training.ItemEvent) *training.EvidenceInterruption {
+	if closeReason != training.CloseInterrupted {
+		return nil
+	}
+	var unreached []string
+	for _, e := range events {
+		if e.State == training.EventSkipped && e.SkipReason != nil && *e.SkipReason == training.SkipReasonLessonStopped {
+			unreached = append(unreached, e.EventKey)
+		}
+	}
+	return &training.EvidenceInterruption{Reason: "stop", StoppedAt: closedAt, UnreachedEvents: unreached}
 }
 
 // buildEvidenceEvents projects the item's own item_events rows into

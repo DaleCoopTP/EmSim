@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"emsim/internal/auth"
@@ -37,6 +38,7 @@ type trainingService interface {
 	CreateLesson(ctx context.Context, actor auth.Principal, in training.LessonCreate, requestID string) (training.Lesson, error)
 	ReplaceAssignments(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, inputs []training.AssignmentInput, requestID string) (training.Lesson, error)
 	Start(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, requestID string) (training.Lesson, error)
+	Stop(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, reason *string, requestID string) (training.Lesson, error)
 	Execute(ctx context.Context, actor auth.Principal, itemID uuid.UUID, cmd training.Command, requestID string) (training.Receipt, error)
 	MyRun(ctx context.Context, actor auth.Principal) (training.Run, training.Lesson, error)
 	MyItems(ctx context.Context, actor auth.Principal) ([]training.Item, error)
@@ -90,6 +92,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/lessons/{lessonId}", lessons(h.getLesson))
 	mux.Handle("PUT /api/v1/lessons/{lessonId}/assignments", lessons(h.replaceAssignments))
 	mux.Handle("POST /api/v1/lessons/{lessonId}/start", lessons(h.startLesson))
+	mux.Handle("POST /api/v1/lessons/{lessonId}/stop", lessons(h.stopLesson))
 	mux.Handle("GET /api/v1/lessons/{lessonId}/runs/{runId}/actions", lessons(h.runActions))
 
 	mux.Handle("GET /api/v1/my/run", trainee(h.myRun))
@@ -235,6 +238,44 @@ func (h *Handlers) startLesson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lesson, err := h.training.Start(r.Context(), principal, id, httpapi.RequestIDFromContext(r.Context()))
+	if err != nil {
+		writeTrainingError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, toLessonJSON(lesson, nil))
+}
+
+type lessonStopRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+// stopLesson is POST /lessons/{lessonId}/stop (ADR-018/RFC-001 §7.5): the
+// barrier itself. It never waits for the worker that actually closes the
+// remaining items — that happens in the background, per the endpoint's
+// own summary ("закрытие карточек — фоновая задача").
+func (h *Handlers) stopLesson(w http.ResponseWriter, r *http.Request) {
+	principal, _ := authhttp.PrincipalFromContext(r.Context())
+	id, err := uuid.Parse(r.PathValue("lessonId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "lesson not found", nil)
+		return
+	}
+	var body lessonStopRequest
+	if r.ContentLength != 0 {
+		if err := httpapi.DecodeJSON(r, 0, &body); err != nil {
+			writeDecodeError(w, r, err)
+			return
+		}
+	}
+	var reason *string
+	if trimmed := strings.TrimSpace(body.Reason); trimmed != "" {
+		if len(trimmed) > 500 {
+			httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "reason too long", map[string]any{"field": "reason"})
+			return
+		}
+		reason = &trimmed
+	}
+	lesson, err := h.training.Stop(r.Context(), principal, id, reason, httpapi.RequestIDFromContext(r.Context()))
 	if err != nil {
 		writeTrainingError(w, r, err)
 		return
