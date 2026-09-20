@@ -462,14 +462,16 @@ func (s *Service) lockForCommand(ctx context.Context, tx pgx.Tx, itemID uuid.UUI
 	run := peekRun
 	if cmdType == CommandClose {
 		lessonLock = LockUpdate
-		run, err = s.store.RunByID(ctx, tx, peekRun.ID, LockUpdate)
-		if err != nil {
-			return Lesson{}, Run{}, Item{}, err
-		}
 	}
 	lesson, err := s.store.LessonByID(ctx, tx, peekRun.LessonID, lessonLock)
 	if err != nil {
 		return Lesson{}, Run{}, Item{}, err
+	}
+	if cmdType == CommandClose {
+		run, err = s.store.RunByID(ctx, tx, peekRun.ID, LockUpdate)
+		if err != nil {
+			return Lesson{}, Run{}, Item{}, err
+		}
 	}
 	item, err := s.store.ItemByID(ctx, tx, itemID, LockUpdate)
 	if err != nil {
@@ -609,10 +611,14 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, exercise Exerci
 	if err := s.store.InsertEvidence(ctx, tx, item.ID, evidence); err != nil {
 		return Receipt{}, err
 	}
-	// Slice 3: exactly one item per run, so closing it always exhausts
-	// the queue; issuing a next item and finishing the lesson once every
-	// run is done are slice 4's queue-advancement concerns.
+	// Slice 3 has exactly one item/run/assignment, so closing the item
+	// exhausts both the run and the lesson. They share closedAt and this
+	// transaction: observers can never see a finished run under a lesson
+	// that is still running.
 	if err := s.store.FinishRun(ctx, tx, run.ID, closedAt); err != nil {
+		return Receipt{}, err
+	}
+	if err := s.store.FinishLesson(ctx, tx, item.LessonID, closedAt); err != nil {
 		return Receipt{}, err
 	}
 	return receipt, nil

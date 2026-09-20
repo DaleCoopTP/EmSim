@@ -259,11 +259,23 @@ func TestTrainingPilotOneEndToEnd(t *testing.T) {
 	}
 
 	var runState string
-	if err := pool.QueryRow(ctx, `SELECT state FROM runs WHERE id = $1`, run.ID).Scan(&runState); err != nil {
+	var runFinishedAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT state, finished_at FROM runs WHERE id = $1`, run.ID).Scan(&runState, &runFinishedAt); err != nil {
 		t.Fatalf("read run state: %v", err)
 	}
 	if runState != "finished" {
 		t.Fatalf("run state = %s, want finished (queue exhausted)", runState)
+	}
+	var lessonState string
+	var lessonFinishedAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT state, finished_at FROM lessons WHERE id = $1`, lesson.ID).Scan(&lessonState, &lessonFinishedAt); err != nil {
+		t.Fatalf("read lesson state: %v", err)
+	}
+	if lessonState != "finished" {
+		t.Fatalf("lesson state = %s, want finished (only run exhausted)", lessonState)
+	}
+	if !lessonFinishedAt.Equal(runFinishedAt) {
+		t.Fatalf("lesson finished_at = %s, run finished_at = %s, want same close timestamp", lessonFinishedAt, runFinishedAt)
 	}
 
 	// A closed run frees the user/workstation for a new active run

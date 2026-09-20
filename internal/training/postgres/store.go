@@ -312,6 +312,17 @@ func (s *Store) FinishRun(ctx context.Context, tx pgx.Tx, id uuid.UUID, finished
 	return nil
 }
 
+func (s *Store) FinishLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, finishedAt time.Time) error {
+	tag, err := tx.Exec(ctx, `UPDATE lessons SET state = 'finished', finished_at = $2 WHERE id = $1 AND state = 'running'`, id, finishedAt)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return training.ErrNotFound
+	}
+	return nil
+}
+
 // ------------------------------------------------------------ items
 
 const itemSelectColumns = `i.id, i.run_id, r.lesson_id, r.user_id, w.number,

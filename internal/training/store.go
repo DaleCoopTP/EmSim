@@ -89,6 +89,10 @@ type Store interface {
 	ActiveRunByUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (Run, error)
 	RunsByLesson(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID) ([]Run, error)
 	FinishRun(ctx context.Context, tx pgx.Tx, id uuid.UUID, finishedAt time.Time) error
+	// FinishLesson marks the running lesson complete at the same server
+	// timestamp as its last run/item. Slice 3 has exactly one run, so a
+	// successful close always exhausts the whole lesson.
+	FinishLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, finishedAt time.Time) error
 
 	InsertItem(ctx context.Context, tx pgx.Tx, it Item) (Item, error)
 	ItemByID(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock Lock) (Item, error)
