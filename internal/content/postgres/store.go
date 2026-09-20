@@ -318,6 +318,25 @@ func (s *Store) VersionReferenceByID(ctx context.Context, tx pgx.Tx, id uuid.UUI
 	return ref, nil
 }
 
+func (s *Store) VersionReferenceBySourceKeyVersion(ctx context.Context, tx pgx.Tx, key string, version int) (content.ScenarioVersionReference, error) {
+	var ref content.ScenarioVersionReference
+	err := tx.QueryRow(ctx, `
+		SELECT sv.status,
+		       sv.approved_by IS NOT NULL AND sv.approved_at IS NOT NULL AS published,
+		       sv.exercise_type, s.target_service
+		FROM scenario_versions sv
+		JOIN scenarios s ON s.id = sv.scenario_id
+		WHERE s.source_key = $1 AND sv.version = $2
+	`, key, version).Scan(&ref.Status, &ref.Published, &ref.ExerciseType, &ref.TargetService)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return content.ScenarioVersionReference{}, content.ErrNotFound
+	}
+	if err != nil {
+		return content.ScenarioVersionReference{}, content.ErrStorage
+	}
+	return ref, nil
+}
+
 func (s *Store) VersionByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (content.ScenarioVersionRecord, error) {
 	return scanScenarioVersion(tx.QueryRow(ctx,
 		`SELECT `+scenarioVersionColumns+` FROM scenario_versions WHERE id = $1`, id))

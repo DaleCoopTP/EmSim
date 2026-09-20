@@ -167,9 +167,10 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 // create (a duplicate of the same incident, or another prepared
 // scenario's approved version).
 type EventSpawn struct {
-	Kind              string     `json:"kind"`
-	ScenarioVersionID *uuid.UUID `json:"scenario_version_id"`
-	Variation         string     `json:"variation"`
+	Kind        string `json:"kind"`
+	ScenarioKey string `json:"scenario_key"`
+	Version     int    `json:"version"`
+	Variation   string `json:"variation"`
 }
 
 // EventExpects is event.expects — the reference reaction to this event,

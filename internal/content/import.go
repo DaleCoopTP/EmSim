@@ -266,10 +266,21 @@ func (s *Service) ImportScenarios(ctx context.Context, files map[string]io.Reade
 		}
 		return items[i].name < items[j].name
 	})
+	// A scenario event may refer to another version in the same import
+	// batch. The reference is logical (source key + version), so it must be
+	// valid independently of filename order and before PostgreSQL assigns
+	// its installation-local UUID. The normal import rules still run later;
+	// a conflicting target rolls the whole transaction back.
+	batchVersions := make(map[string]ScenarioVersionReference, len(items))
+	for _, it := range items {
+		batchVersions[scenarioVersionRefKey(it.file.Key, it.file.Version)] = ScenarioVersionReference{
+			Status: "approved", Published: true, ExerciseType: it.file.Body.ExerciseType, TargetService: it.file.Body.TargetService,
+		}
+	}
 
 	var result ScenarioImportCount
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
-		catalog := storeCatalog{ctx: ctx, tx: tx, store: s.store}
+		catalog := batchCatalog{base: storeCatalog{ctx: ctx, tx: tx, store: s.store}, versions: batchVersions}
 		for _, it := range items {
 			if err := Validate(it.file.Body, catalog); err != nil {
 				return fmt.Errorf("%s: %w", it.name, err)
@@ -431,10 +442,40 @@ func (c storeCatalog) ClassifierType(code string) (string, bool) {
 	return t.Name, true
 }
 
-func (c storeCatalog) ScenarioVersion(id uuid.UUID) (ScenarioVersionReference, bool) {
-	ref, err := c.store.VersionReferenceByID(c.ctx, c.tx, id)
+func (c storeCatalog) ScenarioVersion(key string, version int) (ScenarioVersionReference, bool) {
+	ref, err := c.store.VersionReferenceBySourceKeyVersion(c.ctx, c.tx, key, version)
 	if err != nil {
 		return ScenarioVersionReference{}, false
 	}
 	return ref, true
+}
+
+// batchCatalog overlays versions decoded from the import batch on the
+// transactional database catalogue. It makes a stable spawn reference
+// independent of source-file ordering while retaining database values for
+// services, classifier types and versions not present in this batch.
+type batchCatalog struct {
+	base     storeCatalog
+	versions map[string]ScenarioVersionReference
+}
+
+var _ Catalog = batchCatalog{}
+
+func (c batchCatalog) Service(code string) (ServiceRecord, bool) {
+	return c.base.Service(code)
+}
+
+func (c batchCatalog) ClassifierType(code string) (string, bool) {
+	return c.base.ClassifierType(code)
+}
+
+func (c batchCatalog) ScenarioVersion(key string, version int) (ScenarioVersionReference, bool) {
+	if ref, ok := c.versions[scenarioVersionRefKey(key, version)]; ok {
+		return ref, true
+	}
+	return c.base.ScenarioVersion(key, version)
+}
+
+func scenarioVersionRefKey(key string, version int) string {
+	return fmt.Sprintf("%s@%d", key, version)
 }

@@ -113,7 +113,7 @@ type ScenarioVersionRecord struct {
 }
 
 // ScenarioVersionReference is the small, closed projection semantic
-// validation needs for an events[].spawn.scenario_version_id. Loading only
+// validation needs for an events[].spawn.(scenario_key,version). Loading only
 // these fields avoids decoding another version's full body merely to check
 // that it is published and compatible with the referring scenario. Published
 // is approval provenance rather than just status: a future cancelled draft
@@ -206,6 +206,7 @@ type Store interface {
 	// "zero versions" being a real, checkable state during import.
 	MaxVersion(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID) (int, error)
 	VersionReferenceByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (ScenarioVersionReference, error)
+	VersionReferenceBySourceKeyVersion(ctx context.Context, tx pgx.Tx, key string, version int) (ScenarioVersionReference, error)
 	// VersionByID is the full record a consumer outside content needs
 	// when it only has a version id to start from (training's
 	// assignment/start, slice 3's C4) — VersionReferenceByID's narrower

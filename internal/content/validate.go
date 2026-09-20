@@ -1,10 +1,6 @@
 package content
 
-import (
-	"fmt"
-
-	"github.com/google/uuid"
-)
+import "fmt"
 
 // Catalog is the domain-facing reference-data lookup Validate needs for
 // services, classifier types, and referenced scenario versions. It exposes
@@ -14,7 +10,7 @@ import (
 type Catalog interface {
 	Service(code string) (ServiceRecord, bool)
 	ClassifierType(code string) (name string, known bool)
-	ScenarioVersion(id uuid.UUID) (ScenarioVersionReference, bool)
+	ScenarioVersion(key string, version int) (ScenarioVersionReference, bool)
 }
 
 // Validate checks a decoded Body against every semantic rule
@@ -128,11 +124,14 @@ func validateEvents(events []Event, contactKeys map[string]bool, exerciseType Ex
 				return invalid(fmt.Sprintf("events[%d].spawn", i), "required")
 			}
 			if e.Spawn.Kind == "scenario" {
-				field := fmt.Sprintf("events[%d].spawn.scenario_version_id", i)
-				if e.Spawn.ScenarioVersionID == nil {
-					return invalid(field, "required")
+				field := fmt.Sprintf("events[%d].spawn", i)
+				if e.Spawn.ScenarioKey == "" {
+					return invalid(field+".scenario_key", "required")
 				}
-				ref, known := catalog.ScenarioVersion(*e.Spawn.ScenarioVersionID)
+				if e.Spawn.Version < 1 {
+					return invalid(field+".version", "required")
+				}
+				ref, known := catalog.ScenarioVersion(e.Spawn.ScenarioKey, e.Spawn.Version)
 				if !known {
 					return invalid(field, "unknown")
 				}
@@ -145,6 +144,8 @@ func validateEvents(events []Event, contactKeys map[string]bool, exerciseType Ex
 				if ref.TargetService != targetService {
 					return invalid(field, "target_service_mismatch")
 				}
+			} else if e.Spawn.Kind == "duplicate" && e.Spawn.Variation == "" {
+				return invalid(fmt.Sprintf("events[%d].spawn.variation", i), "required")
 			}
 		}
 	}

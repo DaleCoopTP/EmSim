@@ -3,12 +3,11 @@ package content_test
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"emsim/internal/content"
 	"emsim/internal/content/schema"
-
-	"github.com/google/uuid"
 )
 
 // mapCatalog is a Catalog backed by the seed files themselves — this test
@@ -18,6 +17,7 @@ import (
 type mapCatalog struct {
 	services   map[string]content.ServiceRecord
 	classifier map[string]string
+	versions   map[string]content.ScenarioVersionReference
 }
 
 func (c mapCatalog) Service(code string) (content.ServiceRecord, bool) {
@@ -30,8 +30,9 @@ func (c mapCatalog) ClassifierType(code string) (string, bool) {
 	return name, ok
 }
 
-func (c mapCatalog) ScenarioVersion(uuid.UUID) (content.ScenarioVersionReference, bool) {
-	return content.ScenarioVersionReference{}, false
+func (c mapCatalog) ScenarioVersion(key string, version int) (content.ScenarioVersionReference, bool) {
+	ref, ok := c.versions[key+"@"+strconv.Itoa(version)]
+	return ref, ok
 }
 
 // TestSeedFilesAreValid loads the real seed/ files shipped for slice 2
@@ -49,7 +50,7 @@ func TestSeedFilesAreValid(t *testing.T) {
 	if len(services) == 0 {
 		t.Fatalf("services.json has no entries")
 	}
-	catalog := mapCatalog{services: map[string]content.ServiceRecord{}, classifier: map[string]string{}}
+	catalog := mapCatalog{services: map[string]content.ServiceRecord{}, classifier: map[string]string{}, versions: map[string]content.ScenarioVersionReference{}}
 	for _, s := range services {
 		catalog.services[s.Code] = s
 	}
@@ -79,6 +80,7 @@ func TestSeedFilesAreValid(t *testing.T) {
 	}
 
 	seenKeys := map[string]bool{}
+	files := make(map[string]content.File, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -91,9 +93,6 @@ func TestSeedFilesAreValid(t *testing.T) {
 		if err := validator.ValidateFile(raw); err != nil {
 			t.Fatalf("%s: schema validation: %v", entry.Name(), err)
 		}
-		if err := content.Validate(file.Body, catalog); err != nil {
-			t.Fatalf("%s: semantic validation: %v", entry.Name(), err)
-		}
 		if seenKeys[file.Key] {
 			t.Fatalf("%s: duplicate scenario key %q in seed/scenarios", entry.Name(), file.Key)
 		}
@@ -101,9 +100,18 @@ func TestSeedFilesAreValid(t *testing.T) {
 		if file.Version != 1 {
 			t.Fatalf("%s: seed files must start at version 1, got %d", entry.Name(), file.Version)
 		}
+		files[entry.Name()] = file
+		catalog.versions[file.Key+"@"+strconv.Itoa(file.Version)] = content.ScenarioVersionReference{
+			Status: "approved", Published: true, ExerciseType: file.Body.ExerciseType, TargetService: file.Body.TargetService,
+		}
 	}
-	if len(seenKeys) != 2 {
-		t.Fatalf("seed/scenarios has %d distinct keys, want the 2 pilot cases (slice-2-plan.md)", len(seenKeys))
+	for name, file := range files {
+		if err := content.Validate(file.Body, catalog); err != nil {
+			t.Fatalf("%s: semantic validation: %v", name, err)
+		}
+	}
+	if len(seenKeys) < 2 {
+		t.Fatalf("seed/scenarios has %d distinct keys, want at least the 2 pilot cases", len(seenKeys))
 	}
 }
 

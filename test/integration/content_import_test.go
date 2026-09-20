@@ -345,17 +345,16 @@ func TestContentImportScenarioVersionRules(t *testing.T) {
 	svc := content.NewService(contentpg.NewStore(pool), mustValidator(t))
 
 	seedServiceAndClassifier(t, ctx, svc, actorID, actorRole)
-	unknownVersionID := uuid.New()
 	unknownSpawn := strings.Replace(
 		scenarioFileJSON(t, "unknown-spawn", 1, "Unknown spawn", "accepted"),
 		`"events": []`,
-		`"events": [{"key":"e1","at_s":0,"since":"accepted","delivery":"spawn_card","spawn":{"kind":"scenario","scenario_version_id":"`+unknownVersionID.String()+`"}}]`,
+		`"events": [{"key":"e1","at_s":0,"since":"accepted","delivery":"spawn_card","spawn":{"kind":"scenario","scenario_key":"missing-target","version":1}}]`,
 		1,
 	)
 	_, err = svc.ImportScenarios(ctx, map[string]io.Reader{"unknown.json": strings.NewReader(unknownSpawn)}, actorID, actorRole, "r0")
 	var validationErr *content.ValidationError
-	if !errors.As(err, &validationErr) || validationErr.Field != "events[0].spawn.scenario_version_id" {
-		t.Fatalf("import with unknown spawn version error = %v, want scenario_version_id validation error", err)
+	if !errors.As(err, &validationErr) || validationErr.Field != "events[0].spawn" {
+		t.Fatalf("import with unknown spawn version error = %v, want stable-reference validation error", err)
 	}
 
 	v1 := scenarioFileJSON(t, "vtest", 1, "V1 title", "accepted")
@@ -389,11 +388,27 @@ func TestContentImportScenarioVersionRules(t *testing.T) {
 	compatibleSpawn := strings.Replace(
 		scenarioFileJSON(t, "compatible-spawn", 1, "Compatible spawn", "accepted"),
 		`"events": []`,
-		`"events": [{"key":"e1","at_s":0,"since":"accepted","delivery":"spawn_card","spawn":{"kind":"scenario","scenario_version_id":"`+v1Versions[0].ID.String()+`"}}]`,
+		`"events": [{"key":"e1","at_s":0,"since":"accepted","delivery":"spawn_card","spawn":{"kind":"scenario","scenario_key":"vtest","version":1}}]`,
 		1,
 	)
 	if _, err := svc.ImportScenarios(ctx, map[string]io.Reader{"compatible.json": strings.NewReader(compatibleSpawn)}, actorID, actorRole, "r1b"); err != nil {
 		t.Fatalf("import with compatible spawn version: %v", err)
+	}
+
+	// The referring key sorts before its target, so this only succeeds if
+	// ImportScenarios overlays the decoded batch while validating stable
+	// spawn references instead of depending on filename/import order.
+	batchTarget := scenarioFileJSON(t, "z-batch-target", 1, "Batch target", "accepted")
+	batchRef := strings.Replace(
+		scenarioFileJSON(t, "a-batch-ref", 1, "Batch reference", "accepted"),
+		`"events": []`,
+		`"events": [{"key":"e1","at_s":0,"since":"accepted","delivery":"spawn_card","spawn":{"kind":"scenario","scenario_key":"z-batch-target","version":1}}]`,
+		1,
+	)
+	if _, err := svc.ImportScenarios(ctx, map[string]io.Reader{
+		"target.json": strings.NewReader(batchTarget), "reference.json": strings.NewReader(batchRef),
+	}, actorID, actorRole, "r1c"); err != nil {
+		t.Fatalf("import batch with order-independent spawn reference: %v", err)
 	}
 
 	// v2 supersedes v1
