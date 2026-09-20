@@ -318,6 +318,11 @@ func (s *Store) VersionReferenceByID(ctx context.Context, tx pgx.Tx, id uuid.UUI
 	return ref, nil
 }
 
+func (s *Store) VersionByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (content.ScenarioVersionRecord, error) {
+	return scanScenarioVersion(tx.QueryRow(ctx,
+		`SELECT `+scenarioVersionColumns+` FROM scenario_versions WHERE id = $1`, id))
+}
+
 func (s *Store) VersionByNumber(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID, version int) (content.ScenarioVersionRecord, error) {
 	return scanScenarioVersion(tx.QueryRow(ctx,
 		`SELECT `+scenarioVersionColumns+` FROM scenario_versions WHERE scenario_id = $1 AND version = $2`,

@@ -27,21 +27,33 @@ type Exercise interface {
 	Evidence(item Item, actions []Action, cutoffLogSeq int64, closedAt time.Time) (Evidence, error)
 }
 
-// Action is one actions row as Evidence needs it: already restricted to
-// [1, cutoffLogSeq] and sorted by LogSeq ascending. Producing that slice
-// requires reading the actions table, which only the application service
-// does — Action itself is a plain value, not a query result.
+// Action is one actions row — both what Evidence needs (already
+// restricted to [1, cutoffLogSeq] and sorted by LogSeq ascending, a
+// filter and order only the application service can produce, since only
+// it reads the actions table) and the full storage/replay shape the
+// application service's Store persists and looks up by CommandID
+// (ADR-004 §7.1). ItemID/RequestDigest/CommandID/Receipt/HTTPStatus/
+// ClientAt are only meaningful for the latter use, not for Evidence.
 type Action struct {
-	ID        uuid.UUID
-	Seq       int64
-	LogSeq    int64
-	ActorID   uuid.UUID
-	Type      CommandType
-	Payload   json.RawMessage
-	Effect    map[string]any
-	Accepted  bool
-	Rejection Rejection
-	ServerAt  time.Time
+	ID            uuid.UUID
+	ItemID        uuid.UUID
+	Seq           int64
+	LogSeq        int64
+	ActorID       uuid.UUID
+	RequestDigest [32]byte
+	CommandID     uuid.UUID
+	Type          CommandType
+	Payload       json.RawMessage
+	Effect        map[string]any
+	Accepted      bool
+	Rejection     Rejection
+	// Receipt is the exact quittance returned to the client on this
+	// action's first (non-replay) response — ADR-004: a replay must
+	// return this unchanged, not a recomputed one.
+	Receipt    Receipt
+	HTTPStatus int
+	ClientAt   *time.Time
+	ServerAt   time.Time
 	// ReactionAfter is the item's reaction immediately after this action
 	// was decided — "" for a rejected action or one that does not change
 	// reaction (open, add_comment, set_card_field).

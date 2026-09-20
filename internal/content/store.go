@@ -206,6 +206,12 @@ type Store interface {
 	// "zero versions" being a real, checkable state during import.
 	MaxVersion(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID) (int, error)
 	VersionReferenceByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (ScenarioVersionReference, error)
+	// VersionByID is the full record a consumer outside content needs
+	// when it only has a version id to start from (training's
+	// assignment/start, slice 3's C4) — VersionReferenceByID's narrower
+	// projection is not enough once the caller must also read Body.Card/
+	// Events/Reference, not just check compatibility.
+	VersionByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (ScenarioVersionRecord, error)
 	VersionByNumber(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID, version int) (ScenarioVersionRecord, error)
 	ApprovedVersion(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID) (ScenarioVersionRecord, error)
 	ListVersions(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID) ([]VersionSummary, error)

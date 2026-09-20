@@ -86,9 +86,9 @@ const (
 // CompleteAt is nil until the first applied primary decision sets it
 // (RFC-001 §7.2's "Единая timing policy ДДС").
 type Deadlines struct {
-	OpenAt     time.Time
-	PrimaryAt  time.Time
-	CompleteAt *time.Time
+	OpenAt     time.Time  `json:"open_at"`
+	PrimaryAt  time.Time  `json:"primary_at"`
+	CompleteAt *time.Time `json:"complete_at,omitempty"`
 }
 
 // Timing is lessons.timing / items.timing_effective, frozen at lesson
@@ -97,10 +97,10 @@ type Deadlines struct {
 // interval; slice 3's application service (C4) rejects a lesson that
 // sets it, since spawn_card/hard-mode issuance is slice 4.
 type Timing struct {
-	OpenS       int
-	PrimaryS    int
-	CompleteS   int
-	SpawnEveryS *int
+	OpenS       int  `json:"open_s"`
+	PrimaryS    int  `json:"primary_s"`
+	CompleteS   int  `json:"complete_s"`
+	SpawnEveryS *int `json:"spawn_every_s,omitempty"`
 }
 
 // Item is the pure-domain view of one items row an Exercise decides
