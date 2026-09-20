@@ -214,7 +214,12 @@ func currentItemID(t *testing.T, f trainingE2EFixture, traineeClient *http.Clien
 		QueueLeft     int     `json:"queue_left"`
 	}
 	response := jsonRequest(t, f.ctx, traineeClient, f.baseURL, http.MethodGet, "/api/v1/my/run", nil, &run)
-	if response.StatusCode != http.StatusOK || run.CurrentItemID == nil || run.QueueLeft != 1 {
+	// queue_left is "not yet offered" (assignment length - QueueCursor,
+	// the same semantics Monitor.rows[].queue_left uses), not a count of
+	// currently open items — a single-item assignment's one card is
+	// already offered by the time /my/run is read here, so queue_left is
+	// 0, not 1.
+	if response.StatusCode != http.StatusOK || run.CurrentItemID == nil || run.QueueLeft != 0 {
 		t.Fatalf("GET /my/run status = %d, body = %+v", response.StatusCode, run)
 	}
 	return *run.CurrentItemID

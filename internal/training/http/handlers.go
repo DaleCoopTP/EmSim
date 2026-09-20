@@ -42,7 +42,7 @@ type trainingService interface {
 	Stop(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, reason *string, requestID string) (training.Lesson, error)
 	Monitor(ctx context.Context, actor auth.Principal, lessonID uuid.UUID) (training.MonitorResult, error)
 	Execute(ctx context.Context, actor auth.Principal, itemID uuid.UUID, cmd training.Command, requestID string) (training.Receipt, error)
-	MyRun(ctx context.Context, actor auth.Principal) (training.Run, training.Lesson, error)
+	MyRun(ctx context.Context, actor auth.Principal) (training.Run, training.Lesson, int, error)
 	MyItems(ctx context.Context, actor auth.Principal) ([]training.Item, error)
 	ItemForTrainee(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (training.Item, []training.Action, []training.DeliveredEvent, error)
 	ItemForInstructor(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (training.Item, []training.Action, []training.DeliveredEvent, content.Body, error)
@@ -318,7 +318,7 @@ func (h *Handlers) runActions(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) myRun(w http.ResponseWriter, r *http.Request) {
 	principal, _ := authhttp.PrincipalFromContext(r.Context())
-	run, lesson, err := h.training.MyRun(r.Context(), principal)
+	run, lesson, queueTotal, err := h.training.MyRun(r.Context(), principal)
 	if err != nil {
 		if errors.Is(err, training.ErrNotFound) {
 			w.WriteHeader(http.StatusNoContent)
@@ -338,16 +338,17 @@ func (h *Handlers) myRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var currentItemID *string
-	queueLeft := 0
 	for _, it := range items {
 		if it.State == training.ItemClosed || it.State == training.ItemInterrupted {
 			continue
 		}
-		queueLeft++
-		if currentItemID == nil {
-			id := it.ID.String()
-			currentItemID = &id
-		}
+		id := it.ID.String()
+		currentItemID = &id
+		break
+	}
+	queueLeft := queueTotal - run.QueueCursor
+	if queueLeft < 0 {
+		queueLeft = 0
 	}
 	writeJSON(w, r, http.StatusOK, myRunJSON{
 		ExerciseType: string(run.ExerciseType), RunID: run.ID.String(), Lesson: toLessonJSON(lesson, nil),
@@ -550,6 +551,7 @@ type lessonJSON struct {
 	Assignments   []assignmentJSON `json:"assignments,omitempty"`
 	StartedAt     *string          `json:"started_at"`
 	StoppedAt     *string          `json:"stopped_at"`
+	StopReason    *string          `json:"stop_reason,omitempty"`
 }
 
 func toLessonJSON(l training.Lesson, assignments []training.Assignment) lessonJSON {
@@ -557,7 +559,7 @@ func toLessonJSON(l training.Lesson, assignments []training.Assignment) lessonJS
 		ID: l.ID.String(), ExerciseType: string(l.ExerciseType), Title: l.Title,
 		Mode: string(l.Mode), Level: string(l.Level), State: string(l.State),
 		Epoch: l.Epoch, Timing: toTimingJSON(l.Timing), RubricVersion: l.RubricVersion,
-		StartedAt: formatTimePtr(l.StartedAt), StoppedAt: formatTimePtr(l.StoppedAt),
+		StartedAt: formatTimePtr(l.StartedAt), StoppedAt: formatTimePtr(l.StoppedAt), StopReason: l.StopReason,
 	}
 	if assignments != nil {
 		out.Assignments = make([]assignmentJSON, len(assignments))

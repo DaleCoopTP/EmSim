@@ -44,6 +44,7 @@ type fakeTraining struct {
 	events          []training.DeliveredEvent
 	monitor         training.MonitorResult
 	monitorErr      error
+	queueTotal      int
 	reference       content.Body
 	now             time.Time
 	readErr         error
@@ -75,8 +76,8 @@ func (f *fakeTraining) Monitor(context.Context, auth.Principal, uuid.UUID) (trai
 func (f *fakeTraining) Execute(context.Context, auth.Principal, uuid.UUID, training.Command, string) (training.Receipt, error) {
 	return f.executeReceipt, f.executeErr
 }
-func (f *fakeTraining) MyRun(context.Context, auth.Principal) (training.Run, training.Lesson, error) {
-	return f.run, f.lesson, f.readErr
+func (f *fakeTraining) MyRun(context.Context, auth.Principal) (training.Run, training.Lesson, int, error) {
+	return f.run, f.lesson, f.queueTotal, f.readErr
 }
 func (f *fakeTraining) MyItems(context.Context, auth.Principal) ([]training.Item, error) {
 	if f.readErr != nil {

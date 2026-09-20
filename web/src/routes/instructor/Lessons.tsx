@@ -2,10 +2,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { errorMessage } from "../../api/errors";
-import { createLesson, lessonsQueryKey, useLessons, type LessonCreate } from "../../api/training";
+import { createLesson, lessonsQueryKey, useLessons, type Level, type LessonCreate } from "../../api/training";
 import { formatDateTime } from "../../format";
 
 const stateLabels: Record<string, string> = { draft: "черновик", running: "идёт", stopped: "остановлено", finished: "завершено" };
+const levelLabels: Record<Level, string> = { easy: "лёгкий", medium: "средний", hard: "сложный" };
 
 export function LessonsRoute() {
   const lessons = useLessons();
@@ -13,6 +14,8 @@ export function LessonsRoute() {
   const navigate = useNavigate();
   const [showCreate, setShowCreate] = useState(false);
   const [title, setTitle] = useState("");
+  const [level, setLevel] = useState<Level>("easy");
+  const [spawnEveryS, setSpawnEveryS] = useState("150");
   const create = useMutation({
     mutationFn: createLesson,
     onSuccess: async (lesson) => {
@@ -21,14 +24,20 @@ export function LessonsRoute() {
     },
   });
 
+  const spawnValue = Number(spawnEveryS);
+  const spawnValid = level !== "hard" || (Number.isFinite(spawnValue) && spawnValue > 0);
+
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
     const body: LessonCreate = {
       exercise_type: "dds_processing",
       title: title.trim(),
       mode: "training",
-      level: "easy",
-      timing: { open_s: 30, primary_s: 30, complete_s: 180 },
+      level,
+      timing: {
+        open_s: 30, primary_s: 30, complete_s: 180,
+        spawn_every_s: level === "hard" ? spawnValue : undefined,
+      },
     };
     create.mutate(body);
   };
@@ -41,10 +50,20 @@ export function LessonsRoute() {
         <form className="lesson-form" onSubmit={onSubmit}>
           <h2>Новое занятие</h2>
           <label>Название<input required maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} /></label>
-          <p>Режим: обучение · уровень: лёгкий · таймеры: 30 / 30 / 180 с</p>
+          <label>Уровень
+            <select value={level} onChange={(event) => setLevel(event.target.value as Level)}>
+              {(Object.keys(levelLabels) as Level[]).map((option) => <option key={option} value={option}>{levelLabels[option]}</option>)}
+            </select>
+          </label>
+          {level === "hard" && (
+            <label>Интервал новых карточек, с
+              <input type="number" min={1} required value={spawnEveryS} onChange={(event) => setSpawnEveryS(event.target.value)} />
+            </label>
+          )}
+          <p>Режим: обучение · таймеры: 30 / 30 / 180 с</p>
           {create.isError && <p role="alert" className="error">{errorMessage(create.error)}</p>}
           <p>
-            <button type="submit" disabled={create.isPending || title.trim() === ""}>Создать</button>{" "}
+            <button type="submit" disabled={create.isPending || title.trim() === "" || !spawnValid}>Создать</button>{" "}
             <button type="button" onClick={() => setShowCreate(false)}>Отмена</button>
           </p>
         </form>
@@ -59,7 +78,7 @@ export function LessonsRoute() {
             <tr key={lesson.id}>
               <td><Link to={`/instructor/lessons/${lesson.id}`}>{lesson.title}</Link></td>
               <td>{lesson.mode === "training" ? "обучение" : "вводное"}</td>
-              <td>{lesson.level === "easy" ? "лёгкий" : lesson.level}</td>
+              <td>{levelLabels[lesson.level] ?? lesson.level}</td>
               <td>{stateLabels[lesson.state] ?? lesson.state}</td>
               <td>{formatDateTime(lesson.started_at)}</td>
             </tr>

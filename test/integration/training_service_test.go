@@ -241,7 +241,7 @@ func TestTrainingPilotOneEndToEnd(t *testing.T) {
 	}
 
 	actor := principal(trainee, workstationID)
-	run, _, err := service.MyRun(ctx, actor)
+	run, _, _, err := service.MyRun(ctx, actor)
 	if err != nil {
 		t.Fatalf("MyRun: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestTrainingPilotOneEndToEnd(t *testing.T) {
 
 	// A closed run frees the user/workstation for a new active run
 	// (slice-planning.md §4 DoD).
-	if _, _, err := service.MyRun(ctx, actor); !errors.Is(err, training.ErrNotFound) {
+	if _, _, _, err := service.MyRun(ctx, actor); !errors.Is(err, training.ErrNotFound) {
 		t.Fatalf("MyRun after close = %v, want ErrNotFound (no active run)", err)
 	}
 }
@@ -383,7 +383,7 @@ func TestTrainingGroupAssignmentsAdvanceIndependentQueues(t *testing.T) {
 	if err != nil || len(itemsA) != 2 || itemsA[1].ScenarioVersionID != versionB || itemsA[1].State != training.ItemOffered {
 		t.Fatalf("A after first close = %+v, %v", itemsA, err)
 	}
-	if _, _, err := service.MyRun(ctx, actorA); err != nil {
+	if _, _, _, err := service.MyRun(ctx, actorA); err != nil {
 		t.Fatalf("A run ended before queue exhausted: %v", err)
 	}
 	closePilotItem(t, ctx, service, actorB, itemsB[0].ID)
@@ -393,7 +393,7 @@ func TestTrainingGroupAssignmentsAdvanceIndependentQueues(t *testing.T) {
 	}
 
 	closePilotItem(t, ctx, service, actorA, itemsA[1].ID)
-	if _, _, err := service.MyRun(ctx, actorA); !errors.Is(err, training.ErrNotFound) {
+	if _, _, _, err := service.MyRun(ctx, actorA); !errors.Is(err, training.ErrNotFound) {
 		t.Fatalf("A run after queue exhausted = %v, want ErrNotFound", err)
 	}
 	closePilotItem(t, ctx, service, actorB, itemsB[1].ID)
@@ -509,7 +509,7 @@ func TestTrainingTickDeliversSpawnAndHardOffer(t *testing.T) {
 		t.Fatalf("Start hard lesson: %v", err)
 	}
 	hardActor := principal(hardTrainee, hardWS)
-	hardRun, _, err := service.MyRun(ctx, hardActor)
+	hardRun, _, _, err := service.MyRun(ctx, hardActor)
 	if err != nil {
 		t.Fatalf("MyRun hard: %v", err)
 	}

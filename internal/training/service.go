@@ -1187,9 +1187,17 @@ func assignmentForRun(assignments []Assignment, run Run) (Assignment, bool) {
 
 // MyRun returns the caller's active run and its lesson, or ErrNotFound
 // if they have none (GET /my/run's 204 case).
-func (s *Service) MyRun(ctx context.Context, actor auth.Principal) (Run, Lesson, error) {
+// MyRun returns the caller's active run and its lesson, plus the total
+// length of the run's own assigned queue — the trainee-facing
+// GET /my/run's queue_left is (that total - run.QueueCursor), the same
+// "not yet offered" semantics Monitor.rows[].queue_left already uses,
+// not a count of currently open items (which active_items/MyItems
+// already covers, and which a hard-level run with several parallel
+// cards would otherwise double-count as "still queued").
+func (s *Service) MyRun(ctx context.Context, actor auth.Principal) (Run, Lesson, int, error) {
 	var run Run
 	var lesson Lesson
+	var queueTotal int
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
 		var err error
 		run, err = s.store.ActiveRunByUser(ctx, tx, actor.UserID)
@@ -1197,12 +1205,22 @@ func (s *Service) MyRun(ctx context.Context, actor auth.Principal) (Run, Lesson,
 			return err
 		}
 		lesson, err = s.store.LessonByID(ctx, tx, run.LessonID, LockNone)
-		return err
+		if err != nil {
+			return err
+		}
+		assignments, err := s.store.AssignmentsByLesson(ctx, tx, run.LessonID)
+		if err != nil {
+			return err
+		}
+		if assignment, ok := assignmentForRun(assignments, run); ok {
+			queueTotal = len(assignment.ScenarioVersionIDs)
+		}
+		return nil
 	})
 	if err != nil {
-		return Run{}, Lesson{}, err
+		return Run{}, Lesson{}, 0, err
 	}
-	return run, lesson, nil
+	return run, lesson, queueTotal, nil
 }
 
 // MyItems returns every item in the caller's active run, offered-first.
