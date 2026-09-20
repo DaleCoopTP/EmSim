@@ -143,6 +143,8 @@ func resetSchema(t *testing.T, ctx context.Context, databaseURL string) {
 	// the content/training migrations outlive DROP TABLE and must also be
 	// removed or a subsequent migration fails with "function already exists".
 	if _, err := pool.Exec(ctx, `
+		DROP TABLE IF EXISTS control_reports;
+		DROP TABLE IF EXISTS item_events;
 		DROP TABLE IF EXISTS evidence;
 		DROP TABLE IF EXISTS actions;
 		DROP TABLE IF EXISTS items;
@@ -256,7 +258,8 @@ func assertTableSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatalf("iterate application tables: %v", err)
 	}
 	want := []string{
-		"actions", "assignments", "audit_log", "classifier_types", "evidence",
+		"actions", "assignments", "audit_log", "classifier_types", "control_reports", "evidence",
+		"item_events",
 		"items", "lessons", "runs", "scenario_versions", "scenarios",
 		"services", "sessions", "tasks", "tickets", "users", "workstations",
 	}
@@ -272,7 +275,7 @@ func assertApplicationTablesAbsent(t *testing.T, ctx context.Context, pool *pgxp
 		SELECT count(*)
 		FROM pg_catalog.pg_tables
 		WHERE schemaname = 'public' AND tablename IN (
-			'actions', 'assignments', 'audit_log', 'classifier_types', 'evidence',
+			'actions', 'assignments', 'audit_log', 'classifier_types', 'control_reports', 'evidence', 'item_events',
 			'items', 'lessons', 'runs', 'scenario_versions', 'scenarios',
 			'services', 'sessions', 'tasks', 'tickets', 'users', 'workstations'
 		)

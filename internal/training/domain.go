@@ -121,6 +121,7 @@ type Item struct {
 	ScenarioDigest    string // hex sha256, scenario_versions.digest
 	TargetService     string
 	Ordinal           int
+	SpawnedFrom       *uuid.UUID
 	State             ItemState
 	Reaction          content.Reaction
 	// Card is the item's own mutable card instance — a copy of the
@@ -135,20 +136,63 @@ type Item struct {
 	Workflow content.Workflow
 	// PilotGoal is the reference.pilot_goal snapshot (ADR-017); "" means
 	// the ordinary DDS completion rules in dds.decideClose apply.
-	PilotGoal       string
-	Mode            Mode
-	Seq             int64
-	LogSeq          int64
-	TimingEffective Timing
-	Deadlines       Deadlines
-	OfferedAt       time.Time
-	OpenedAt        *time.Time
+	PilotGoal        string
+	Mode             Mode
+	Seq              int64
+	LogSeq           int64
+	StopCutoffLogSeq *int64
+	Interruptions    []Interruption
+	TimingEffective  Timing
+	Deadlines        Deadlines
+	OfferedAt        time.Time
+	OpenedAt         *time.Time
 	// PrimaryAt is the first applied primary decision's server time —
 	// nil until set once; a repeat decision never changes it
 	// (RFC-001 §7.2: "Повтор статуса не перезапускает таймер").
 	PrimaryAt   *time.Time
 	ClosedAt    *time.Time
 	CloseReason *CloseReason
+}
+
+// Interruption records a recovery boundary on an item. It is stored as the
+// items.interruptions JSON array so later recovery code can append history
+// without rewriting immutable evidence.
+type Interruption struct {
+	RecoveryID uuid.UUID `json:"recovery_id"`
+	Cause      string    `json:"cause"`
+	DetectedAt time.Time `json:"detected_at"`
+}
+
+// EventState is item_events.state.
+type EventState string
+
+const (
+	EventScheduled EventState = "scheduled"
+	EventDelivered EventState = "delivered"
+	EventSkipped   EventState = "skipped"
+)
+
+// ItemEvent is one scheduled or terminal scenario event for an item.
+type ItemEvent struct {
+	ID          uuid.UUID
+	ItemID      uuid.UUID
+	EventKey    string
+	AnchorAt    time.Time
+	DueAt       time.Time
+	State       EventState
+	DeliveredAt *time.Time
+	Late        bool
+	SkipReason  *string
+}
+
+// ControlReport is an append-only post-close controller message. ActionID
+// ties it to the idempotent command that created it.
+type ControlReport struct {
+	ID        uuid.UUID
+	ItemID    uuid.UUID
+	ActionID  uuid.UUID
+	Text      string
+	CreatedAt time.Time
 }
 
 // Rejection is one of the fixed reasons a command is not applied. The

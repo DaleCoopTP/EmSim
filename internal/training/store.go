@@ -113,6 +113,11 @@ type Store interface {
 
 	InsertEvidence(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, ev Evidence) error
 
+	InsertItemEvent(ctx context.Context, tx pgx.Tx, event ItemEvent) (ItemEvent, error)
+	ItemEventsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) ([]ItemEvent, error)
+	InsertControlReport(ctx context.Context, tx pgx.Tx, report ControlReport) (ControlReport, error)
+	ControlReportsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) ([]ControlReport, error)
+
 	AuditRecord(ctx context.Context, tx pgx.Tx, entry audit.Entry) error
 
 	// Now returns PostgreSQL's own clock_timestamp() — the authoritative

@@ -38,6 +38,7 @@ type Lesson struct {
 	CreatedAt       time.Time
 	StartedAt       *time.Time
 	StoppedAt       *time.Time
+	StopReason      *string
 	FinishedAt      *time.Time
 }
 

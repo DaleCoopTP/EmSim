@@ -109,14 +109,14 @@ func lockSuffix(lock training.Lock, of string) string {
 
 // ------------------------------------------------------------ lessons
 
-const lessonColumns = `exercise_type, id, instructor_id, title, mode, level, state, epoch, timing, rubric_version, recording_grace_s, created_at, started_at, stopped_at, finished_at`
+const lessonColumns = `exercise_type, id, instructor_id, title, mode, level, state, epoch, timing, rubric_version, recording_grace_s, created_at, started_at, stopped_at, stop_reason, finished_at`
 
 func scanLesson(row pgx.Row) (training.Lesson, error) {
 	var l training.Lesson
 	var timingJSON []byte
 	err := row.Scan(&l.ExerciseType, &l.ID, &l.InstructorID, &l.Title, &l.Mode, &l.Level, &l.State,
 		&l.Epoch, &timingJSON, &l.RubricVersion, &l.RecordingGraceS, &l.CreatedAt,
-		&l.StartedAt, &l.StoppedAt, &l.FinishedAt)
+		&l.StartedAt, &l.StoppedAt, &l.StopReason, &l.FinishedAt)
 	if e := mapErr(err); e != nil {
 		return training.Lesson{}, e
 	}
@@ -327,9 +327,9 @@ func (s *Store) FinishLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, finis
 
 const itemSelectColumns = `i.id, i.run_id, r.lesson_id, r.user_id, w.number,
 	i.scenario_version_id, sv.digest, sv.body ->> 'target_service',
-	r.mode, i.ordinal, i.state, i.reaction,
+	r.mode, i.ordinal, i.spawned_from, i.state, i.reaction,
 	i.card, i.workflow, i.pilot_goal,
-	i.seq, i.log_seq, i.timing_effective, i.deadlines,
+	i.seq, i.stop_cutoff_log_seq, i.interruptions, i.log_seq, i.timing_effective, i.deadlines,
 	i.offered_at, i.opened_at, i.primary_at, i.closed_at, i.close_reason`
 const itemFrom = `FROM items i
 	JOIN runs r ON r.id = i.run_id
@@ -339,14 +339,14 @@ const itemFrom = `FROM items i
 func scanItem(row pgx.Row) (training.Item, error) {
 	var it training.Item
 	var digest []byte
-	var cardJSON, workflowJSON, timingJSON, deadlinesJSON []byte
+	var cardJSON, workflowJSON, interruptionsJSON, timingJSON, deadlinesJSON []byte
 	var pilotGoal *string
 	var closeReason *string
 	err := row.Scan(&it.ID, &it.RunID, &it.LessonID, &it.UserID, &it.WorkstationNo,
 		&it.ScenarioVersionID, &digest, &it.TargetService,
-		&it.Mode, &it.Ordinal, &it.State, &it.Reaction,
+		&it.Mode, &it.Ordinal, &it.SpawnedFrom, &it.State, &it.Reaction,
 		&cardJSON, &workflowJSON, &pilotGoal,
-		&it.Seq, &it.LogSeq, &timingJSON, &deadlinesJSON,
+		&it.Seq, &it.StopCutoffLogSeq, &interruptionsJSON, &it.LogSeq, &timingJSON, &deadlinesJSON,
 		&it.OfferedAt, &it.OpenedAt, &it.PrimaryAt, &it.ClosedAt, &closeReason)
 	if e := mapErr(err); e != nil {
 		return training.Item{}, e
@@ -363,6 +363,9 @@ func scanItem(row pgx.Row) (training.Item, error) {
 		return training.Item{}, training.ErrStorage
 	}
 	if err := json.Unmarshal(workflowJSON, &it.Workflow); err != nil {
+		return training.Item{}, training.ErrStorage
+	}
+	if err := json.Unmarshal(interruptionsJSON, &it.Interruptions); err != nil {
 		return training.Item{}, training.ErrStorage
 	}
 	if err := json.Unmarshal(timingJSON, &it.TimingEffective); err != nil {
@@ -396,10 +399,10 @@ func (s *Store) InsertItem(ctx context.Context, tx pgx.Tx, it training.Item) (tr
 		pilotGoal = &it.PilotGoal
 	}
 	err = tx.QueryRow(ctx, `
-		INSERT INTO items (id, run_id, scenario_version_id, ordinal, state, reaction, card, workflow, pilot_goal, timing_effective, deadlines, offered_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		INSERT INTO items (id, run_id, scenario_version_id, ordinal, spawned_from, state, reaction, card, workflow, pilot_goal, timing_effective, deadlines, offered_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING offered_at
-	`, it.ID, it.RunID, it.ScenarioVersionID, it.Ordinal, it.State, it.Reaction,
+	`, it.ID, it.RunID, it.ScenarioVersionID, it.Ordinal, it.SpawnedFrom, it.State, it.Reaction,
 		cardJSON, workflowJSON, pilotGoal, timingJSON, deadlinesJSON, it.OfferedAt).
 		Scan(&it.OfferedAt)
 	if err != nil {
@@ -580,4 +583,88 @@ func (s *Store) InsertEvidence(ctx context.Context, tx pgx.Tx, itemID uuid.UUID,
 		return mapErr(err)
 	}
 	return nil
+}
+
+// ------------------------------------------------------------ events and reports
+
+const itemEventColumns = `id, item_id, event_key, anchor_at, due_at, state, delivered_at, late, skip_reason`
+
+func scanItemEvent(row pgx.Row) (training.ItemEvent, error) {
+	var event training.ItemEvent
+	if err := row.Scan(&event.ID, &event.ItemID, &event.EventKey, &event.AnchorAt, &event.DueAt,
+		&event.State, &event.DeliveredAt, &event.Late, &event.SkipReason); err != nil {
+		return training.ItemEvent{}, mapErr(err)
+	}
+	return event, nil
+}
+
+func (s *Store) InsertItemEvent(ctx context.Context, tx pgx.Tx, event training.ItemEvent) (training.ItemEvent, error) {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO item_events (id, item_id, event_key, anchor_at, due_at, state, delivered_at, late, skip_reason)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+	`, event.ID, event.ItemID, event.EventKey, event.AnchorAt, event.DueAt, event.State,
+		event.DeliveredAt, event.Late, event.SkipReason)
+	if err != nil {
+		return training.ItemEvent{}, mapErr(err)
+	}
+	return event, nil
+}
+
+func (s *Store) ItemEventsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) ([]training.ItemEvent, error) {
+	rows, err := tx.Query(ctx, `SELECT `+itemEventColumns+` FROM item_events WHERE item_id = $1 ORDER BY due_at, event_key`, itemID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	var events []training.ItemEvent
+	for rows.Next() {
+		event, err := scanItemEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return events, nil
+}
+
+const controlReportColumns = `id, item_id, action_id, text, created_at`
+
+func scanControlReport(row pgx.Row) (training.ControlReport, error) {
+	var report training.ControlReport
+	if err := row.Scan(&report.ID, &report.ItemID, &report.ActionID, &report.Text, &report.CreatedAt); err != nil {
+		return training.ControlReport{}, mapErr(err)
+	}
+	return report, nil
+}
+
+func (s *Store) InsertControlReport(ctx context.Context, tx pgx.Tx, report training.ControlReport) (training.ControlReport, error) {
+	_, err := tx.Exec(ctx, `INSERT INTO control_reports (id, item_id, action_id, text, created_at) VALUES ($1,$2,$3,$4,$5)`,
+		report.ID, report.ItemID, report.ActionID, report.Text, report.CreatedAt)
+	if err != nil {
+		return training.ControlReport{}, mapErr(err)
+	}
+	return report, nil
+}
+
+func (s *Store) ControlReportsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) ([]training.ControlReport, error) {
+	rows, err := tx.Query(ctx, `SELECT `+controlReportColumns+` FROM control_reports WHERE item_id = $1 ORDER BY created_at, id`, itemID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	var reports []training.ControlReport
+	for rows.Next() {
+		report, err := scanControlReport(rows)
+		if err != nil {
+			return nil, err
+		}
+		reports = append(reports, report)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return reports, nil
 }

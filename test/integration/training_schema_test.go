@@ -47,6 +47,8 @@ func TestTrainingSchemaConstraints(t *testing.T) {
 	itemID := ids.next()
 	actionID := ids.next()
 	commandID := ids.next()
+	eventID := ids.next()
+	reportID := ids.next()
 
 	mustExec(t, ctx, pool, `INSERT INTO users(id,login,password_hash,full_name,role) VALUES
 		($1,'training_schema_instructor','fixture','Instructor','instructor'),
@@ -105,6 +107,26 @@ func TestTrainingSchemaConstraints(t *testing.T) {
 		($1,'{"mode":"training"}',decode(repeat('00',32),'hex'))`, itemID)
 	expectImmutable(t, ctx, pool, `UPDATE evidence SET body='{}' WHERE item_id=$1`, itemID)
 	expectImmutable(t, ctx, pool, `DELETE FROM evidence WHERE item_id=$1`, itemID)
+
+	// Events have an explicit state shape, and a scenario event is unique
+	// within an item regardless of retries by the scheduler.
+	mustExec(t, ctx, pool, `INSERT INTO item_events(id,item_id,event_key,anchor_at,due_at,state) VALUES
+		($1,$2,'notice',now(),now(),'scheduled')`, eventID, itemID)
+	expectViolation(t, ctx, pool, `UPDATE item_events SET state='delivered' WHERE id=$1`, eventID)
+	expectViolation(t, ctx, pool, `INSERT INTO item_events(id,item_id,event_key,anchor_at,due_at,state) VALUES
+		($1,$2,'notice',now(),now(),'scheduled')`, ids.next(), itemID)
+
+	// Reports are nonblank, tied to exactly one action, and append-only.
+	mustExec(t, ctx, pool, `INSERT INTO control_reports(id,item_id,action_id,text,created_at) VALUES
+		($1,$2,$3,'Control report',now())`, reportID, itemID, actionID)
+	expectViolation(t, ctx, pool, `INSERT INTO control_reports(id,item_id,action_id,text,created_at) VALUES
+		($1,$2,$3,'   ',now())`, ids.next(), itemID, ids.next())
+	expectImmutable(t, ctx, pool, `UPDATE control_reports SET text='changed' WHERE id=$1`, reportID)
+	expectImmutable(t, ctx, pool, `DELETE FROM control_reports WHERE id=$1`, reportID)
+
+	// A stop explanation is optional but cannot exceed the public contract's
+	// 500-character boundary.
+	expectViolation(t, ctx, pool, `UPDATE lessons SET stop_reason=repeat('x',501) WHERE id=$1`, lessonID)
 
 	// Users and the content catalogue created before this migration are
 	// untouched by it (no destructive DDL on pre-existing tables).

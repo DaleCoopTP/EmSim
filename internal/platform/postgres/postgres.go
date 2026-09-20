@@ -2,10 +2,10 @@
 // tables actually migrated so far — "tasks" (00001), "audit_log" (00002),
 // "users"/"workstations"/"sessions" (00003), "services"/
 // "classifier_types"/"tickets"/"scenarios"/"scenario_versions" (00004),
-// with the scenario-version lifecycle tightened in 00005, and now
-// "lessons"/"assignments"/"runs"/"items"/"actions"/"evidence" (00006) —
-// not every domain table the eventual schema.sql has (item_events/calls/
-// control_reports and every assessment table are not built yet — see
+// with the scenario-version lifecycle tightened in 00005, training tables
+// (00006), and now item_events/control_reports (00007) — not every domain
+// table the eventual schema.sql has (calls and every assessment table are
+// not built yet — see
 // docs/technical-discovery.md §3.5). applicationTables grows as later
 // migrations land; it is not meant to enumerate the final schema up front.
 package postgres
@@ -28,7 +28,7 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-const ExpectedSchemaVersion int64 = 6
+const ExpectedSchemaVersion int64 = 7
 
 // applicationTables lists the platform tables Ready() requires to exist,
 // alongside the expected goose version — a version match alone would not
@@ -36,7 +36,7 @@ const ExpectedSchemaVersion int64 = 6
 var applicationTables = []string{
 	"audit_log", "sessions", "tasks", "users", "workstations",
 	"classifier_types", "scenario_versions", "scenarios", "services", "tickets",
-	"lessons", "assignments", "runs", "items", "actions", "evidence",
+	"lessons", "assignments", "runs", "items", "actions", "evidence", "item_events", "control_reports",
 }
 
 var (
