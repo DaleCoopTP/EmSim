@@ -945,3 +945,105 @@ func TestTrainingRecoverMarksOpenItemsIdempotently(t *testing.T) {
 		t.Fatalf("evidence interruptions = %+v, want 2", body.Interruptions)
 	}
 }
+
+// TestTrainingControlReportAfterClose is slice-4-plan.md's C7: a post-
+// close message from the trainee is rejected before the item closes,
+// accepted afterward through the same idempotent command endpoint, never
+// changes reaction/closed_at/evidence, and replays like any other action.
+func TestTrainingControlReportAfterClose(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	_, trainee, workstationID, lesson := setupPilotLesson(t, ctx, pool, service, "ЮАО")
+	if _, err := service.Start(ctx, principal(auth.User{ID: lesson.InstructorID, Role: auth.RoleInstructor}, uuid.Nil), lesson.ID, "req-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	actor := principal(trainee, workstationID)
+	items, err := service.MyItems(ctx, actor)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("MyItems = %+v, %v", items, err)
+	}
+	item := items[0]
+
+	tooEarly, err := service.Execute(ctx, actor, item.ID, training.Command{
+		CommandID: uuid.New(), ExpectedSeq: 0, Type: training.CommandControlReport,
+		Payload: []byte(`{"text":"слишком рано"}`),
+	}, "req-early")
+	if err != nil {
+		t.Fatalf("Execute(control_report, early): %v", err)
+	}
+	if tooEarly.Outcome != training.OutcomeRejected || tooEarly.ErrorCode == nil || *tooEarly.ErrorCode != training.RejectTransitionNotAllowed {
+		t.Fatalf("early control_report receipt = %+v", tooEarly)
+	}
+
+	// open(seq 0->1), accept(1->2), close(2->3): the item's seq is 3 once
+	// closePilotItem returns.
+	closePilotItem(t, ctx, service, actor, item.ID)
+
+	var evidenceBefore []byte
+	if err := pool.QueryRow(ctx, `SELECT body FROM evidence WHERE item_id=$1`, item.ID).Scan(&evidenceBefore); err != nil {
+		t.Fatalf("read evidence before: %v", err)
+	}
+
+	commandID := uuid.New()
+	reportReceipt, err := service.Execute(ctx, actor, item.ID, training.Command{
+		CommandID: commandID, ExpectedSeq: 3, Type: training.CommandControlReport,
+		Payload: []byte(`{"text":"по факту пропустил статус"}`),
+	}, "req-report")
+	if err != nil {
+		t.Fatalf("Execute(control_report): %v", err)
+	}
+	if reportReceipt.Outcome != training.OutcomeApplied || reportReceipt.Seq != 4 || reportReceipt.ItemState != training.ItemClosed {
+		t.Fatalf("control_report receipt = %+v", reportReceipt)
+	}
+
+	var evidenceAfter []byte
+	if err := pool.QueryRow(ctx, `SELECT body FROM evidence WHERE item_id=$1`, item.ID).Scan(&evidenceAfter); err != nil {
+		t.Fatalf("read evidence after: %v", err)
+	}
+	if string(evidenceBefore) != string(evidenceAfter) {
+		t.Fatalf("evidence changed by control_report")
+	}
+	var reaction string
+	if err := pool.QueryRow(ctx, `SELECT reaction FROM items WHERE id=$1`, item.ID).Scan(&reaction); err != nil {
+		t.Fatalf("read item: %v", err)
+	}
+	if reaction != "accepted" {
+		t.Fatalf("reaction = %s, want unchanged (accepted)", reaction)
+	}
+
+	var reportCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM control_reports
+		WHERE item_id=$1 AND action_id=(SELECT id FROM actions WHERE command_id=$2)
+	`, item.ID, commandID).Scan(&reportCount); err != nil {
+		t.Fatalf("count control_reports: %v", err)
+	}
+	if reportCount != 1 {
+		t.Fatalf("control_reports rows = %d, want 1", reportCount)
+	}
+
+	replay, err := service.Execute(ctx, actor, item.ID, training.Command{
+		CommandID: commandID, ExpectedSeq: 3, Type: training.CommandControlReport,
+		Payload: []byte(`{"text":"по факту пропустил статус"}`),
+	}, "req-report-replay")
+	if err != nil {
+		t.Fatalf("Execute(control_report replay): %v", err)
+	}
+	if !replay.Replayed || replay.Seq != reportReceipt.Seq {
+		t.Fatalf("replay receipt = %+v", replay)
+	}
+
+	var reportCountAfterReplay int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM control_reports WHERE item_id=$1`, item.ID).Scan(&reportCountAfterReplay); err != nil {
+		t.Fatalf("count control_reports after replay: %v", err)
+	}
+	if reportCountAfterReplay != 1 {
+		t.Fatalf("control_reports rows after replay = %d, want 1 (replay must not insert again)", reportCountAfterReplay)
+	}
+}

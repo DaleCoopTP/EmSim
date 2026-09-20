@@ -2,6 +2,7 @@ package training
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -516,6 +517,18 @@ func (s *Service) Execute(ctx context.Context, actor auth.Principal, itemID uuid
 			return err
 		}
 
+		// control_report is not an exercise rule (ADR-015): RFC-001 §7.5
+		// runs it through a dedicated branch that is allowed only after
+		// the item has actually closed — the exact opposite of every
+		// other command's item_closed rejection — and that never touches
+		// reaction/state/card/evidence, so it is handled entirely here
+		// rather than falling into recordDecision's close/event-
+		// scheduling logic (which assumes an in-progress item).
+		if cmd.Type == CommandControlReport {
+			receipt, err = s.recordControlReport(ctx, tx, actor, item, cmd, now, requestID)
+			return err
+		}
+
 		exercise, err := s.exerciseFor(lesson.ExerciseType)
 		if err != nil {
 			return err
@@ -806,6 +819,98 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	}
 	if err := s.store.FinishLesson(ctx, tx, item.LessonID, closedAt); err != nil {
 		return Receipt{}, err
+	}
+	return receipt, nil
+}
+
+// recordControlReport is control_report's own persistence path
+// (RFC-001 §7.5/ADR-004): allowed only once the item is closed or
+// interrupted, still subject to expected_seq/idempotency, but it never
+// changes reaction/state/card, never schedules events and never touches
+// evidence — a plain journal entry plus one control_reports row. It
+// therefore bypasses recordDecision entirely rather than special-casing
+// this command type inside it.
+func (s *Service) recordControlReport(ctx context.Context, tx pgx.Tx, actor auth.Principal, item Item, cmd Command, now time.Time, requestID string) (Receipt, error) {
+	digest, err := RequestDigest(actor.UserID, item.ID, cmd.Type, cmd.Payload, cmd.ExpectedSeq, cmd.ClientAt)
+	if err != nil {
+		return Receipt{}, err
+	}
+
+	var decision Decision
+	var text string
+	switch {
+	case item.State != ItemClosed && item.State != ItemInterrupted:
+		decision = unchangedDecision(item, RejectTransitionNotAllowed)
+	case cmd.ExpectedSeq != item.Seq:
+		decision = unchangedDecision(item, RejectStaleSeq)
+	default:
+		var payload struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(cmd.Payload, &payload); err != nil || strings.TrimSpace(payload.Text) == "" {
+			decision = unchangedDecision(item, RejectInvalidPayload)
+		} else {
+			text = payload.Text
+			decision = Decision{Accepted: true, Reaction: item.Reaction, State: item.State, Card: item.Card}
+		}
+	}
+
+	newLogSeq := item.LogSeq + 1
+	newSeq := item.Seq
+	if decision.Accepted {
+		newSeq++
+	}
+	actionID := uuid.New()
+
+	receipt := Receipt{
+		CommandID: cmd.CommandID, Seq: newSeq, Reaction: decision.Reaction,
+		ItemState: decision.State, ServerAt: now, ActionID: actionID, LogSeq: newLogSeq,
+	}
+	httpStatus := 200
+	if decision.Accepted {
+		receipt.Outcome = OutcomeApplied
+		receipt.Deadlines = &Deadlines{OpenAt: item.Deadlines.OpenAt, PrimaryAt: item.Deadlines.PrimaryAt, CompleteAt: item.Deadlines.CompleteAt}
+	} else {
+		receipt.Outcome = OutcomeRejected
+		rejection := decision.Rejection
+		receipt.ErrorCode = &rejection
+		httpStatus = decision.Rejection.HTTPStatus()
+	}
+
+	action := Action{
+		ID: actionID, ItemID: item.ID, Seq: newSeq, LogSeq: newLogSeq, ActorID: actor.UserID,
+		RequestDigest: digest, CommandID: cmd.CommandID, Type: cmd.Type, Payload: cmd.Payload,
+		Accepted: decision.Accepted, Rejection: decision.Rejection, Receipt: receipt, HTTPStatus: httpStatus,
+		ClientAt: cmd.ClientAt, ServerAt: now,
+	}
+	if _, err := s.store.InsertAction(ctx, tx, action); err != nil {
+		return Receipt{}, err
+	}
+
+	auditOutcome := audit.OutcomeOK
+	details := map[string]any{"type": string(cmd.Type)}
+	if !decision.Accepted {
+		auditOutcome = audit.OutcomeRejected
+		details["rejection"] = string(decision.Rejection)
+	}
+	if err := s.store.AuditRecord(ctx, tx, audit.Entry{
+		ActorID: &actor.UserID, ActorRole: string(actor.Role), Action: "item.control_report",
+		ResourceType: "item", ResourceID: &item.ID, Outcome: auditOutcome, RequestID: requestID, Details: details,
+	}); err != nil {
+		return Receipt{}, err
+	}
+
+	patch := ItemPatch{LogSeq: newLogSeq, Seq: newSeq, Reaction: item.Reaction, State: item.State, Card: item.Card}
+	if err := s.store.ApplyItemDecision(ctx, tx, item.ID, patch); err != nil {
+		return Receipt{}, err
+	}
+
+	if decision.Accepted {
+		if _, err := s.store.InsertControlReport(ctx, tx, ControlReport{
+			ID: uuid.New(), ItemID: item.ID, ActionID: actionID, Text: text, CreatedAt: now,
+		}); err != nil {
+			return Receipt{}, err
+		}
 	}
 	return receipt, nil
 }

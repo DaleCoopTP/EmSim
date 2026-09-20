@@ -554,3 +554,20 @@ Open issues / risks:
 
 Next:
 - C7 — `training: persist post-close control reports`: dedicated `control_report` branch in `Service.Execute` (before the generic running/closed checks — opposite of every other command), `control_reports` row, still no evidence/reaction change.
+
+## 2026-09-20T16:45:00+03:00 — Claude — slice 4 C7 (post-close control reports)
+
+Status: completed.
+
+Changed:
+- `internal/training/service.go`: `Execute` gained a `cmd.Type == CommandControlReport` branch, checked right after replay lookup and before the generic `lesson.State != LessonRunning`/`item.State == Closed`/`stale_seq` switch — the opposite polarity of every other command (RFC-001 §7.5: allowed only *after* close/interrupt, and explicitly still allowed once the lesson itself has stopped/finished, since the branch never checks `lesson.State`). New `recordControlReport`: validates `item.State` (closed/interrupted → else `transition_not_allowed`), `expected_seq` (→ `stale_seq`), and a non-blank `{text}` payload (→ `invalid_payload`); on success inserts the `actions` row and a `control_reports` row in the same transaction, and calls `ApplyItemDecision` with the item's own unchanged `reaction`/`state`/`card` (log_seq/seq still advance, per RFC-001 §6). Deliberately does not reuse `recordDecision`: that function's close/event-scheduling logic would re-run `scheduleEventsForAnchor` for the item's already-final `reaction` and collide with `item_events`' `UNIQUE(item_id, event_key)` (those events are terminal since C6 skips them at close) — a plain, separate persistence path avoids that bug entirely rather than special-casing it inline.
+- No HTTP/contract changes: `control_report` already flowed through the existing generic `POST /items/{id}/actions` (added to the OpenAPI `Command` oneOf back in slice 3's C1); it now simply stops being rejected as `transition_not_allowed` by `internal/training/dds`'s exercise (which never sees it — the branch runs before `exerciseFor` is even called).
+
+Validation:
+- `go build ./...`, `go vet ./...`, `gofmt -l .`, `make verify` — clean.
+- `go test -tags=integration -count=1 ./test/integration/...` — all green, including new `TestTrainingControlReportAfterClose`: rejected before close (`transition_not_allowed`), accepted after close (seq/log_seq advance, `reaction`/evidence byte-identical before and after), the `control_reports` row exists and is linked to the right `action_id`, and a replay of the same `command_id` returns the original receipt with `replayed=true` and does not insert a second `control_reports` row.
+
+Open issues / risks: none new.
+
+Next:
+- C8 — `training: stop lessons through durable close task`: `POST /lessons/{id}/stop` under `lessons FOR UPDATE` (barrier: `stopped_at`, `stop_reason`, epoch+1, `stop_cutoff_log_seq` on every open item, skip their scheduled events, enqueue `lesson.close:<id>:<epoch>`), plus a new `platform/tasks` handler that closes the remaining items as `interrupted` with `EvidenceInterruption` (the singular field C6 left `nil`), finishes runs/lesson, and is itself fenced/idempotent per `internal/platform/tasks`' existing at-least-once guarantees.
