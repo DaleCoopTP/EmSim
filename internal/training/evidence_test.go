@@ -29,13 +29,13 @@ func sampleEvidenceBody() EvidenceBody {
 		Mode:              ModeTraining,
 		FinalCard:         content.CardPreview{Number: "1"},
 		Actions:           []EvidenceAction{},
-		Events:            []any{},
+		Events:            []EvidenceEvent{},
 		Calls:             []any{},
 		Derived:           EvidenceDerived{TotalSeconds: 90},
 		CutoffLogSeq:      1,
 		Deadlines:         EvidenceDeadlines{OpenAt: now.Add(30 * time.Second), PrimaryAt: now.Add(30 * time.Second)},
 		ExerciseType:      content.ExerciseTypeDDSProcessing,
-		Interruptions:     []any{},
+		Interruptions:     []Interruption{},
 	}
 }
 

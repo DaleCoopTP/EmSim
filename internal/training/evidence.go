@@ -15,11 +15,10 @@ import (
 // close-time snapshot RFC-001 §6/§7.4 requires. Struct tags mirror the
 // schema's property names exactly, so json.Marshal produces a document
 // that validates against it as-is (see internal/training/dds's evidence
-// tests). Events/Calls are always empty in this slice — scenario events
-// are slice 4, the phone is slice 5 — and Interruption/Interruptions are
-// always nil/empty, since server-restart recovery (RFC-001 §7.2) is also
-// slice 4; the fields exist now because the schema already requires them
-// and later slices fill them in without changing this shape.
+// tests). Calls are always empty — the phone is slice 5. Interruption
+// (singular, the stop-triggered snapshot) is slice 4's C8; Interruptions
+// (the server-restart recovery markers, RFC-001 §7.2) is populated from
+// the closed item's own accumulated history as of C6.
 type EvidenceBody struct {
 	Schema            string                `json:"schema"`
 	ItemID            uuid.UUID             `json:"item_id"`
@@ -40,7 +39,7 @@ type EvidenceBody struct {
 	Mode              Mode                  `json:"mode"`
 	FinalCard         content.CardPreview   `json:"final_card"`
 	Actions           []EvidenceAction      `json:"actions"`
-	Events            []any                 `json:"events"`
+	Events            []EvidenceEvent       `json:"events"`
 	Calls             []any                 `json:"calls"`
 	Comments          []EvidenceComment     `json:"comments,omitempty"`
 	Derived           EvidenceDerived       `json:"derived"`
@@ -49,7 +48,22 @@ type EvidenceBody struct {
 	Deadlines         EvidenceDeadlines     `json:"deadlines"`
 	Interruption      *EvidenceInterruption `json:"interruption"`
 	ExerciseType      content.ExerciseType  `json:"exercise_type"`
-	Interruptions     []any                 `json:"interruptions"`
+	Interruptions     []Interruption        `json:"interruptions"`
+}
+
+// EvidenceEvent is one of the item's own scheduled-or-terminal scenario
+// events, evidence.schema.json's simplified projection of item_events —
+// key/state/timing only, no delivery/text/from (the trainee-facing
+// DeliveredEvent projection that needs those lives in the HTTP layer,
+// which already has the scenario version body to resolve them from).
+type EvidenceEvent struct {
+	Key         string     `json:"key"`
+	State       EventState `json:"state"`
+	AnchorAt    time.Time  `json:"anchor_at"`
+	DueAt       time.Time  `json:"due_at"`
+	DeliveredAt *time.Time `json:"delivered_at"`
+	Late        bool       `json:"late"`
+	SkipReason  *string    `json:"skip_reason"`
 }
 
 // EvidenceTiming is evidence body's timing — the frozen lesson policy

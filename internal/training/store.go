@@ -122,8 +122,22 @@ type Store interface {
 	ScheduledItemEventsDue(ctx context.Context, tx pgx.Tx, now time.Time) ([]ItemEvent, error)
 	DeliverItemEvent(ctx context.Context, tx pgx.Tx, id uuid.UUID, deliveredAt time.Time, late bool) error
 	SkipItemEvent(ctx context.Context, tx pgx.Tx, id uuid.UUID, reason string) error
+	// SkipRemainingItemEvents cancels every still-scheduled event of
+	// itemID in one statement (RFC-001 §7.4/§7.5: close/stop cancel
+	// scheduled events before evidence is assembled). A no-op, not an
+	// error, when the item has none.
+	SkipRemainingItemEvents(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, reason string) error
 	InsertControlReport(ctx context.Context, tx pgx.Tx, report ControlReport) (ControlReport, error)
 	ControlReportsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) ([]ControlReport, error)
+
+	// RecoverOpenItems is RFC-001 §7.2's server-restart marker: every
+	// still-open item (offered/opened/in_progress) of a running lesson
+	// gets entry appended to its items.interruptions, without touching
+	// offered_at/deadlines/due_at. Idempotent on entry.RecoveryID — an
+	// item that already carries this recovery_id is left alone, so a
+	// retried recovery call cannot append a duplicate marker. Returns the
+	// affected item ids for the caller's audit record.
+	RecoverOpenItems(ctx context.Context, tx pgx.Tx, entry Interruption) ([]uuid.UUID, error)
 
 	AuditRecord(ctx context.Context, tx pgx.Tx, entry audit.Entry) error
 

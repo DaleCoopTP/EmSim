@@ -40,6 +40,7 @@ type fakeTraining struct {
 	run             training.Run
 	item            training.Item
 	actions         []training.Action
+	events          []training.DeliveredEvent
 	reference       content.Body
 	now             time.Time
 	readErr         error
@@ -74,11 +75,11 @@ func (f *fakeTraining) MyItems(context.Context, auth.Principal) ([]training.Item
 	}
 	return []training.Item{f.item}, nil
 }
-func (f *fakeTraining) ItemForTrainee(context.Context, auth.Principal, uuid.UUID) (training.Item, []training.Action, error) {
-	return f.item, f.actions, f.itemErr
+func (f *fakeTraining) ItemForTrainee(context.Context, auth.Principal, uuid.UUID) (training.Item, []training.Action, []training.DeliveredEvent, error) {
+	return f.item, f.actions, f.events, f.itemErr
 }
-func (f *fakeTraining) ItemForInstructor(context.Context, auth.Principal, uuid.UUID) (training.Item, []training.Action, content.Body, error) {
-	return f.item, f.actions, f.reference, f.itemErr
+func (f *fakeTraining) ItemForInstructor(context.Context, auth.Principal, uuid.UUID) (training.Item, []training.Action, []training.DeliveredEvent, content.Body, error) {
+	return f.item, f.actions, f.events, f.reference, f.itemErr
 }
 func (f *fakeTraining) RunActions(context.Context, auth.Principal, uuid.UUID, uuid.UUID) ([]training.Action, error) {
 	return f.actions, f.readErr

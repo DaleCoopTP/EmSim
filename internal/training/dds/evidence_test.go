@@ -129,7 +129,7 @@ func TestEvidenceValidatesAgainstSchema(t *testing.T) {
 		closedItemAction(4, 5, actorID, training.CommandClose, mustJSON(t, map[string]any{}), nil, true, "", content.ReactionAccepted, closedAt),
 	}
 
-	evidence, err := Exercise.Evidence(item, actions, 5, closedAt)
+	evidence, err := Exercise.Evidence(item, actions, nil, 5, closedAt)
 	if err != nil {
 		t.Fatalf("Evidence: %v", err)
 	}
@@ -191,12 +191,64 @@ func TestEvidenceValidatesAgainstSchema(t *testing.T) {
 	}
 }
 
+// TestEvidenceProjectsEventsAndInterruptions is C6's own coverage: a
+// closed item that accumulated a delivered event, a skipped one and a
+// restart-recovery marker must carry all three into the sealed evidence,
+// validating against evidence.schema.json — not the empty placeholders
+// slice 3 shipped.
+func TestEvidenceProjectsEventsAndInterruptions(t *testing.T) {
+	item := baseItem(t, "ЮАО")
+	item.State = training.ItemClosed
+	item.Reaction = content.ReactionAccepted
+	pilotCompleted := training.ClosePilotCompleted
+	item.CloseReason = &pilotCompleted
+	closedAt := item.OfferedAt.Add(10 * time.Second)
+	recoveryID := uuid.New()
+	detectedAt := item.OfferedAt.Add(3 * time.Second)
+	item.Interruptions = []training.Interruption{{RecoveryID: recoveryID, Cause: "server_restart", DetectedAt: detectedAt}}
+
+	deliveredAt := item.OfferedAt.Add(2 * time.Second)
+	skipReason := training.SkipReasonItemClosed
+	events := []training.ItemEvent{
+		{ID: uuid.New(), ItemID: item.ID, EventKey: "e1", AnchorAt: item.OfferedAt, DueAt: deliveredAt, State: training.EventDelivered, DeliveredAt: &deliveredAt, Late: false},
+		{ID: uuid.New(), ItemID: item.ID, EventKey: "e2", AnchorAt: item.OfferedAt, DueAt: closedAt.Add(time.Second), State: training.EventSkipped, SkipReason: &skipReason},
+	}
+
+	actions := []training.Action{
+		closedItemAction(1, 1, item.UserID, training.CommandOpen, mustJSON(t, map[string]any{}), nil, true, "", content.ReactionReceived, item.OfferedAt),
+		closedItemAction(2, 2, item.UserID, training.CommandClose, mustJSON(t, map[string]any{}), nil, true, "", content.ReactionAccepted, closedAt),
+	}
+
+	evidence, err := Exercise.Evidence(item, actions, events, 2, closedAt)
+	if err != nil {
+		t.Fatalf("Evidence: %v", err)
+	}
+	tree := asCanonicalTree(t, evidence.Body)
+	if err := evidenceValidator(t).Validate(tree); err != nil {
+		t.Fatalf("evidence does not validate against evidence.schema.json: %v\nbody: %s", err, evidence.Body)
+	}
+
+	var body training.EvidenceBody
+	if err := json.Unmarshal(evidence.Body, &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(body.Events) != 2 || body.Events[0].Key != "e1" || body.Events[0].State != training.EventDelivered {
+		t.Fatalf("events = %+v", body.Events)
+	}
+	if body.Events[1].Key != "e2" || body.Events[1].State != training.EventSkipped || body.Events[1].SkipReason == nil || *body.Events[1].SkipReason != training.SkipReasonItemClosed {
+		t.Fatalf("events[1] = %+v", body.Events[1])
+	}
+	if len(body.Interruptions) != 1 || body.Interruptions[0].RecoveryID != recoveryID || body.Interruptions[0].Cause != "server_restart" {
+		t.Fatalf("interruptions = %+v", body.Interruptions)
+	}
+}
+
 // TestEvidenceRequiresClosedItem guards Evidence's own precondition: it
 // must never be called on an item the application service has not
 // already applied a close Decision to.
 func TestEvidenceRequiresClosedItem(t *testing.T) {
 	item := baseItem(t, "ЮАО")
-	if _, err := Exercise.Evidence(item, nil, 0, item.OfferedAt); err == nil {
+	if _, err := Exercise.Evidence(item, nil, nil, 0, item.OfferedAt); err == nil {
 		t.Fatal("Evidence on a non-closed item should fail")
 	}
 }
@@ -219,7 +271,7 @@ func TestEvidenceExcludesActionsPastCutoff(t *testing.T) {
 		closedItemAction(2, 3, item.UserID, training.CommandControlReport, mustJSON(t, map[string]any{"text": "поздний комментарий"}), nil, true, "", "", closedAt.Add(time.Second)),
 	}
 
-	evidence, err := Exercise.Evidence(item, actions, 2, closedAt)
+	evidence, err := Exercise.Evidence(item, actions, nil, 2, closedAt)
 	if err != nil {
 		t.Fatalf("Evidence: %v", err)
 	}

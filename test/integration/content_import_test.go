@@ -141,15 +141,15 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportScenarios: %v", err)
 	}
-	if scenarioResult.NewScenarios != 2 || scenarioResult.NewVersions != 2 || scenarioResult.Unchanged != 0 {
-		t.Fatalf("ImportScenarios = %+v, want NewScenarios=2 NewVersions=2 Unchanged=0", scenarioResult)
+	if scenarioResult.NewScenarios != 3 || scenarioResult.NewVersions != 3 || scenarioResult.Unchanged != 0 {
+		t.Fatalf("ImportScenarios = %+v, want NewScenarios=3 NewVersions=3 Unchanged=0", scenarioResult)
 	}
 	scenarioResult2, err := svc.ImportScenarios(ctx, openScenarioDir(t, "../../seed/scenarios"), actorID, actorRole, "req-6")
 	if err != nil {
 		t.Fatalf("ImportScenarios (replay): %v", err)
 	}
-	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 2 {
-		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=2", scenarioResult2)
+	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 3 {
+		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=3", scenarioResult2)
 	}
 
 	// --- read side ---
@@ -157,8 +157,8 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListScenarios: %v", err)
 	}
-	if total != 2 || len(items) != 2 {
-		t.Fatalf("ListScenarios: total=%d len=%d, want 2 and 2", total, len(items))
+	if total != 3 || len(items) != 3 {
+		t.Fatalf("ListScenarios: total=%d len=%d, want 3 and 3 (pilot-tree-01/02 plus C4/ADR-018's pilot-z-events-01)", total, len(items))
 	}
 
 	var case02ID uuid.UUID

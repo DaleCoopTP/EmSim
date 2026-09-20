@@ -530,6 +530,47 @@ func (s *Store) ApplyItemDecision(ctx context.Context, tx pgx.Tx, itemID uuid.UU
 	return nil
 }
 
+// RecoverOpenItems appends entry to items.interruptions for every open
+// item of a running lesson (RFC-001 §7.2), skipping any item that
+// already carries entry.RecoveryID so a retried call cannot duplicate
+// the marker. entry is marshaled once and appended verbatim via jsonb
+// concatenation — offered_at/deadlines/due_at are never touched by this
+// statement.
+func (s *Store) RecoverOpenItems(ctx context.Context, tx pgx.Tx, entry training.Interruption) ([]uuid.UUID, error) {
+	entryJSON, err := json.Marshal(entry)
+	if err != nil {
+		return nil, fmt.Errorf("training/postgres: marshal interruption: %w", err)
+	}
+	rows, err := tx.Query(ctx, `
+		UPDATE items SET interruptions = items.interruptions || jsonb_build_array($1::jsonb)
+		FROM runs, lessons
+		WHERE items.run_id = runs.id AND runs.lesson_id = lessons.id
+		  AND lessons.state = 'running'
+		  AND items.state IN ('offered', 'opened', 'in_progress')
+		  AND NOT EXISTS (
+		    SELECT 1 FROM jsonb_array_elements(items.interruptions) elem
+		    WHERE elem ->> 'recovery_id' = $2
+		  )
+		RETURNING items.id
+	`, entryJSON, entry.RecoveryID.String())
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, mapErr(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return ids, nil
+}
+
 // ------------------------------------------------------------ actions
 
 const actionColumns = `item_id, seq, log_seq, actor_id, request_digest, id, command_id, type, payload, effect, accepted, rejection, receipt, http_status, client_at, server_at`
@@ -716,6 +757,14 @@ func (s *Store) SkipItemEvent(ctx context.Context, tx pgx.Tx, id uuid.UUID, reas
 	}
 	if tag.RowsAffected() == 0 {
 		return training.ErrConflict
+	}
+	return nil
+}
+
+func (s *Store) SkipRemainingItemEvents(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, reason string) error {
+	_, err := tx.Exec(ctx, `UPDATE item_events SET state='skipped', skip_reason=$2 WHERE item_id=$1 AND state='scheduled'`, itemID, reason)
+	if err != nil {
+		return mapErr(err)
 	}
 	return nil
 }

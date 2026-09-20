@@ -511,12 +511,12 @@ func (s *Service) Execute(ctx context.Context, actor auth.Principal, itemID uuid
 			return err
 		}
 
-		exercise, err := s.exerciseFor(lesson.ExerciseType)
+		now, err := s.store.Now(ctx, tx)
 		if err != nil {
 			return err
 		}
 
-		now, err := s.store.Now(ctx, tx)
+		exercise, err := s.exerciseFor(lesson.ExerciseType)
 		if err != nil {
 			return err
 		}
@@ -739,11 +739,23 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	closedItem.ClosedAt = &closedAt
 	closedItem.CloseReason = decision.Close
 
+	// RFC-001 §7.4's close pseudocode cancels any event still scheduled
+	// for this item before the evidence snapshot is taken, so a "will
+	// never actually fire" event is never frozen into evidence as
+	// "scheduled" (tickEvent's own item-closed check is only a lazy
+	// fallback for an event whose due_at was already in the past).
+	if err := s.store.SkipRemainingItemEvents(ctx, tx, item.ID, SkipReasonItemClosed); err != nil {
+		return Receipt{}, err
+	}
 	actions, err := s.store.ActionsByItem(ctx, tx, item.ID)
 	if err != nil {
 		return Receipt{}, err
 	}
-	evidence, err := exercise.Evidence(closedItem, actions, newLogSeq, closedAt)
+	events, err := s.store.ItemEventsByItem(ctx, tx, item.ID)
+	if err != nil {
+		return Receipt{}, err
+	}
+	evidence, err := exercise.Evidence(closedItem, actions, events, newLogSeq, closedAt)
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -839,6 +851,42 @@ func (s *Service) MyItems(ctx context.Context, actor auth.Principal) ([]Item, er
 		return err
 	})
 	return items, err
+}
+
+// Recover marks every still-open item of a running lesson with one
+// idempotent interruption entry, per RFC-001 §7.2's "упрощение MVP":
+// cause is always the constant server-restart cause, offered_at/
+// deadlines/due_at are never touched, and a repeat call (e.g. a retried
+// startup) with the same recoveryID cannot append a second marker —
+// RecoverOpenItems's own WHERE NOT EXISTS guard makes that call a no-op.
+// cmd/emsim's api process calls this exactly once, before it starts
+// answering readiness checks (RFC-001 §7.2: "Новые команды принимаются
+// после фиксации маркеров"); it does not itself decide when overdue
+// events are delivered — that is simply the scheduler's normal Tick
+// loop, started right after this returns, picking up whatever is due.
+func (s *Service) Recover(ctx context.Context, recoveryID uuid.UUID, cause string) ([]uuid.UUID, error) {
+	var affected []uuid.UUID
+	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		now, err := s.store.Now(ctx, tx)
+		if err != nil {
+			return err
+		}
+		affected, err = s.store.RecoverOpenItems(ctx, tx, Interruption{RecoveryID: recoveryID, Cause: cause, DetectedAt: now})
+		if err != nil {
+			return err
+		}
+		if len(affected) == 0 {
+			return nil
+		}
+		return s.store.AuditRecord(ctx, tx, audit.Entry{
+			Action: "training.recover", ResourceType: "lesson", Outcome: audit.OutcomeOK,
+			Details: map[string]any{"recovery_id": recoveryID.String(), "cause": cause, "item_count": len(affected)},
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return affected, nil
 }
 
 // Tick advances durable time-based training work. It is deliberately a
@@ -958,7 +1006,7 @@ func (s *Service) tickEvent(ctx context.Context, eventID uuid.UUID) error {
 			return err
 		}
 		if lesson.State != LessonRunning || item.State == ItemClosed || item.State == ItemInterrupted {
-			return s.store.SkipItemEvent(ctx, tx, event.ID, "item_closed")
+			return s.store.SkipItemEvent(ctx, tx, event.ID, SkipReasonItemClosed)
 		}
 		version, err := s.scenarios.VersionByID(ctx, tx, item.ScenarioVersionID)
 		if err != nil {
@@ -1050,9 +1098,10 @@ func reactionIn(reactions []content.Reaction, reaction content.Reaction) bool {
 // Actions are included because openapi.yaml's Item schema requires them
 // (the trainee's own action feed, not just the card) and the HTTP layer
 // (slice 3's C5) has no other port to read them through.
-func (s *Service) ItemForTrainee(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (Item, []Action, error) {
+func (s *Service) ItemForTrainee(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (Item, []Action, []DeliveredEvent, error) {
 	var item Item
 	var actions []Action
+	var events []DeliveredEvent
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
 		var err error
 		item, err = s.store.ItemByID(ctx, tx, itemID, LockNone)
@@ -1070,18 +1119,23 @@ func (s *Service) ItemForTrainee(ctx context.Context, actor auth.Principal, item
 			return ErrWorkstationMismatch
 		}
 		actions, err = s.store.ActionsByItem(ctx, tx, itemID)
+		if err != nil {
+			return err
+		}
+		events, err = s.deliveredEventsForItem(ctx, tx, itemID, item.ScenarioVersionID)
 		return err
 	})
-	return item, actions, err
+	return item, actions, events, err
 }
 
 // ItemForInstructor reads one item, its action log, and the scenario
 // version's full Body (its reference is only ever shown to the
 // instructor — RFC-001 §5's Item schema) for the instructor who owns its
 // lesson.
-func (s *Service) ItemForInstructor(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (Item, []Action, content.Body, error) {
+func (s *Service) ItemForInstructor(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (Item, []Action, []DeliveredEvent, content.Body, error) {
 	var item Item
 	var actions []Action
+	var events []DeliveredEvent
 	var body content.Body
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
 		var err error
@@ -1106,9 +1160,13 @@ func (s *Service) ItemForInstructor(ctx context.Context, actor auth.Principal, i
 		}
 		body = version.Body
 		actions, err = s.store.ActionsByItem(ctx, tx, itemID)
+		if err != nil {
+			return err
+		}
+		events, err = s.deliveredEventsForItem(ctx, tx, itemID, item.ScenarioVersionID)
 		return err
 	})
-	return item, actions, body, err
+	return item, actions, events, body, err
 }
 
 // Now returns the server's authoritative clock (RFC-001 §7.2's

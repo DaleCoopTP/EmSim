@@ -42,6 +42,7 @@ import (
 	trainingpg "emsim/internal/training/postgres"
 	"emsim/web"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -83,14 +84,61 @@ func runAPI(ctx context.Context, args []string) error {
 	adminHandler := observability.InstrumentHTTP(
 		admin.AdminWithMetrics(readiness, metricRegistry), metrics, logger, observability.AdminRouteNamer,
 	)
-	publicRoutes, publicRouteName := newPublicHTTP(pool, processConfig)
+	publicRoutes, publicRouteName, trainingService := newPublicHTTP(pool, processConfig)
 	publicHandler := observability.InstrumentHTTP(publicRoutes, metrics, logger, publicRouteName)
 	publicServer := &http.Server{Addr: processConfig.PublicAddr, Handler: publicHandler, ReadHeaderTimeout: 5 * time.Second}
 	adminServer := &http.Server{Addr: processConfig.AdminAddr, Handler: adminHandler, ReadHeaderTimeout: 5 * time.Second}
 
+	// RFC-001 §7.2's restart recovery runs once, synchronously, before
+	// this process ever reports ready: every item left open by a prior
+	// process gets one idempotent interruption marker, with no request
+	// accepted (readiness still false) in the meantime.
+	recoveryID := uuid.New()
+	affected, err := trainingService.Recover(ctx, recoveryID, trainingRecoveryCause)
+	if err != nil {
+		return fmt.Errorf("training recovery: %w", err)
+	}
+	recoverOutcome := "clean"
+	if len(affected) > 0 {
+		recoverOutcome = "interrupted"
+	}
+	logger.Operation(ctx, slog.LevelInfo, "training_recover", recoverOutcome, "", "")
+
 	metrics.SetReady("api", true)
 	defer metrics.SetReady("api", false)
+
+	schedulerCtx, stopScheduler := context.WithCancel(ctx)
+	defer stopScheduler()
+	go runTrainingScheduler(schedulerCtx, trainingService, logger)
+
 	return serveAPI(ctx, publicServer, adminServer)
+}
+
+const trainingRecoveryCause = "server_restart"
+
+// runTrainingScheduler is the durable time-based training work loop
+// (RFC-001 §7.2's scheduler tick — due scenario events and hard-level
+// offers, internal/training.Service.Tick). It ticks every 500 ms until
+// ctx is cancelled; a single failed Tick is logged and retried on the
+// next tick rather than treated as fatal (transient DB contention is
+// expected and Tick is designed to be safely re-run). RFC-001's "a
+// scheduler crash makes the process unhealthy and leads to a restart" is
+// satisfied by ordinary Go semantics: an unrecovered panic here brings
+// down the whole binary, which docker's restart policy then restarts —
+// nothing here should catch and swallow one.
+func runTrainingScheduler(ctx context.Context, svc *training.Service, logger observability.Logger) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := svc.Tick(ctx); err != nil && ctx.Err() == nil {
+				logger.Operation(ctx, slog.LevelError, "training_scheduler_tick", "error", "", "tick_failed")
+			}
+		}
+	}
 }
 
 var errAPITakesNoArgs = errors.New("api subcommand takes no arguments")
@@ -106,11 +154,16 @@ var errAPITakesNoArgs = errors.New("api subcommand takes no arguments")
 // assessment/reporting) adds its own three lines here and calls its own
 // Register on apiMux.
 func newPublicHandler(pool *pgxpool.Pool, cfg config.API) http.Handler {
-	handler, _ := newPublicHTTP(pool, cfg)
+	handler, _, _ := newPublicHTTP(pool, cfg)
 	return handler
 }
 
-func newPublicHTTP(pool *pgxpool.Pool, cfg config.API) (http.Handler, observability.RouteNamer) {
+// newPublicHTTP also returns the composed *training.Service so runAPI can
+// drive it outside the HTTP path: the C6 restart-recovery marker (before
+// readiness) and the C5/C6 scheduler tick loop (500 ms, RFC-001 §7.2)
+// both need the same Service instance the HTTP handlers use, not a
+// second one built from the same pool.
+func newPublicHTTP(pool *pgxpool.Pool, cfg config.API) (http.Handler, observability.RouteNamer, *training.Service) {
 	apiMux := httpapi.NewMux()
 
 	// contentService is built first: auth.NewService takes it as its
@@ -144,7 +197,7 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API) (http.Handler, observabil
 		}
 		return "spa"
 	}
-	return httpapi.WrapPublic(root), routeName
+	return httpapi.WrapPublic(root), routeName, trainingService
 }
 
 // mustSchemaValidator compiles the embedded scenario/scenario-file JSON

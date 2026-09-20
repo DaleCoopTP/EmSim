@@ -15,12 +15,16 @@ import (
 // already be set — the application service applies the close Decision to
 // its in-memory Item before calling Evidence, the same order it applies
 // any other accepted Decision.
-func (exercise) Evidence(item training.Item, actions []training.Action, cutoffLogSeq int64, closedAt time.Time) (training.Evidence, error) {
+func (exercise) Evidence(item training.Item, actions []training.Action, events []training.ItemEvent, cutoffLogSeq int64, closedAt time.Time) (training.Evidence, error) {
 	if item.CloseReason == nil {
 		return training.Evidence{}, fmt.Errorf("dds: evidence requires a closed item, got state %q", item.State)
 	}
 
 	comments := buildEvidenceComments(actions, cutoffLogSeq)
+	interruptions := item.Interruptions
+	if interruptions == nil {
+		interruptions = []training.Interruption{}
+	}
 	body := training.EvidenceBody{
 		Schema:            "emsim/evidence/v1",
 		ItemID:            item.ID,
@@ -47,7 +51,7 @@ func (exercise) Evidence(item training.Item, actions []training.Action, cutoffLo
 		Mode:          item.Mode,
 		FinalCard:     item.Card,
 		Actions:       buildEvidenceActions(actions, cutoffLogSeq),
-		Events:        []any{},
+		Events:        buildEvidenceEvents(events),
 		Calls:         []any{},
 		Comments:      comments,
 		Derived:       buildEvidenceDerived(item, actions, cutoffLogSeq, closedAt, len(comments)),
@@ -58,11 +62,29 @@ func (exercise) Evidence(item training.Item, actions []training.Action, cutoffLo
 			PrimaryAt:  item.Deadlines.PrimaryAt,
 			CompleteAt: item.Deadlines.CompleteAt,
 		},
-		Interruption:  nil, // server-restart recovery is slice 4 (RFC-001 §7.2)
+		Interruption:  nil, // set by the stop/lesson.close worker (C8); a normal close never sets it
 		ExerciseType:  content.ExerciseTypeDDSProcessing,
-		Interruptions: []any{},
+		Interruptions: interruptions,
 	}
 	return training.SealEvidence(body)
+}
+
+// buildEvidenceEvents projects the item's own item_events rows into
+// evidence.schema.json's simplified per-event shape. The caller
+// (application service) is documented to cancel any still-scheduled
+// event before calling Evidence, so every entry here is normally
+// delivered or skipped; a lingering "scheduled" one is preserved as-is
+// rather than hidden, since evidence must reflect the actual database
+// state at cutoff, not a re-derived one.
+func buildEvidenceEvents(events []training.ItemEvent) []training.EvidenceEvent {
+	out := make([]training.EvidenceEvent, 0, len(events))
+	for _, e := range events {
+		out = append(out, training.EvidenceEvent{
+			Key: e.EventKey, State: e.State, AnchorAt: e.AnchorAt, DueAt: e.DueAt,
+			DeliveredAt: e.DeliveredAt, Late: e.Late, SkipReason: e.SkipReason,
+		})
+	}
+	return out
 }
 
 // buildEvidenceActions copies actions up to cutoffLogSeq into the

@@ -767,7 +767,7 @@ type failingEvidenceExercise struct {
 	training.Exercise
 }
 
-func (failingEvidenceExercise) Evidence(training.Item, []training.Action, int64, time.Time) (training.Evidence, error) {
+func (failingEvidenceExercise) Evidence(training.Item, []training.Action, []training.ItemEvent, int64, time.Time) (training.Evidence, error) {
 	return training.Evidence{}, errors.New("injected evidence failure")
 }
 
@@ -859,5 +859,89 @@ func TestTrainingCloseRollsBackOnEvidenceFailure(t *testing.T) {
 	}, "req")
 	if err != nil || retryReceipt.ItemState != training.ItemClosed {
 		t.Fatalf("retry close = %+v, %v", retryReceipt, err)
+	}
+}
+
+// TestTrainingRecoverMarksOpenItemsIdempotently is slice-4-plan.md's C6:
+// Service.Recover marks a running lesson's still-open item with one
+// interruption per distinct recovery_id, never touches offered_at/
+// deadlines, is a no-op on a repeated recovery_id, and the accumulated
+// markers end up in the item's own evidence once it closes.
+func TestTrainingRecoverMarksOpenItemsIdempotently(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	_, trainee, workstationID, lesson := setupPilotLesson(t, ctx, pool, service, "ЮАО")
+	if _, err := service.Start(ctx, principal(auth.User{ID: lesson.InstructorID, Role: auth.RoleInstructor}, uuid.Nil), lesson.ID, "req-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	actor := principal(trainee, workstationID)
+	items, err := service.MyItems(ctx, actor)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("MyItems = %+v, %v", items, err)
+	}
+	item := items[0]
+
+	var offeredBefore time.Time
+	var deadlinesBefore []byte
+	if err := pool.QueryRow(ctx, `SELECT offered_at, deadlines FROM items WHERE id=$1`, item.ID).Scan(&offeredBefore, &deadlinesBefore); err != nil {
+		t.Fatalf("read item before recovery: %v", err)
+	}
+
+	recoveryID := uuid.New()
+	affected, err := service.Recover(ctx, recoveryID, "server_restart")
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if len(affected) != 1 || affected[0] != item.ID {
+		t.Fatalf("Recover affected = %+v, want [%s]", affected, item.ID)
+	}
+
+	// A retried call with the same recovery_id must append nothing more.
+	if affected2, err := service.Recover(ctx, recoveryID, "server_restart"); err != nil || len(affected2) != 0 {
+		t.Fatalf("repeat Recover = %+v, %v, want no affected items", affected2, err)
+	}
+
+	var offeredAfter time.Time
+	var deadlinesAfter, interruptionsJSON []byte
+	if err := pool.QueryRow(ctx, `SELECT offered_at, deadlines, interruptions FROM items WHERE id=$1`, item.ID).Scan(&offeredAfter, &deadlinesAfter, &interruptionsJSON); err != nil {
+		t.Fatalf("read item after recovery: %v", err)
+	}
+	if !offeredBefore.Equal(offeredAfter) {
+		t.Fatalf("offered_at changed: %s -> %s", offeredBefore, offeredAfter)
+	}
+	if string(deadlinesBefore) != string(deadlinesAfter) {
+		t.Fatalf("deadlines changed: %s -> %s", deadlinesBefore, deadlinesAfter)
+	}
+	var interruptions []training.Interruption
+	if err := json.Unmarshal(interruptionsJSON, &interruptions); err != nil {
+		t.Fatalf("unmarshal interruptions: %v", err)
+	}
+	if len(interruptions) != 1 || interruptions[0].RecoveryID != recoveryID || interruptions[0].Cause != "server_restart" {
+		t.Fatalf("interruptions = %+v", interruptions)
+	}
+
+	// A genuinely different restart appends a second, distinct marker.
+	recoveryID2 := uuid.New()
+	if affected3, err := service.Recover(ctx, recoveryID2, "server_restart"); err != nil || len(affected3) != 1 {
+		t.Fatalf("second Recover = %+v, %v", affected3, err)
+	}
+
+	closePilotItem(t, ctx, service, actor, item.ID)
+	var evidenceBody []byte
+	if err := pool.QueryRow(ctx, `SELECT body FROM evidence WHERE item_id=$1`, item.ID).Scan(&evidenceBody); err != nil {
+		t.Fatalf("read evidence: %v", err)
+	}
+	var body training.EvidenceBody
+	if err := json.Unmarshal(evidenceBody, &body); err != nil {
+		t.Fatalf("unmarshal evidence: %v", err)
+	}
+	if len(body.Interruptions) != 2 {
+		t.Fatalf("evidence interruptions = %+v, want 2", body.Interruptions)
 	}
 }

@@ -172,6 +172,18 @@ const (
 	EventSkipped   EventState = "skipped"
 )
 
+// Scenario-event skip reasons item_events.skip_reason takes when the
+// application service cancels a still-scheduled event ahead of its
+// due_at (RFC-001 §7.4/§7.5's close/stop pseudocode: "отменить
+// scheduled" before evidence is assembled). The scheduler's own lazy
+// fallback (service.go's tickEvent) reuses SkipReasonItemClosed for any
+// event that reaches its due_at after the item already closed by some
+// other path.
+const (
+	SkipReasonItemClosed    = "item_closed"
+	SkipReasonLessonStopped = "lesson_stopped"
+)
+
 // ItemEvent is one scheduled or terminal scenario event for an item.
 type ItemEvent struct {
 	ID          uuid.UUID

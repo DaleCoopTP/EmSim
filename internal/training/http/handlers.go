@@ -40,8 +40,8 @@ type trainingService interface {
 	Execute(ctx context.Context, actor auth.Principal, itemID uuid.UUID, cmd training.Command, requestID string) (training.Receipt, error)
 	MyRun(ctx context.Context, actor auth.Principal) (training.Run, training.Lesson, error)
 	MyItems(ctx context.Context, actor auth.Principal) ([]training.Item, error)
-	ItemForTrainee(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (training.Item, []training.Action, error)
-	ItemForInstructor(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (training.Item, []training.Action, content.Body, error)
+	ItemForTrainee(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (training.Item, []training.Action, []training.DeliveredEvent, error)
+	ItemForInstructor(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (training.Item, []training.Action, []training.DeliveredEvent, content.Body, error)
 	RunActions(ctx context.Context, actor auth.Principal, lessonID, runID uuid.UUID) ([]training.Action, error)
 	ListLessons(ctx context.Context, actor auth.Principal, state *training.LessonState) ([]training.Lesson, error)
 	Lesson(ctx context.Context, actor auth.Principal, lessonID uuid.UUID) (training.Lesson, []training.Assignment, error)
@@ -341,19 +341,19 @@ func (h *Handlers) getItem(w http.ResponseWriter, r *http.Request) {
 	}
 	switch principal.Role {
 	case auth.RoleTrainee:
-		item, actions, err := h.training.ItemForTrainee(r.Context(), principal, itemID)
+		item, actions, events, err := h.training.ItemForTrainee(r.Context(), principal, itemID)
 		if err != nil {
 			writeTrainingError(w, r, err)
 			return
 		}
-		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, nil, now))
+		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, nil, now))
 	case auth.RoleInstructor:
-		item, actions, body, err := h.training.ItemForInstructor(r.Context(), principal, itemID)
+		item, actions, events, body, err := h.training.ItemForInstructor(r.Context(), principal, itemID)
 		if err != nil {
 			writeTrainingError(w, r, err)
 			return
 		}
-		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, &body.Reference, now))
+		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, &body.Reference, now))
 	default:
 		httpapi.WriteError(w, r, httpapi.CodeForbidden, "insufficient role", nil)
 	}
@@ -583,20 +583,40 @@ func toDeadlinesJSON(d training.Deadlines) deadlinesJSON {
 // field_corrections: those only ever appear on the instructor's Item.reference
 // (itemJSON below), never here.
 type itemSummaryJSON struct {
-	ID            string        `json:"id"`
-	State         string        `json:"state"`
-	Reaction      string        `json:"reaction"`
-	Seq           int64         `json:"seq"`
-	CardNumber    string        `json:"card_number"`
-	IncidentType  string        `json:"incident_type,omitempty"`
-	AddressShort  string        `json:"address_short,omitempty"`
-	OfferedAt     string        `json:"offered_at"`
-	OpenedAt      *string       `json:"opened_at"`
-	ClosedAt      *string       `json:"closed_at"`
-	CloseReason   *string       `json:"close_reason"`
-	Deadlines     deadlinesJSON `json:"deadlines"`
-	PrimaryAt     *string       `json:"primary_at"`
-	Interruptions []any         `json:"interruptions"`
+	ID            string             `json:"id"`
+	State         string             `json:"state"`
+	Reaction      string             `json:"reaction"`
+	Seq           int64              `json:"seq"`
+	CardNumber    string             `json:"card_number"`
+	IncidentType  string             `json:"incident_type,omitempty"`
+	AddressShort  string             `json:"address_short,omitempty"`
+	OfferedAt     string             `json:"offered_at"`
+	OpenedAt      *string            `json:"opened_at"`
+	ClosedAt      *string            `json:"closed_at"`
+	CloseReason   *string            `json:"close_reason"`
+	Deadlines     deadlinesJSON      `json:"deadlines"`
+	PrimaryAt     *string            `json:"primary_at"`
+	Interruptions []interruptionJSON `json:"interruptions"`
+}
+
+// interruptionJSON is openapi.yaml's ItemSummary.interruptions entry
+// shape (also DeliveredEvent's sibling on the Item schema) — a plain
+// mirror of training.Interruption, kept as its own type only because the
+// domain type's json tags are for jsonb storage, not the public API (in
+// this case they happen to already match, but the two are conceptually
+// different surfaces).
+type interruptionJSON struct {
+	RecoveryID string `json:"recovery_id"`
+	Cause      string `json:"cause"`
+	DetectedAt string `json:"detected_at"`
+}
+
+func toInterruptionsJSON(interruptions []training.Interruption) []interruptionJSON {
+	out := make([]interruptionJSON, len(interruptions))
+	for i, in := range interruptions {
+		out[i] = interruptionJSON{RecoveryID: in.RecoveryID.String(), Cause: in.Cause, DetectedAt: formatTime(in.DetectedAt)}
+	}
+	return out
 }
 
 func toItemSummaryJSON(item training.Item) itemSummaryJSON {
@@ -610,9 +630,7 @@ func toItemSummaryJSON(item training.Item) itemSummaryJSON {
 		CardNumber: item.Card.Number, IncidentType: item.Card.Incident.TypeName, AddressShort: item.Card.Address.Text,
 		OfferedAt: formatTime(item.OfferedAt), OpenedAt: formatTimePtr(item.OpenedAt), ClosedAt: formatTimePtr(item.ClosedAt),
 		CloseReason: closeReason, Deadlines: toDeadlinesJSON(item.Deadlines), PrimaryAt: formatTimePtr(item.PrimaryAt),
-		// No events/interruptions exist until slice 4 — always empty, per
-		// ItemSummary.interruptions being required, not optional.
-		Interruptions: []any{},
+		Interruptions: toInterruptionsJSON(item.Interruptions),
 	}
 }
 
@@ -723,18 +741,43 @@ func buildComments(actions []training.Action) []commentJSON {
 // place this package ever puts scenario reference data on the wire.
 type itemJSON struct {
 	itemSummaryJSON
-	Mode               string             `json:"mode"`
-	Card               cardViewJSON       `json:"card"`
-	AllowedTransitions []string           `json:"allowed_transitions"`
-	Actions            []actionJSON       `json:"actions"`
-	Events             []any              `json:"events"`
-	Calls              []any              `json:"calls"`
-	Comments           []commentJSON      `json:"comments,omitempty"`
-	Reference          *content.Reference `json:"reference,omitempty"`
-	ServerTime         string             `json:"server_time"`
+	Mode               string               `json:"mode"`
+	Card               cardViewJSON         `json:"card"`
+	AllowedTransitions []string             `json:"allowed_transitions"`
+	Actions            []actionJSON         `json:"actions"`
+	Events             []deliveredEventJSON `json:"events"`
+	Calls              []any                `json:"calls"`
+	Comments           []commentJSON        `json:"comments,omitempty"`
+	Reference          *content.Reference   `json:"reference,omitempty"`
+	ServerTime         string               `json:"server_time"`
 }
 
-func toItemJSON(item training.Item, actions []training.Action, reference *content.Reference, now time.Time) itemJSON {
+// deliveredEventJSON is openapi.yaml's DeliveredEvent.
+type deliveredEventJSON struct {
+	Key         string  `json:"key"`
+	Delivery    string  `json:"delivery"`
+	From        string  `json:"from,omitempty"`
+	Text        string  `json:"text"`
+	VoiceURL    *string `json:"voice_url"`
+	DeliveredAt string  `json:"delivered_at"`
+	Late        bool    `json:"late"`
+}
+
+func toDeliveredEventsJSON(events []training.DeliveredEvent) []deliveredEventJSON {
+	out := make([]deliveredEventJSON, len(events))
+	for i, e := range events {
+		// Voice rendering (Piper TTS) is a later slice — e.Voice is
+		// carried through the domain type already, but no voice_assets
+		// lookup exists yet to resolve it to a URL.
+		out[i] = deliveredEventJSON{
+			Key: e.Key, Delivery: e.Delivery, From: e.From, Text: e.Text,
+			VoiceURL: nil, DeliveredAt: formatTime(e.DeliveredAt), Late: e.Late,
+		}
+	}
+	return out
+}
+
+func toItemJSON(item training.Item, actions []training.Action, events []training.DeliveredEvent, reference *content.Reference, now time.Time) itemJSON {
 	actionItems := make([]actionJSON, len(actions))
 	for i, a := range actions {
 		actionItems[i] = toActionJSON(a)
@@ -750,7 +793,7 @@ func toItemJSON(item training.Item, actions []training.Action, reference *conten
 		Card:               toCardViewJSON(item.Card, item.OfferedAt),
 		AllowedTransitions: allowed,
 		Actions:            actionItems,
-		Events:             []any{},
+		Events:             toDeliveredEventsJSON(events),
 		Calls:              []any{},
 		Comments:           buildComments(actions),
 		Reference:          reference,

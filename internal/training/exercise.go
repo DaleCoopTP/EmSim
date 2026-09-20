@@ -24,7 +24,12 @@ import (
 // very types).
 type Exercise interface {
 	Decide(item Item, cmd Command, now time.Time) (Decision, error)
-	Evidence(item Item, actions []Action, cutoffLogSeq int64, closedAt time.Time) (Evidence, error)
+	// Evidence assembles the immutable close-time snapshot. events is the
+	// item's own item_events rows (any state — scheduled ones only occur
+	// here if the caller has a bug, since close/stop cancel them first),
+	// already the application service's job to load; Evidence itself
+	// stays pure and does not touch the database.
+	Evidence(item Item, actions []Action, events []ItemEvent, cutoffLogSeq int64, closedAt time.Time) (Evidence, error)
 }
 
 // Action is one actions row — both what Evidence needs (already
