@@ -22,6 +22,25 @@
   "closed_at": "2026-09-17T10:03:07.900Z",
   "close_reason": "completed",
   "final_reaction": "completed",
+  "mode": "training",
+  "final_card": {
+    "number": "112-2026-000451",
+    "registered_at": "2026-09-17T09:59:42.000Z",
+    "address": {
+      "text": "Свободы 63 к1"
+    },
+    "incident": {
+      "type_code": "14080106",
+      "type_name": "Затопление"
+    },
+    "notification_list": [
+      {
+        "service": "dds_district",
+        "status": "completed",
+        "mine": true
+      }
+    ]
+  },
   "actions": [
     {
       "seq": 1,

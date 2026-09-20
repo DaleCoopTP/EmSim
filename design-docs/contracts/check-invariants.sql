@@ -12,10 +12,10 @@ INSERT INTO scenario_versions(id,scenario_id,version,status,body,digest,difficul
 ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000004',1,'approved','{}',decode(repeat('00',32),'hex'),4,'00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000001',now());
 INSERT INTO lessons(id,instructor_id,title,mode,level,state,timing,rubric_version,started_at) VALUES
 ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000001','Fixture','training','easy','running','{"open_s":30,"primary_s":30,"complete_s":180}','dds/rubric-v1',now());
-INSERT INTO runs(id,lesson_id,user_id,workstation_id,state,level_at_start) VALUES
-('00000000-0000-4000-8000-000000000007','00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','finished','easy');
-INSERT INTO items(id,run_id,scenario_version_id,ordinal,state,reaction,timing_effective,opened_at,primary_at,closed_at,close_reason) VALUES
-('00000000-0000-4000-8000-000000000008','00000000-0000-4000-8000-000000000007','00000000-0000-4000-8000-000000000005',1,'closed','completed','{}',now(),now(),now(),'completed');
+INSERT INTO runs(id,lesson_id,user_id,workstation_id,mode,state,level_at_start) VALUES
+('00000000-0000-4000-8000-000000000007','00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003','training','finished','easy');
+INSERT INTO items(id,run_id,scenario_version_id,ordinal,state,reaction,card,workflow,timing_effective,opened_at,primary_at,closed_at,close_reason) VALUES
+('00000000-0000-4000-8000-000000000008','00000000-0000-4000-8000-000000000007','00000000-0000-4000-8000-000000000005',1,'closed','completed','{}','{}','{}',now(),now(),now(),'completed');
 INSERT INTO evidence(item_id,body,digest) VALUES
 ('00000000-0000-4000-8000-000000000008','{"derived":{"open_seconds":10,"primary_seconds":20,"work_seconds":100,"total_seconds":120}}',decode(repeat('00',32),'hex'));
 INSERT INTO assessment_inputs(id,item_id,body,digest) VALUES
@@ -91,8 +91,8 @@ END;
 $$;
 
 -- Первая ручная оценка не требует auto или подготовленного input.
-INSERT INTO items(id,run_id,scenario_version_id,ordinal,state,reaction,timing_effective,opened_at,primary_at,closed_at,close_reason,interruptions,stop_cutoff_log_seq) VALUES
-('00000000-0000-4000-8000-000000000050','00000000-0000-4000-8000-000000000007','00000000-0000-4000-8000-000000000005',2,'closed','completed','{}',now(),now(),now(),'completed','[{"cause":"server_restart"}]',3);
+INSERT INTO items(id,run_id,scenario_version_id,ordinal,state,reaction,card,workflow,timing_effective,opened_at,primary_at,closed_at,close_reason,interruptions,stop_cutoff_log_seq) VALUES
+('00000000-0000-4000-8000-000000000050','00000000-0000-4000-8000-000000000007','00000000-0000-4000-8000-000000000005',2,'closed','completed','{}','{}','{}',now(),now(),now(),'completed','[{"cause":"server_restart"}]',3);
 INSERT INTO evidence(item_id,body,digest) VALUES
 ('00000000-0000-4000-8000-000000000050','{}',decode(repeat('00',32),'hex'));
 INSERT INTO assessments(id,item_id,revision,kind,status,evidence_digest,base_revision,rubric_version,rubric_effective,score,passed,criteria,created_by,reason) VALUES
@@ -115,8 +115,8 @@ BEGIN
 END;
 $$;
 -- Третья карточка: неполная автооценка без выдуманного числового балла.
-INSERT INTO items(id,run_id,scenario_version_id,ordinal,state,reaction,timing_effective,opened_at,primary_at,closed_at,close_reason) VALUES
-('00000000-0000-4000-8000-000000000060','00000000-0000-4000-8000-000000000007','00000000-0000-4000-8000-000000000005',3,'closed','completed','{}',now(),now(),now(),'completed');
+INSERT INTO items(id,run_id,scenario_version_id,ordinal,state,reaction,card,workflow,timing_effective,opened_at,primary_at,closed_at,close_reason) VALUES
+('00000000-0000-4000-8000-000000000060','00000000-0000-4000-8000-000000000007','00000000-0000-4000-8000-000000000005',3,'closed','completed','{}','{}','{}',now(),now(),now(),'completed');
 INSERT INTO evidence(item_id,body,digest) VALUES ('00000000-0000-4000-8000-000000000060','{}',decode(repeat('00',32),'hex'));
 INSERT INTO assessment_inputs(id,item_id,body,digest) VALUES ('00000000-0000-4000-8000-000000000061','00000000-0000-4000-8000-000000000060','{}',decode(repeat('00',32),'hex'));
 INSERT INTO assessments(id,item_id,revision,kind,status,evidence_digest,input_id,source_task_id,rubric_version,rubric_effective,criteria) VALUES

@@ -21,6 +21,8 @@
     "closed_at",
     "close_reason",
     "final_reaction",
+    "mode",
+    "final_card",
     "actions",
     "events",
     "calls",
@@ -123,11 +125,26 @@
       "enum": [
         "completed",
         "refused",
-        "interrupted"
-      ]
+        "interrupted",
+        "pilot_completed"
+      ],
+      "description": "pilot_completed — срез 3, ADR-017: close из accepted для reference.pilot_goal=accept_card; не означает правильного выполнения."
     },
     "final_reaction": {
       "type": "string"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "intro",
+        "training"
+      ],
+      "description": "Срез 3: снимок lessons.mode на момент старта прогона. intro не получает автооценку (RFC §7.4)."
+    },
+    "final_card": {
+      "type": "object",
+      "description": "Срез 3: экземпляр карточки (items.card) на closed_at, включая любые применённые set_card_field. Публичная проекция, без reference.",
+      "additionalProperties": true
     },
     "actions": {
       "type": "array",
@@ -160,6 +177,13 @@
               "string",
               "null"
             ]
+          },
+          "effect": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Срез 3, ADR-017: серверный факт изменения (например set_card_field: {path,old,new}), отдельно от клиентского payload."
           },
           "server_at": {
             "type": "string",

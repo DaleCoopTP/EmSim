@@ -282,6 +282,13 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LessonCreate' } } } }
       responses:
         '201': { description: Создано, content: { application/json: { schema: { $ref: '#/components/schemas/Lesson' } } } }
+  /lessons/options:
+    get:
+      tags: [lessons]
+      summary: 'Справочник для назначения (срез 3): активные обучаемые и рабочие места'
+      description: Только активные пользователи с ролью trainee и активные рабочие места. Не раскрывает содержимое сценариев — для этого используется GET /scenarios.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/LessonOptions' } } } }
   /lessons/{lessonId}:
     parameters: [ { $ref: '#/components/parameters/LessonId' } ]
     get:
@@ -311,6 +318,7 @@ paths:
     post:
       tags: [lessons]
       summary: Стоп; барьер для поздних команд; закрытие карточек — фоновая задача
+      description: Не реализовано в срезе 3 (slice-planning.md §5, stop появляется в срезе 4); контракт зарезервирован.
       requestBody: { content: { application/json: { schema: { type: object, properties: { reason: { type: string, maxLength: 500 } } } } } }
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Lesson' } } } }
@@ -319,6 +327,7 @@ paths:
     get:
       tags: [lessons]
       summary: Снапшот монитора при уже открытом и буферизуемом SSE-потоке
+      description: Не реализовано в срезе 3 (монитор — срез 4); контракт зарезервирован.
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Monitor' } } } }
   /lessons/{lessonId}/stream:
@@ -326,6 +335,7 @@ paths:
     get:
       tags: [lessons]
       summary: SSE-поток событий занятия (преподаватель)
+      description: Не реализовано в срезе 3 (SSE появляется в срезе 4); обучаемый в срезе 3 узнаёт об изменениях опросом API.
       parameters:
         - { name: Last-Event-ID, in: header, schema: { type: string }, description: Автоматический reconnect; cursor формата epoch:counter }
         - { name: cursor, in: query, schema: { type: string }, description: Сохранённый cursor для нового EventSource; при наличии заголовка приоритет у Last-Event-ID }
@@ -358,6 +368,7 @@ paths:
       tags: [trainee]
       summary: SSE-инвалидации обучаемого
       description: stream.ready → клиент буферизует → GET my/run, весь my/items и открытые карточки → применяет invalidations. resync повторяет процедуру; неизвестный epoch не считается восстановленной доставкой.
+      x-slice-3-status: Не реализовано в срезе 3 (SSE — срез 4); обучаемый узнаёт об изменениях опросом my/run и my/items.
       parameters:
         - { name: Last-Event-ID, in: header, schema: { type: string }, description: Автоматический reconnect; cursor формата epoch:counter }
         - { name: cursor, in: query, schema: { type: string }, description: Сохранённый cursor для нового EventSource; при наличии заголовка приоритет у Last-Event-ID }
@@ -406,6 +417,7 @@ paths:
     put:
       tags: [trainee]
       summary: Загрузить ранее объявленную в call_end запись (≤ 10 МБ)
+      x-slice-3-status: Не реализовано в срезе 3 (телефон и запись — срез 5); call_start/call_end пока не входят в исполняемый Command.
       description: Hash, размер и MIME должны совпасть с манифестом. При закрытии фиксируется upload deadline. Повтор принятого файла успешен даже после срока; замена запрещена. Новый файл после срока отклоняется. STT начинается только после закрытия item.
       requestBody:
         required: true
@@ -702,14 +714,34 @@ components:
 
     CardView:
       type: object
-      description: Карточка так, как её видит обучаемый (без эталона)
+      description: |
+        Карточка так, как её видит обучаемый (без эталона) — та же allowlist-проекция,
+        что CardPreview (internal/content.CardPreview, GET /scenarios/{id}/preview), но
+        registered_at здесь абсолютное серверное время (items.offered_at +
+        card.registered_at_offset_s), а не относительный сдвиг: карточка реально выдана
+        обучаемому (срез 3), а не только просматривается преподавателем.
+        Не содержит reference, hints, generation, events[].expects/text, field_corrections,
+        pilot_goal — эти поля видны только преподавателю через Item.reference.
       required: [number, registered_at, address, incident, notification_list]
       properties:
         number: { type: string }
         registered_at: { type: string, format: date-time }
-        applicant: { type: object, properties: { name: { type: string }, phone: { type: string } } }
-        address: { type: object, additionalProperties: true }
-        incident: { type: object, properties: { type_code: { type: string }, type_name: { type: string }, features: { type: object }, description: { type: string } } }
+        applicant:
+          type: object
+          properties:
+            name: { type: string }
+            phone: { type: string }
+            status: { type: string, enum: [witness, victim, relative, acquaintance, child, participant] }
+        address: { $ref: '#/components/schemas/Address' }
+        incident:
+          type: object
+          properties:
+            type_code: { type: string }
+            type_name: { type: string }
+            features: { type: object, additionalProperties: { type: [string, boolean, number] } }
+            description: { type: string }
+            victims: { type: integer, minimum: 0 }
+            danger: { type: string }
         notification_list:
           type: array
           items:
@@ -718,6 +750,13 @@ components:
               service: { type: string }
               status: { $ref: '#/components/schemas/ReactionStatus' }
               mine: { type: boolean, description: Служба обучаемого }
+        phones:
+          type: object
+          properties:
+            aon: { type: string }
+            provided: { type: string }
+            on_site: { type: string }
+        channel: { type: string }
         contacts: { type: array, items: { $ref: '#/components/schemas/Contact' } }
 
     Address:
@@ -882,11 +921,36 @@ components:
 
     Assignment:
       type: object
-      required: [workstation_no, scenario_version_ids]
+      required: [workstation_no, user_id, scenario_version_ids]
       properties:
         workstation_no: { type: integer }
-        user_id: { type: string, format: uuid, nullable: true }
-        scenario_version_ids: { type: array, minItems: 1, items: { type: string, format: uuid } }
+        user_id: { type: string, format: uuid, description: 'Обязателен (срез 3, ADR-017/slice-planning.md §4): вариант "кто залогинится на РМ" (NULL) в MVP не поддерживается.' }
+        scenario_version_ids: { type: array, minItems: 1, maxItems: 1, items: { type: string, format: uuid }, description: 'Ровно одна версия сценария в срезе 3; несколько версий в очереди одного РМ — срез 4.' }
+
+    LessonOptions:
+      type: object
+      description: 'Срез 3: справочник для конструктора назначений.'
+      required: [trainees, workstations]
+      properties:
+        trainees:
+          type: array
+          items:
+            type: object
+            required: [id, full_name, service_code]
+            properties:
+              id: { type: string, format: uuid }
+              full_name: { type: string }
+              service_code: { type: string, nullable: true }
+              service_name: { type: string, nullable: true }
+        workstations:
+          type: array
+          items:
+            type: object
+            required: [id, number]
+            properties:
+              id: { type: string, format: uuid }
+              number: { type: integer }
+              label: { type: string }
 
     Monitor:
       type: object
@@ -911,11 +975,13 @@ components:
 
     MyRun:
       type: object
-      required: [run_id, lesson, current_item_id, queue_left, exercise_type]
+      required: [run_id, lesson, current_item_id, queue_left, exercise_type, mode, workstation_no]
       properties:
         exercise_type: { $ref: '#/components/schemas/ExerciseType' }
         run_id: { type: string, format: uuid }
         lesson: { $ref: '#/components/schemas/Lesson' }
+        mode: { type: string, enum: [intro, training] }
+        workstation_no: { type: integer, description: РМ, на котором идёт прогон — сверяется с РМ текущей сессии обучаемого. }
         current_item_id: { type: string, format: uuid, nullable: true }
         queue_left: { type: integer }
         server_time: { type: string, format: date-time }
@@ -963,6 +1029,11 @@ components:
           type: string
           format: date-time
           nullable: true
+        close_reason:
+          type: string
+          enum: [completed, refused, interrupted, pilot_completed]
+          nullable: true
+          description: 'pilot_completed — пилотное завершение из accepted (ADR-017, срез 3); не означает правильного выполнения.'
         deadlines:
           $ref: '#/components/schemas/Deadlines'
         assessment_status:
@@ -1020,9 +1091,14 @@ components:
       allOf:
         - $ref: '#/components/schemas/ItemSummary'
         - type: object
-          required: [card, actions, events, calls, server_time]
+          required: [card, actions, events, calls, server_time, mode, allowed_transitions]
           properties:
+            mode: { type: string, enum: [intro, training] }
             card: { $ref: '#/components/schemas/CardView' }
+            allowed_transitions:
+              type: array
+              items: { $ref: '#/components/schemas/ReactionStatus' }
+              description: 'Статусы, разрешённые set_status из текущего reaction по снимку workflow этой карточки (item.workflow, срез 3); клиент строит кнопки по этому списку, а не по общему справочнику служб.'
             actions: { type: array, items: { $ref: '#/components/schemas/Action' } }
             events: { type: array, items: { $ref: '#/components/schemas/DeliveredEvent' } }
             calls: { type: array, items: { $ref: '#/components/schemas/Call' } }
@@ -1053,6 +1129,7 @@ components:
           - close
           - set_status
           - add_comment
+          - set_card_field
           - call_start
           - call_end
           - control_report
@@ -1079,7 +1156,9 @@ components:
             required: []
             properties: {}
         description: Явное закрытие после терминального статуса при обязательных комментариях и без активного звонка. set_status
-          сам не закрывает; превышение норматива не закрывает.
+          сам не закрывает; превышение норматива не закрывает. Пилотное исключение (ADR-017,
+          срез 3) — close также разрешён из accepted для сценариев с reference.pilot_goal=accept_card;
+          close_reason=pilot_completed.
       - properties:
           type:
             const: set_status
@@ -1093,6 +1172,26 @@ components:
                 $ref: '#/components/schemas/ReactionStatus'
               comment:
                 type: string
+      - properties:
+          type:
+            const: set_card_field
+          payload:
+            type: object
+            additionalProperties: false
+            required:
+            - path
+            - value
+            properties:
+              path:
+                type: string
+                const: /card/address/okrug
+                description: 'Срез 3 (ADR-017): единственный разрешённый путь; не произвольный JSON Patch.'
+              value:
+                type: string
+                minLength: 1
+        description: 'Исправление одного разрешённого поля карточки (ADR-017, срез 3). Разрешена
+          в reaction received/not_accepted; после accepted — transition_not_allowed. Правильность
+          value не проверяется — эталон (reference.field_corrections) остаётся скрытым.'
       - properties:
           type:
             const: add_comment
@@ -1250,6 +1349,10 @@ components:
         rejection:
           type: string
           nullable: true
+        effect:
+          type: object
+          nullable: true
+          description: 'Серверный факт изменённого состояния (например set_card_field: {path,old,new}), отдельно от клиентского payload — не участвует в request_digest (ADR-017, срез 3).'
         server_at:
           type: string
           format: date-time

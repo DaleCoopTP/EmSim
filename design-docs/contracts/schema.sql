@@ -240,9 +240,10 @@ CREATE INDEX lessons_instructor_idx ON lessons (instructor_id, created_at DESC);
 CREATE TABLE assignments (
     lesson_id           uuid NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
     workstation_id      uuid NOT NULL REFERENCES workstations(id),
-    user_id             uuid REFERENCES users(id),      -- NULL = кто залогинится на РМ
+    user_id             uuid NOT NULL REFERENCES users(id), -- срез 3/ADR-017: обязателен; "кто залогинится на РМ" (NULL) в MVP не поддерживается
     scenario_version_ids uuid[] NOT NULL CHECK (cardinality(scenario_version_ids) > 0),
-    PRIMARY KEY (lesson_id, workstation_id)
+    PRIMARY KEY (lesson_id, workstation_id),
+    UNIQUE (lesson_id, user_id)
 );
 
 -- Прогон одного обучаемого в занятии.
@@ -252,6 +253,7 @@ CREATE TABLE runs (
     lesson_id      uuid NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
     user_id        uuid NOT NULL REFERENCES users(id),
     workstation_id uuid NOT NULL REFERENCES workstations(id),
+    mode           text NOT NULL CHECK (mode IN ('intro', 'training')), -- снимок lessons.mode на старте (срез 3)
     state          text NOT NULL CHECK (state IN ('active', 'finished')),
     level_at_start text NOT NULL CHECK (level_at_start IN ('easy','medium','hard')), -- уровень занятия при старте
     next_offer_at timestamptz, -- hard: следующая выдача, обновляется от фактической выдачи
@@ -261,6 +263,10 @@ CREATE TABLE runs (
     UNIQUE (lesson_id, user_id),
     UNIQUE (lesson_id, workstation_id)
 );
+-- Один активный прогон на пользователя/РМ одновременно, независимо от занятия — иначе
+-- GET /my/run (срез 3) не может однозначно выбрать текущий прогон обучаемого.
+CREATE UNIQUE INDEX runs_active_user_idx ON runs (user_id) WHERE state = 'active';
+CREATE UNIQUE INDEX runs_active_workstation_idx ON runs (workstation_id) WHERE state = 'active';
 
 -- Карточка у обучаемого. Единственная изменяемая строка карточки.
 CREATE TABLE items (
@@ -271,6 +277,9 @@ CREATE TABLE items (
     spawned_from        uuid REFERENCES items(id),     -- если создана событием spawn_card
     state               text NOT NULL CHECK (state IN ('offered', 'opened', 'in_progress', 'closed', 'interrupted')),
     reaction            text NOT NULL DEFAULT 'added', -- статус реагирования службы обучаемого
+    card                jsonb NOT NULL CHECK (jsonb_typeof(card) = 'object'), -- экземпляр публичной карточки (срез 3); меняется только set_card_field
+    workflow            jsonb NOT NULL CHECK (jsonb_typeof(workflow) = 'object'), -- снимок services.workflow целевой службы на момент выдачи
+    pilot_goal          text, -- снимок reference.pilot_goal (ADR-017); NULL/'' = обычные правила завершения
     seq                 bigint NOT NULL DEFAULT 0,     -- номер последнего принятого действия
     stop_cutoff_log_seq bigint CHECK (stop_cutoff_log_seq IS NULL OR stop_cutoff_log_seq >= 0),
     interruptions jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(interruptions)='array'),
@@ -281,7 +290,7 @@ CREATE TABLE items (
     opened_at           timestamptz,
     primary_at          timestamptz,                  -- первое применённое первичное решение
     closed_at           timestamptz,
-    close_reason        text CHECK (close_reason IN ('completed', 'refused', 'interrupted')),
+    close_reason        text CHECK (close_reason IN ('completed', 'refused', 'interrupted', 'pilot_completed')), -- pilot_completed: ADR-017, close из accepted
     UNIQUE (run_id, ordinal),
     CONSTRAINT items_reaction_shape CHECK (reaction IN ('added','received','accepted','not_accepted','responding','arrived','working','completed','refused','completed_without_team')),
     CONSTRAINT items_deadlines_object CHECK (jsonb_typeof(deadlines) = 'object'),
@@ -303,8 +312,9 @@ CREATE TABLE actions (
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     id         uuid NOT NULL UNIQUE,                   -- action_id для ссылок; порядок по log_seq
     command_id uuid NOT NULL UNIQUE,                   -- клиентский, идемпотентность
-    type       text NOT NULL CHECK (type IN ('open','set_status','add_comment','call_start','call_end','control_report','close')),
+    type       text NOT NULL CHECK (type IN ('open','set_status','add_comment','set_card_field','call_start','call_end','control_report','close')),
     payload    jsonb NOT NULL DEFAULT '{}'::jsonb,
+    effect     jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(effect) = 'object'), -- срез 3/ADR-017: серверный факт (например set_card_field {path,old,new}), не участвует в request_digest
     accepted   boolean NOT NULL,
     rejection  text,                                   -- transition_not_allowed | stale_seq | lesson_stopped | comment_required ...
     receipt    jsonb NOT NULL,                         -- квитанция, которую вернули клиенту (для replay)

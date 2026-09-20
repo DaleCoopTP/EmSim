@@ -161,6 +161,14 @@ def main() -> int:
         bad_scenario = copy.deepcopy(examples["scenario.example.json"])
         bad_scenario["reference"]["timing"] = {"complete_s": 999}
         rejects("case overriding lesson timing", schemas["scenario.schema.json"], bad_scenario)
+        # Срез 3 / ADR-017: pilot_completed close from accepted, without a full evidence example.
+        pilot_evidence = copy.deepcopy(examples["evidence.example.json"])
+        pilot_evidence["close_reason"] = "pilot_completed"
+        pilot_evidence["final_reaction"] = "accepted"
+        if V(schemas["evidence.schema.json"], format_checker=V.FORMAT_CHECKER).is_valid(pilot_evidence):
+            ok("evidence accepts pilot_completed close_reason")
+        else:
+            fail("evidence must accept pilot_completed close_reason (ADR-017)")
 
         # Resolve only the local refs used by these schemas; no remote network calls.
         def resolve(node):
@@ -185,6 +193,22 @@ def main() -> int:
                 invalid = copy.deepcopy(good_command)
                 del invalid["payload"][field]
                 rejects(f"call_end without {field}", command_schema, invalid)
+            # Срез 3 / ADR-017: set_card_field только для the one allowlisted path.
+            good_field_correction = {"command_id": "019230a4-0000-7000-8000-000000000002", "expected_seq": 1,
+                                      "type": "set_card_field", "payload": {"path": "/card/address/okrug", "value": "ЮАО"}}
+            if not V(command_schema, format_checker=V.FORMAT_CHECKER).is_valid(good_field_correction):
+                fail("valid set_card_field rejected")
+            else:
+                ok("accepts set_card_field for the allowlisted path")
+            bad_path = copy.deepcopy(good_field_correction)
+            bad_path["payload"]["path"] = "/card/incident/description"
+            rejects("set_card_field with a non-allowlisted path", command_schema, bad_path)
+            bad_value = copy.deepcopy(good_field_correction)
+            bad_value["payload"]["value"] = ""
+            rejects("set_card_field with an empty value", command_schema, bad_value)
+            no_value = copy.deepcopy(good_field_correction)
+            del no_value["payload"]["value"]
+            rejects("set_card_field without a value", command_schema, no_value)
             rejects("expert revision without base_revision", resolve(spec["components"]["schemas"]["AssessmentRevision"]), {"reason": "Исправление", "criteria": []})
             first_expert = {"reason": "Ручная оценка", "criteria": [], "base_revision": 0}
             if not V(resolve(spec["components"]["schemas"]["AssessmentRevision"])).is_valid(first_expert):
