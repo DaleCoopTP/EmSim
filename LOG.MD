@@ -674,6 +674,16 @@ Open issues / risks: none new. `slice-4-plan.md`'s C1–C11 are all complete; sl
 
 Next: slice 5 — телефон и запись доклада (slice-planning.md §6).
 
+## 2026-09-20 — Slice 5 C1–C2
+
+Status: C1 completed; C2 storage foundation completed.
+
+- C1 records phone/recording command, authorization, deadline and immutable voice-manifest contracts in ADR-005, OpenAPI and contract checks.
+- C2 adds migration 00008 (`blobs`, `voice_assets`, `calls` with one-active-call partial unique index), schema readiness v8, and typed training persistence ports for content-addressed blobs, voice assets and calls.
+- Validation: `python3 design-docs/contracts/check.py`; focused `go test ./internal/training/... ./internal/platform/postgres/...`.
+
+Next: C3 filesystem blob adapter and administrative voice-asset import.
+
 
 
 ## 2026-09-20T21:50:43+03:00 — Claude Sonnet 5 — slice 4 review fixes (scheduler starvation, SSE staleness, late/spawn semantics)

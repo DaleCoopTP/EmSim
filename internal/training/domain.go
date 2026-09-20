@@ -154,6 +154,62 @@ type Item struct {
 	CloseReason *CloseReason
 }
 
+// RecordingState is the persisted state of the manifest declared by a
+// completed phone call. Expired is an effective presentation state: the
+// immutable manifest remains awaiting in storage until a later slice chooses
+// to materialize expiration.
+type RecordingState string
+
+const (
+	RecordingAbsent   RecordingState = "absent"
+	RecordingAwaiting RecordingState = "awaiting"
+	RecordingReady    RecordingState = "ready"
+	RecordingExpired  RecordingState = "expired"
+)
+
+// RecordingManifest is declared atomically by call_end. Its bytes are never
+// put into a command or the database; BlobID is populated only after upload.
+type RecordingManifest struct {
+	SHA256 [32]byte
+	Size   int64
+	MIME   string
+}
+
+// Call is training's durable phone timeline. The row is mutable only while
+// completing/uploading the declared recording; evidence copies its close-time
+// projection and is immutable.
+type Call struct {
+	ID                        uuid.UUID
+	ItemID                    uuid.UUID
+	ContactKey                string
+	StartedAt                 time.Time
+	EndedAt                   *time.Time
+	ReactionAtCall            content.Reaction
+	BlobID                    *uuid.UUID
+	AcceptedBy                *string
+	Summary                   *string
+	Recording                 *RecordingManifest
+	RecordingState            RecordingState
+	RecordingUploadDeadlineAt *time.Time
+	RecordingReceivedAt       *time.Time
+}
+
+type Blob struct {
+	ID        uuid.UUID
+	SHA256    [32]byte
+	MIME      string
+	Size      int64
+	CreatedAt time.Time
+}
+
+type VoiceAsset struct {
+	ID                uuid.UUID
+	ScenarioVersionID uuid.UUID
+	Key               string
+	Voice             string
+	BlobID            uuid.UUID
+}
+
 // Interruption records a recovery boundary on an item. It is stored as the
 // items.interruptions JSON array so later recovery code can append history
 // without rewriting immutable evidence.

@@ -355,6 +355,7 @@ CREATE TABLE calls (
     contact_key text NOT NULL,                         -- crew_leader | shift_chief | line_112 | uk_dispatch ...
     started_at  timestamptz NOT NULL,
     ended_at    timestamptz,
+    reaction_at_call text NOT NULL,
     blob_id     uuid REFERENCES blobs(id),
     accepted_by text,                                  -- «Кто принял» (отработка, как в 112)
     summary     text,                                  -- «Суть сообщения» (отработка)
@@ -372,6 +373,7 @@ CREATE TABLE calls (
     )
 );
 CREATE INDEX calls_item_idx ON calls (item_id);
+CREATE UNIQUE INDEX calls_one_active_per_item_idx ON calls (item_id) WHERE ended_at IS NULL;
 
 -- Снимок карточки при закрытии. Основной неизменяемый вход; правила и STT фиксируются в одном assessment_inputs (ADR-006/016). Формат: contracts/evidence.schema.json.
 CREATE TABLE evidence (

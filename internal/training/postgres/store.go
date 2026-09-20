@@ -586,6 +586,164 @@ func (s *Store) ApplyItemDecision(ctx context.Context, tx pgx.Tx, itemID uuid.UU
 	return nil
 }
 
+// ------------------------------------------------------------ phone/media
+
+const blobColumns = `id, sha256, mime, size, created_at`
+
+func scanBlob(row pgx.Row) (training.Blob, error) {
+	var b training.Blob
+	var digest []byte
+	if err := row.Scan(&b.ID, &digest, &b.MIME, &b.Size, &b.CreatedAt); err != nil {
+		return training.Blob{}, mapErr(err)
+	}
+	if len(digest) != len(b.SHA256) {
+		return training.Blob{}, training.ErrStorage
+	}
+	copy(b.SHA256[:], digest)
+	return b, nil
+}
+
+// InsertBlob reuses an already-known digest. MIME and size form part of the
+// immutable blob identity for this application, so a digest collision with
+// different metadata is a conflict instead of silently reusing a row.
+func (s *Store) InsertBlob(ctx context.Context, tx pgx.Tx, blob training.Blob) (training.Blob, bool, error) {
+	created := false
+	err := tx.QueryRow(ctx, `
+		INSERT INTO blobs (id, sha256, mime, size) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (sha256) DO UPDATE SET sha256 = EXCLUDED.sha256
+		RETURNING `+blobColumns+`, (xmax = 0)
+	`, blob.ID, blob.SHA256[:], blob.MIME, blob.Size).Scan(&blob.ID, new([]byte), &blob.MIME, &blob.Size, &blob.CreatedAt, &created)
+	if err != nil {
+		return training.Blob{}, false, mapErr(err)
+	}
+	// Re-read so the digest is retained and enforce immutable metadata.
+	stored, err := s.BlobBySHA256(ctx, tx, blob.SHA256)
+	if err != nil {
+		return training.Blob{}, false, err
+	}
+	if stored.MIME != blob.MIME || stored.Size != blob.Size {
+		return training.Blob{}, false, training.ErrConflict
+	}
+	return stored, created, nil
+}
+
+func (s *Store) BlobBySHA256(ctx context.Context, tx pgx.Tx, sha256 [32]byte) (training.Blob, error) {
+	return scanBlob(tx.QueryRow(ctx, `SELECT `+blobColumns+` FROM blobs WHERE sha256 = $1`, sha256[:]))
+}
+
+const voiceAssetColumns = `id, scenario_version_id, key, voice, blob_id`
+
+func scanVoiceAsset(row pgx.Row) (training.VoiceAsset, error) {
+	var a training.VoiceAsset
+	if err := row.Scan(&a.ID, &a.ScenarioVersionID, &a.Key, &a.Voice, &a.BlobID); err != nil {
+		return training.VoiceAsset{}, mapErr(err)
+	}
+	return a, nil
+}
+
+func (s *Store) VoiceAssetByKey(ctx context.Context, tx pgx.Tx, scenarioVersionID uuid.UUID, key string) (training.VoiceAsset, error) {
+	return scanVoiceAsset(tx.QueryRow(ctx, `SELECT `+voiceAssetColumns+` FROM voice_assets WHERE scenario_version_id=$1 AND key=$2`, scenarioVersionID, key))
+}
+
+func (s *Store) InsertVoiceAsset(ctx context.Context, tx pgx.Tx, asset training.VoiceAsset) (training.VoiceAsset, error) {
+	err := tx.QueryRow(ctx, `INSERT INTO voice_assets (id, scenario_version_id, key, voice, blob_id) VALUES ($1,$2,$3,$4,$5) RETURNING `+voiceAssetColumns,
+		asset.ID, asset.ScenarioVersionID, asset.Key, asset.Voice, asset.BlobID).Scan(&asset.ID, &asset.ScenarioVersionID, &asset.Key, &asset.Voice, &asset.BlobID)
+	if err != nil {
+		return training.VoiceAsset{}, mapErr(err)
+	}
+	return asset, nil
+}
+
+const callColumns = `id, item_id, contact_key, started_at, ended_at, reaction_at_call, blob_id, accepted_by, summary, recording_sha256, recording_size, recording_mime, recording_state, recording_upload_deadline_at, recording_received_at`
+
+func scanCall(row pgx.Row) (training.Call, error) {
+	var c training.Call
+	var digest []byte
+	var size *int64
+	var mime *string
+	if err := row.Scan(&c.ID, &c.ItemID, &c.ContactKey, &c.StartedAt, &c.EndedAt, &c.ReactionAtCall, &c.BlobID, &c.AcceptedBy, &c.Summary, &digest, &size, &mime, &c.RecordingState, &c.RecordingUploadDeadlineAt, &c.RecordingReceivedAt); err != nil {
+		return training.Call{}, mapErr(err)
+	}
+	if len(digest) > 0 {
+		if len(digest) != 32 || size == nil || mime == nil {
+			return training.Call{}, training.ErrStorage
+		}
+		var m training.RecordingManifest
+		copy(m.SHA256[:], digest)
+		m.Size = *size
+		m.MIME = *mime
+		c.Recording = &m
+	}
+	return c, nil
+}
+
+func (s *Store) InsertCall(ctx context.Context, tx pgx.Tx, call training.Call) (training.Call, error) {
+	returned := tx.QueryRow(ctx, `INSERT INTO calls (id,item_id,contact_key,started_at,reaction_at_call) VALUES ($1,$2,$3,$4,$5) RETURNING `+callColumns,
+		call.ID, call.ItemID, call.ContactKey, call.StartedAt, call.ReactionAtCall)
+	return scanCall(returned)
+}
+
+func (s *Store) CallByID(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock training.Lock) (training.Call, error) {
+	return scanCall(tx.QueryRow(ctx, `SELECT `+callColumns+` FROM calls WHERE id=$1`+lockSuffix(lock, ""), id))
+}
+
+func (s *Store) CallsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) ([]training.Call, error) {
+	rows, err := tx.Query(ctx, `SELECT `+callColumns+` FROM calls WHERE item_id=$1 ORDER BY started_at,id`, itemID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	var calls []training.Call
+	for rows.Next() {
+		c, err := scanCall(rows)
+		if err != nil {
+			return nil, err
+		}
+		calls = append(calls, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return calls, nil
+}
+
+func (s *Store) EndCall(ctx context.Context, tx pgx.Tx, id uuid.UUID, endedAt time.Time, acceptedBy, summary string, recording *training.RecordingManifest) error {
+	state := training.RecordingAbsent
+	var sha []byte
+	var size any
+	var mime any
+	if recording != nil {
+		state = training.RecordingAwaiting
+		sha = recording.SHA256[:]
+		size = recording.Size
+		mime = recording.MIME
+	}
+	tag, err := tx.Exec(ctx, `UPDATE calls SET ended_at=$2, accepted_by=$3, summary=$4, recording_sha256=$5, recording_size=$6, recording_mime=$7, recording_state=$8 WHERE id=$1 AND ended_at IS NULL`, id, endedAt, acceptedBy, summary, sha, size, mime, state)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return training.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) SetCallRecordingDeadline(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, deadline time.Time) error {
+	_, err := tx.Exec(ctx, `UPDATE calls SET recording_upload_deadline_at=$2 WHERE item_id=$1 AND recording_state='awaiting' AND recording_upload_deadline_at IS NULL`, itemID, deadline)
+	return mapErr(err)
+}
+
+func (s *Store) SetCallRecordingReady(ctx context.Context, tx pgx.Tx, id, blobID uuid.UUID, receivedAt time.Time) error {
+	tag, err := tx.Exec(ctx, `UPDATE calls SET blob_id=$2, recording_received_at=$3, recording_state='ready' WHERE id=$1 AND recording_state='awaiting'`, id, blobID, receivedAt)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return training.ErrNotFound
+	}
+	return nil
+}
+
 // RunningLessonIDs lists every lesson currently in state='running' — an
 // unlocked read (Service.Recover locks each one individually before
 // recovering it).

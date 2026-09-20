@@ -3,7 +3,8 @@
 // "users"/"workstations"/"sessions" (00003), "services"/
 // "classifier_types"/"tickets"/"scenarios"/"scenario_versions" (00004),
 // with the scenario-version lifecycle tightened in 00005, training tables
-// (00006), and now item_events/control_reports (00007) — not every domain
+// (00006), item_events/control_reports (00007), and phone/blob tables
+// (00008) — not every domain
 // table the eventual schema.sql has (calls and every assessment table are
 // not built yet — see
 // docs/technical-discovery.md §3.5). applicationTables grows as later
@@ -28,7 +29,7 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-const ExpectedSchemaVersion int64 = 7
+const ExpectedSchemaVersion int64 = 8
 
 // applicationTables lists the platform tables Ready() requires to exist,
 // alongside the expected goose version — a version match alone would not
@@ -37,6 +38,7 @@ var applicationTables = []string{
 	"audit_log", "sessions", "tasks", "users", "workstations",
 	"classifier_types", "scenario_versions", "scenarios", "services", "tickets",
 	"lessons", "assignments", "runs", "items", "actions", "evidence", "item_events", "control_reports",
+	"blobs", "voice_assets", "calls",
 }
 
 var (

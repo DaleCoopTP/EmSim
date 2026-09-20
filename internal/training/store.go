@@ -137,6 +137,17 @@ type Store interface {
 
 	InsertEvidence(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, ev Evidence) error
 
+	InsertBlob(ctx context.Context, tx pgx.Tx, blob Blob) (Blob, bool, error)
+	BlobBySHA256(ctx context.Context, tx pgx.Tx, sha256 [32]byte) (Blob, error)
+	VoiceAssetByKey(ctx context.Context, tx pgx.Tx, scenarioVersionID uuid.UUID, key string) (VoiceAsset, error)
+	InsertVoiceAsset(ctx context.Context, tx pgx.Tx, asset VoiceAsset) (VoiceAsset, error)
+	InsertCall(ctx context.Context, tx pgx.Tx, call Call) (Call, error)
+	CallByID(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock Lock) (Call, error)
+	CallsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) ([]Call, error)
+	EndCall(ctx context.Context, tx pgx.Tx, id uuid.UUID, endedAt time.Time, acceptedBy, summary string, recording *RecordingManifest) error
+	SetCallRecordingDeadline(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, deadline time.Time) error
+	SetCallRecordingReady(ctx context.Context, tx pgx.Tx, id, blobID uuid.UUID, receivedAt time.Time) error
+
 	InsertItemEvent(ctx context.Context, tx pgx.Tx, event ItemEvent) (ItemEvent, error)
 	ItemEventByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (ItemEvent, error)
 	ItemEventsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) ([]ItemEvent, error)
