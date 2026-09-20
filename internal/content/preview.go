@@ -11,37 +11,46 @@ package content
 // reflect-based check). Incident.Features is the one exception — it is
 // itself allowlisted content (the classifier's опросная карта answers,
 // shown to the trainee as-is), not instructor/scoring data.
+//
+// json tags match openapi.yaml's CardPreview/CardView property names:
+// content/http keeps its own DTO for the instructor preview response
+// (handlers.go's cardPreviewJSON) since that endpoint's field set is not
+// identical, but internal/training marshals CardPreview directly (an
+// item's card instance, and evidence.final_card, slice 3) and needs a
+// stable, snake_case shape rather than Go's default capitalized field
+// names — struct tags do not affect ProjectCard's struct-conversion from
+// NotificationEntry above (Go ignores tags for convertibility).
 type CardPreview struct {
-	Number              string
-	RegisteredAtOffsetS int
-	Applicant           ApplicantPreview
-	Address             Address
-	Incident            IncidentPreview
-	NotificationList    []NotificationPreview
-	Phones              Phones
-	Channel             string
-	Contacts            []ContactPreview
+	Number              string                `json:"number"`
+	RegisteredAtOffsetS int                   `json:"registered_at_offset_s"`
+	Applicant           ApplicantPreview      `json:"applicant"`
+	Address             Address               `json:"address"`
+	Incident            IncidentPreview       `json:"incident"`
+	NotificationList    []NotificationPreview `json:"notification_list"`
+	Phones              Phones                `json:"phones"`
+	Channel             string                `json:"channel"`
+	Contacts            []ContactPreview      `json:"contacts,omitempty"`
 }
 
 type ApplicantPreview struct {
-	Name   string
-	Phone  string
-	Status string
+	Name   string `json:"name"`
+	Phone  string `json:"phone"`
+	Status string `json:"status"`
 }
 
 type IncidentPreview struct {
-	TypeCode    string
-	TypeName    string
-	Features    map[string]any
-	Description string
-	Victims     int
-	Danger      string
+	TypeCode    string         `json:"type_code"`
+	TypeName    string         `json:"type_name"`
+	Features    map[string]any `json:"features"`
+	Description string         `json:"description"`
+	Victims     int            `json:"victims"`
+	Danger      string         `json:"danger"`
 }
 
 type NotificationPreview struct {
-	Service string
-	Status  Reaction
-	Mine    bool
+	Service string   `json:"service"`
+	Status  Reaction `json:"status"`
+	Mine    bool     `json:"mine"`
 }
 
 // ContactPreview is Contact without Phrases (openapi.yaml's Contact
@@ -49,10 +58,10 @@ type NotificationPreview struct {
 // they call, not something the catalogue or scoring reference exposes
 // ahead of time.
 type ContactPreview struct {
-	Key    string
-	Label  string
-	Number string
-	Voice  string
+	Key    string `json:"key"`
+	Label  string `json:"label"`
+	Number string `json:"number"`
+	Voice  string `json:"voice"`
 }
 
 // ProjectCard builds a CardPreview from a scenario version's Card — the
