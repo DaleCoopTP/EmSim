@@ -38,7 +38,7 @@ def load_json(name: str):
 
 def main() -> int:
     print("JSON")
-    schemas = {n: load_json(n) for n in ["scenario.schema.json", "scenario-file.schema.json", "evidence.schema.json", "assessment-inputs.schema.json", "rubric.schema.json", "sse-events.schema.json", "tasks.schema.json"]}
+    schemas = {n: load_json(n) for n in ["scenario.schema.json", "scenario-file.schema.json", "evidence.schema.json", "assessment-inputs.schema.json", "rubric.schema.json", "sse-events.schema.json", "tasks.schema.json", "voice-assets-manifest.schema.json"]}
     examples = {n: load_json(n) for n in ["scenario.example.json", "evidence.example.json", "rubric.default.json"]}
     for n, v in {**schemas, **examples}.items():
         if v is not None:
@@ -100,6 +100,19 @@ def main() -> int:
                     fail(f"{en}: {'/'.join(map(str, e.path))}: {e.message[:160]}")
             else:
                 ok(f"{en} validates against {sn}")
+        voice_manifest = {
+            "schema": "emsim/voice-assets-manifest/v1",
+            "assets": [{"scenario_key": "pilot-phone", "version": 1, "contact_key": "crew_leader", "phrase": "greeting", "file": "crew-greeting.wav", "sha256": "a" * 64, "size": 16, "mime": "audio/wav"}],
+        }
+        if not V(schemas["voice-assets-manifest.schema.json"]).is_valid(voice_manifest):
+            fail("positive voice-assets manifest is invalid")
+        else:
+            bad_manifest = copy.deepcopy(voice_manifest)
+            bad_manifest["assets"][0]["phrase"] = "other"
+            if V(schemas["voice-assets-manifest.schema.json"]).is_valid(bad_manifest):
+                fail("negative voice-assets manifest unexpectedly validates")
+            else:
+                ok("voice-assets manifest positive/negative examples validate")
         # SSE: несколько инстансов
         sse = schemas["sse-events.schema.json"]
         sse_examples = [

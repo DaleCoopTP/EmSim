@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emsim.local/schemas/voice-assets-manifest/v1",
+  "title": "Prepared voice assets manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "assets"],
+  "properties": {
+    "schema": {"const": "emsim/voice-assets-manifest/v1"},
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["scenario_key", "version", "contact_key", "phrase", "file", "sha256", "size", "mime"],
+        "properties": {
+          "scenario_key": {"type": "string", "minLength": 1},
+          "version": {"type": "integer", "minimum": 1},
+          "contact_key": {"type": "string", "pattern": "^[a-z_]{2,32}$"},
+          "phrase": {"enum": ["greeting", "ack"]},
+          "file": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "size": {"type": "integer", "minimum": 1, "maximum": 10485760},
+          "mime": {"enum": ["audio/wav", "audio/ogg"]}
+        }
+      }
+    }
+  }
+}

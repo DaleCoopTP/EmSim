@@ -400,7 +400,7 @@ paths:
     post:
       tags: [trainee]
       summary: Команда обучаемого (идемпотентная, ADR-004/014)
-      description: После авторизации replay проверяется до running/closed. Тело command_id неизменно. control_report разрешён после закрытия и не меняет evidence. Отказ сохраняет исходный HTTP-статус при replay.
+      description: После авторизации replay проверяется до running/closed. Тело command_id неизменно. call_start/call_end, action, audit и call фиксируются атомарно; replay call_start возвращает исходный call_id. control_report разрешён после закрытия и не меняет evidence. Отказ сохраняет исходный HTTP-статус при replay.
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Command' } } } }
       responses:
         '200':
@@ -410,15 +410,14 @@ paths:
           description: stale_seq | lesson_stopped | item_closed — Receipt; command_id_conflict — Error
           content: { application/json: { schema: { oneOf: [{ $ref: '#/components/schemas/Receipt' }, { $ref: '#/components/schemas/Error' }] } } }
         '422':
-          description: transition_not_allowed | comment_required | invalid_payload
+          description: transition_not_allowed | comment_required | invalid_payload | call_required | call_in_progress | call_not_active
           content: { application/json: { schema: { $ref: '#/components/schemas/Receipt' } } }
   /items/{itemId}/calls/{callId}/recording:
     parameters: [ { $ref: '#/components/parameters/ItemId' }, { name: callId, in: path, required: true, schema: { type: string, format: uuid } } ]
     put:
       tags: [trainee]
       summary: Загрузить ранее объявленную в call_end запись (≤ 10 МБ)
-      x-slice-3-status: Не реализовано в срезе 3 (телефон и запись — срез 5); call_start/call_end пока не входят в исполняемый Command.
-      description: Hash, размер и MIME должны совпасть с манифестом. При закрытии фиксируется upload deadline. Повтор принятого файла успешен даже после срока; замена запрещена. Новый файл после срока отклоняется. STT начинается только после закрытия item.
+      description: Hash, размер и MIME должны совпасть с immutable manifest. При закрытии фиксируется upload deadline. Повтор принятого файла успешен даже после срока; замена запрещена. Новый файл после срока отклоняется. STT в Slice 5 не ставится.
       requestBody:
         required: true
         content:
@@ -428,6 +427,23 @@ paths:
         '204': { description: Файл принят или уже был принят; STT ставится после закрытия item }
         '409': { description: recording_conflict | recording_deadline_passed, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '413': { description: Слишком большой файл, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    get:
+      tags: [training]
+      summary: Скачать готовую запись звонка
+      description: Только преподаватель-владелец занятия и только после закрытия или прерывания карточки.
+      responses:
+        '200': { description: Audio stream }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /items/{itemId}/contacts/{contactKey}/phrases/{phrase}:
+    parameters: [ { $ref: '#/components/parameters/ItemId' }, { name: contactKey, in: path, required: true, schema: { type: string } }, { name: phrase, in: path, required: true, schema: { type: string, enum: [greeting, ack] } } ]
+    get:
+      tags: [trainee]
+      summary: Получить подготовленную голосовую реплику контакта карточки
+      responses:
+        '200': { description: Audio stream }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /items/{itemId}/assessment:
     parameters: [ { $ref: '#/components/parameters/ItemId' } ]
     get:
@@ -557,7 +573,7 @@ components:
           properties:
             code:
               type: string
-              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation]
+              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, call_required, call_in_progress, call_not_active, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation]
             message: { type: string }
             details: { type: object, additionalProperties: true }
         request_id: { type: string }
