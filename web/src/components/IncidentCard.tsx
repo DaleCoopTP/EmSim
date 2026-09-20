@@ -1,5 +1,6 @@
 import type { CardPreview } from "../api/content";
-import { formatOffset } from "../format";
+import type { CardView } from "../api/workplace";
+import { formatDateTime, formatOffset } from "../format";
 import { applicantStatusLabel, reactionLabel } from "../labels";
 
 // IncidentCard renders CardPreview — the same allowlist projection a
@@ -8,13 +9,13 @@ import { applicantStatusLabel, reactionLabel } from "../labels";
 // read-only everywhere it is used so far (the instructor catalogue's
 // scenario detail, C6); slice 3 reuses it as-is for the live card and
 // only adds action controls around it, not inside it.
-export function IncidentCard({ card }: { card: CardPreview }) {
+export function IncidentCard({ card }: { card: CardPreview | CardView }) {
   const applicantStatus = applicantStatusLabel(card.applicant?.status);
   return (
     <section className="incident-card">
       <header className="incident-card-header">
         <h2>Карточка № {card.number}</h2>
-        <span>{formatOffset(card.registered_at_offset_s)}</span>
+        <span>{"registered_at" in card ? formatDateTime(card.registered_at) : formatOffset(card.registered_at_offset_s)}</span>
       </header>
       <dl>
         <dt>Заявитель</dt>
@@ -100,7 +101,7 @@ export function IncidentCard({ card }: { card: CardPreview }) {
   );
 }
 
-function formatAddress(address: CardPreview["address"]): string {
+function formatAddress(address: CardPreview["address"] | CardView["address"]): string {
   if (address.text) return address.text;
   const parts = [address.city, address.district, address.street, address.house, address.building, address.entrance].filter(
     Boolean,
@@ -108,7 +109,7 @@ function formatAddress(address: CardPreview["address"]): string {
   return parts.length > 0 ? parts.join(", ") : "—";
 }
 
-function formatPhones(phones: CardPreview["phones"]): string {
+function formatPhones(phones: CardPreview["phones"] | CardView["phones"]): string {
   if (!phones) return "—";
   const parts: string[] = [];
   if (phones.aon) parts.push(`АОН ${phones.aon}`);

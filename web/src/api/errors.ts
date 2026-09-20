@@ -17,7 +17,7 @@ export function errorMessage(error: unknown): string {
     case "forbidden":
       return "Недостаточно прав.";
     case "conflict":
-      return "Конфликт: логин уже занят или это последний активный администратор.";
+      return "Конфликт состояния. Обновите страницу и повторите действие.";
     case "not_found":
       return "Не найдено.";
     case "validation_failed":
@@ -40,6 +40,12 @@ const fieldLabels: Record<string, string> = {
   service_code: "служба",
   number: "номер РМ",
   workstation_no: "номер РМ",
+  title: "название",
+  mode: "режим",
+  level: "уровень",
+  assignments: "назначение",
+  user_id: "обучаемый",
+  scenario_version_ids: "сценарий",
   difficulty_min: "сложность от",
   difficulty_max: "сложность до",
 };

@@ -71,6 +71,7 @@ export function useScenario(id: string) {
   return useQuery({
     queryKey: scenarioQueryKey(id),
     queryFn: () => api.get<Scenario>(`/scenarios/${encodeURIComponent(id)}`),
+    enabled: id !== "",
   });
 }
 
