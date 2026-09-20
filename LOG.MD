@@ -478,3 +478,28 @@ Open issues / risks:
 
 Next:
 - Commit these fixes, then slice 3 (`slice-planning.md` §4): lesson draft, single assignment, start/run/item, `training/dds` command surface, trainee card screen.
+
+## 2026-09-20T10:28:53+03:00 — Claude — slice 3 C0–C3 (contracts, migration, DDS domain rules)
+
+Status: in progress. C0–C3 of `slice-3-plan.md` committed; C4 (transactional lessons/commands service) next.
+
+Changed:
+- C0 (`fix: finalize slice 2 review corrections`): committed the 19 files + `migrations/00005_scenario_version_lifecycle.sql` that were sitting uncommitted in the worktree at session start (already validated per the 2026-09-20T09:33 entry below). `c.txt` (a curl cookie jar) was left untracked, per prior instruction.
+- C1 (`docs: define slice 3 pilot rules and contracts`): new `design-docs/adr/017-slice3-pilot-close-and-field-correction.md` — pilot `close` from `accepted` (`close_reason=pilot_completed`) for `reference.pilot_goal=accept_card`, and `set_card_field` restricted to `/card/address/okrug`. `rfc-001-emsim.md` §6/§7.4 and `slice-planning.md` §4 reference it without changing the general close/actions invariants. New `slice-3-plan.md` records the accepted commit-by-commit plan. `contracts/openapi.yaml`: `Assignment.user_id` required; `Command` gains `set_card_field`; `Action.effect`; `close_reason` gains `pilot_completed`; `Item.mode`/`allowed_transitions`; `CardView` expanded to the full public projection with absolute `registered_at`; `MyRun.mode`/`workstation_no`; new `GET /lessons/options`; stop/monitor/stream/recording endpoints annotated as not implemented until slice 4/5. `contracts/schema.sql`: `assignments.user_id` NOT NULL; `runs.mode` + partial unique indexes for one active run per user/workstation; `items.card`/`workflow`/`pilot_goal`; `actions.effect` and `set_card_field` in the type CHECK. `contracts/evidence.schema.json`/`.example.json`: `mode`, `final_card`, `actions[].effect`, `pilot_completed`. `contracts/check.py`/`check-invariants.sql`: positive/negative `set_card_field` examples, a `pilot_completed` evidence example, fixtures updated for the new NOT NULL columns.
+- C2 (`training: add lesson run item and evidence storage`): `migrations/00006_training_lessons_runs_items.sql` — `lessons`, `assignments`, `runs`, `items`, `actions`, `evidence`, 1:1 with the amended `schema.sql`; `reject_immutable_change()` applied to `evidence`/`actions`. `internal/platform/postgres/postgres.go`: `ExpectedSchemaVersion=6`, `applicationTables` extended. `test/integration/harness_test.go`: `resetSchema`/`assertTableSet`/`assertApplicationTablesAbsent` updated. New `test/integration/training_schema_test.go`: append-only `actions`/`evidence` (UPDATE and DELETE both rejected), the one-active-run-per-user/workstation partial unique indexes across two lessons, users/content-catalogue untouched.
+- C3 (`training: implement DDS rules and evidence projection`): new `internal/training` (domain: `Item`/`Command`/`Decision`/`Rejection`/`RequestDigest`/`EvidenceBody`/`SealEvidence`) and `internal/training/dds` (the `exercise_type=dds_processing` `Exercise` implementation — `open`/`set_status`/`add_comment`/`set_card_field`/`close`; `call_start`/`call_end`/`control_report` rejected as `transition_not_allowed`, not implemented until slices 4/5). No HTTP or PostgreSQL in either package (CLAUDE.md's hexagonal boundary); the application service that wires this to the database is C4. `internal/content/preview.go` gained `json` tags on `CardPreview` and its nested types (previously untagged) so `training` can marshal an item's card/`evidence.final_card` into a stable snake_case shape.
+
+Validation:
+- `python3 design-docs/contracts/check.py`, including the DDL section against a throwaway `postgres:16-alpine` container (schema.sql applies cleanly, all SQL invariants pass) — done during C1.
+- `cd web && npm run generate:api && npm run check && npm run build` — clean (C1; the OpenAPI additions type-check against the existing, unmodified web code).
+- `go build ./...`, `go vet ./...`, `make verify` (staticcheck included) — clean after each of C1–C3.
+- `go test -tags=integration -count=1 ./test/integration/...` — all green after C2 (new `TestTrainingSchemaConstraints`) and again after C3 (confirms the `preview.go` json-tag addition changed nothing observable).
+- `go test ./internal/training/... -v` — 27 tests green, including both pilot scenarios end to end through `Exercise.Evidence`, with the sealed evidence body validated against `design-docs/contracts/evidence.schema.json` compiled directly from disk (test-only; nothing in the shipped binary validates evidence against the schema at runtime — the Go struct tags are what keep the shape correct).
+
+Open issues / risks:
+- `content.Store.VersionByID` (a full `ScenarioVersionRecord` read by version id — today only `VersionReferenceByID`'s narrower projection exists) is still needed for C4's `ScenarioReader` port; not added yet.
+- C4 must wire cross-module reads (`content`/`auth`) through ports that accept the caller's own `pgx.Tx` (adapters over `authpg.Store`/`contentpg.Store`, not `*auth.Service`/`*content.Service`) to avoid the `pool_max_conns=1` deadlock noted in the 2026-09-20T09:33 entry.
+- `GroupItemRead` (a role group covering both instructor-with-reference and trainee-without-reference reads of `GET /items/{id}`) does not exist yet in `internal/auth/authz.go`; needed by C5.
+
+Next:
+- C4 — `internal/training/service.go` (CreateLesson/ReplaceAssignments/Start/Execute/reads) and `internal/training/postgres/store.go`, per `slice-3-plan.md`'s C4 section: lock ordering, replay-before-state-check (ADR-004 §7.1), evidence insert atomic with item/run/lesson close.
