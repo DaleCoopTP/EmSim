@@ -16,6 +16,7 @@ import (
 	authhttp "emsim/internal/auth/http"
 	"emsim/internal/content"
 	"emsim/internal/platform/httpapi"
+	"emsim/internal/platform/realtime"
 	"emsim/internal/training"
 
 	"github.com/google/uuid"
@@ -41,6 +42,8 @@ type fakeTraining struct {
 	item            training.Item
 	actions         []training.Action
 	events          []training.DeliveredEvent
+	monitor         training.MonitorResult
+	monitorErr      error
 	reference       content.Body
 	now             time.Time
 	readErr         error
@@ -65,6 +68,9 @@ func (f *fakeTraining) Start(context.Context, auth.Principal, uuid.UUID, string)
 }
 func (f *fakeTraining) Stop(context.Context, auth.Principal, uuid.UUID, *string, string) (training.Lesson, error) {
 	return f.lesson, f.readErr
+}
+func (f *fakeTraining) Monitor(context.Context, auth.Principal, uuid.UUID) (training.MonitorResult, error) {
+	return f.monitor, f.monitorErr
 }
 func (f *fakeTraining) Execute(context.Context, auth.Principal, uuid.UUID, training.Command, string) (training.Receipt, error) {
 	return f.executeReceipt, f.executeErr
@@ -122,7 +128,7 @@ func trainingFixture() *fakeTraining {
 
 func trainingMux(svc *fakeTraining, principal auth.Principal) http.Handler {
 	mux := httpapi.NewMux()
-	NewHandlers(svc, &fakeAuth{principal: principal}, true).Register(mux)
+	NewHandlers(svc, &fakeAuth{principal: principal}, true, realtime.NewHub()).Register(mux)
 	return httpapi.WithRequestID(mux)
 }
 

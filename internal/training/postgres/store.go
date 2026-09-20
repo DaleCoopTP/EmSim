@@ -701,6 +701,19 @@ func (s *Store) ActionsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) 
 	return actions, nil
 }
 
+func (s *Store) LastActionByRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID) (training.Action, error) {
+	row := tx.QueryRow(ctx, `
+		SELECT a.item_id, a.seq, a.log_seq, a.actor_id, a.request_digest, a.id, a.command_id, a.type,
+			a.payload, a.effect, a.accepted, a.rejection, a.receipt, a.http_status, a.client_at, a.server_at
+		FROM actions a
+		JOIN items i ON i.id = a.item_id
+		WHERE i.run_id = $1
+		ORDER BY a.server_at DESC, a.log_seq DESC
+		LIMIT 1
+	`, runID)
+	return scanAction(row)
+}
+
 // ------------------------------------------------------------ evidence
 
 func (s *Store) InsertEvidence(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, ev training.Evidence) error {

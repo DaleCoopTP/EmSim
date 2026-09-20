@@ -113,6 +113,11 @@ type Store interface {
 	ItemByID(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock Lock) (Item, error)
 	ItemsByRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID) ([]Item, error)
 	ApplyItemDecision(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, patch ItemPatch) error
+	// LastActionByRun returns the most recent action across every item of
+	// runID (by server_at) — the instructor monitor's "last_action"
+	// column (ADR-018 §Монитор). ErrNotFound when the run has no actions
+	// at all (a freshly offered run before its trainee opens anything).
+	LastActionByRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID) (Action, error)
 
 	// ActionByCommandID looks a command up by its globally-unique
 	// command_id alone (ADR-004 §7.1) — the returned Action's ItemID

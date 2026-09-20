@@ -26,6 +26,7 @@ import (
 	authhttp "emsim/internal/auth/http"
 	"emsim/internal/content"
 	"emsim/internal/platform/httpapi"
+	"emsim/internal/platform/realtime"
 	"emsim/internal/training"
 
 	"github.com/google/uuid"
@@ -39,6 +40,7 @@ type trainingService interface {
 	ReplaceAssignments(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, inputs []training.AssignmentInput, requestID string) (training.Lesson, error)
 	Start(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, requestID string) (training.Lesson, error)
 	Stop(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, reason *string, requestID string) (training.Lesson, error)
+	Monitor(ctx context.Context, actor auth.Principal, lessonID uuid.UUID) (training.MonitorResult, error)
 	Execute(ctx context.Context, actor auth.Principal, itemID uuid.UUID, cmd training.Command, requestID string) (training.Receipt, error)
 	MyRun(ctx context.Context, actor auth.Principal) (training.Run, training.Lesson, error)
 	MyItems(ctx context.Context, actor auth.Principal) ([]training.Item, error)
@@ -64,10 +66,12 @@ type Handlers struct {
 	training     trainingService
 	auth         authenticator
 	cookieSecure bool
+	hub          *realtime.Hub
+	presence     *presenceTracker
 }
 
-func NewHandlers(trainingService trainingService, authService authenticator, cookieSecure bool) *Handlers {
-	return &Handlers{training: trainingService, auth: authService, cookieSecure: cookieSecure}
+func NewHandlers(trainingService trainingService, authService authenticator, cookieSecure bool, hub *realtime.Hub) *Handlers {
+	return &Handlers{training: trainingService, auth: authService, cookieSecure: cookieSecure, hub: hub, presence: newPresenceTracker()}
 }
 
 // Register adds this package's routes to mux.
@@ -93,10 +97,13 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/lessons/{lessonId}/assignments", lessons(h.replaceAssignments))
 	mux.Handle("POST /api/v1/lessons/{lessonId}/start", lessons(h.startLesson))
 	mux.Handle("POST /api/v1/lessons/{lessonId}/stop", lessons(h.stopLesson))
+	mux.Handle("GET /api/v1/lessons/{lessonId}/monitor", lessons(h.getMonitor))
+	mux.Handle("GET /api/v1/lessons/{lessonId}/stream", lessons(h.streamLesson))
 	mux.Handle("GET /api/v1/lessons/{lessonId}/runs/{runId}/actions", lessons(h.runActions))
 
 	mux.Handle("GET /api/v1/my/run", trainee(h.myRun))
 	mux.Handle("GET /api/v1/my/items", trainee(h.myItems))
+	mux.Handle("GET /api/v1/my/stream", trainee(h.streamMy))
 	mux.Handle("POST /api/v1/items/{itemId}/actions", trainee(h.execute))
 
 	mux.Handle("GET /api/v1/items/{itemId}", itemRead(h.getItem))

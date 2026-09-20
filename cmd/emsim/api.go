@@ -36,6 +36,7 @@ import (
 	"emsim/internal/platform/httpapi"
 	"emsim/internal/platform/observability"
 	pgstore "emsim/internal/platform/postgres"
+	"emsim/internal/platform/realtime"
 	"emsim/internal/platform/tasks"
 	"emsim/internal/training"
 	traininghttp "emsim/internal/training/http"
@@ -80,10 +81,27 @@ func runAPI(ctx context.Context, args []string) error {
 		return isReady
 	}
 
+	// ADR-018: LISTEN is established before recovery, so nothing NOTIFYed
+	// while recovery runs can be missed for want of a subscription that
+	// was not there yet. RunListener retries forever on its own; here we
+	// only wait for its very first successful LISTEN (or ctx/timeout).
+	hub := realtime.NewHub()
+	listenerReady := make(chan struct{})
+	backgroundCtx, stopBackground := context.WithCancel(ctx)
+	defer stopBackground()
+	go realtime.RunListener(backgroundCtx, pool, hub, logger, listenerReady)
+	select {
+	case <-listenerReady:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(realtimeListenTimeout):
+		return errors.New("realtime listener did not start")
+	}
+
 	adminHandler := observability.InstrumentHTTP(
 		admin.AdminWithMetrics(readiness, metricRegistry), metrics, logger, observability.AdminRouteNamer,
 	)
-	publicRoutes, publicRouteName, trainingService := newPublicHTTP(pool, processConfig)
+	publicRoutes, publicRouteName, trainingService := newPublicHTTP(pool, processConfig, hub)
 	publicHandler := observability.InstrumentHTTP(publicRoutes, metrics, logger, publicRouteName)
 	publicServer := &http.Server{Addr: processConfig.PublicAddr, Handler: publicHandler, ReadHeaderTimeout: 5 * time.Second}
 	adminServer := &http.Server{Addr: processConfig.AdminAddr, Handler: adminHandler, ReadHeaderTimeout: 5 * time.Second}
@@ -106,12 +124,18 @@ func runAPI(ctx context.Context, args []string) error {
 	metrics.SetReady("api", true)
 	defer metrics.SetReady("api", false)
 
-	schedulerCtx, stopScheduler := context.WithCancel(ctx)
-	defer stopScheduler()
-	go runTrainingScheduler(schedulerCtx, trainingService, logger)
+	go runTrainingScheduler(backgroundCtx, trainingService, logger)
 
 	return serveAPI(ctx, publicServer, adminServer)
 }
+
+// realtimeListenTimeout bounds how long runAPI waits for the first
+// LISTEN before giving up and failing startup outright — a PostgreSQL
+// that never accepts a LISTEN this long is not a condition retrying
+// forever inside this one call would ever recover from; apiSchemaReady
+// already gated on Ping/Ready before this point, so a plain connection
+// problem is not the expected cause.
+const realtimeListenTimeout = 15 * time.Second
 
 const trainingRecoveryCause = "server_restart"
 
@@ -153,7 +177,7 @@ var errAPITakesNoArgs = errors.New("api subcommand takes no arguments")
 // assessment/reporting) adds its own three lines here and calls its own
 // Register on apiMux.
 func newPublicHandler(pool *pgxpool.Pool, cfg config.API) http.Handler {
-	handler, _, _ := newPublicHTTP(pool, cfg)
+	handler, _, _ := newPublicHTTP(pool, cfg, realtime.NewHub())
 	return handler
 }
 
@@ -161,8 +185,10 @@ func newPublicHandler(pool *pgxpool.Pool, cfg config.API) http.Handler {
 // drive it outside the HTTP path: the C6 restart-recovery marker (before
 // readiness) and the C5/C6 scheduler tick loop (500 ms, RFC-001 §7.2)
 // both need the same Service instance the HTTP handlers use, not a
-// second one built from the same pool.
-func newPublicHTTP(pool *pgxpool.Pool, cfg config.API) (http.Handler, observability.RouteNamer, *training.Service) {
+// second one built from the same pool. hub is runAPI's own realtime.Hub
+// (C9) — SSE handlers read from it, training's domain code publishes to
+// it via realtime.NotifyTx inside its own transactions.
+func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.Handler, observability.RouteNamer, *training.Service) {
 	apiMux := httpapi.NewMux()
 
 	// contentService is built first: auth.NewService takes it as its
@@ -179,7 +205,7 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API) (http.Handler, observabil
 	contenthttp.NewHandlers(contentService, authService, cfg.CookieSecure).Register(apiMux)
 
 	trainingService := newTrainingService(pool, mustTaskEnqueuer(pool))
-	traininghttp.NewHandlers(trainingService, authService, cfg.CookieSecure).Register(apiMux)
+	traininghttp.NewHandlers(trainingService, authService, cfg.CookieSecure, hub).Register(apiMux)
 
 	root := http.NewServeMux()
 	root.Handle("/api/", apiMux)

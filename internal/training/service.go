@@ -11,6 +11,7 @@ import (
 	"emsim/internal/auth"
 	"emsim/internal/content"
 	"emsim/internal/platform/audit"
+	"emsim/internal/platform/realtime"
 	"emsim/internal/platform/tasks"
 
 	"github.com/google/uuid"
@@ -56,6 +57,24 @@ func NewService(store Store, users UserDirectory, workstations WorkstationDirect
 		store: store, users: users, workstations: workstations,
 		scenarios: scenarios, services: services, tasks: taskEnqueuer, exerciseTypes: exerciseTypes,
 	}
+}
+
+// notify publishes one SSE invalidation from inside the caller's own
+// transaction (realtime.NotifyTx — a plain pg_notify call, not a table
+// write, so it needs no consumer-owned port; CLAUDE.md's module
+// boundary is about who writes which tables). userID/itemID of uuid.Nil
+// mean "not scoped to this" (e.g. Stop's own barrier touches no single
+// item); lessonID is always set — every training event belongs to
+// exactly one lesson.
+func (s *Service) notify(ctx context.Context, tx pgx.Tx, lessonID, userID, itemID uuid.UUID) error {
+	event := realtime.Event{LessonID: &lessonID}
+	if userID != uuid.Nil {
+		event.UserID = &userID
+	}
+	if itemID != uuid.Nil {
+		event.ItemID = &itemID
+	}
+	return realtime.NotifyTx(ctx, tx, event)
 }
 
 func (s *Service) exerciseFor(et content.ExerciseType) (Exercise, error) {
@@ -386,6 +405,9 @@ func (s *Service) Stop(ctx context.Context, actor auth.Principal, lessonID uuid.
 		}); err != nil {
 			return err
 		}
+		if err := s.notify(ctx, tx, lessonID, uuid.Nil, uuid.Nil); err != nil {
+			return err
+		}
 
 		result = stopped
 		return nil
@@ -531,7 +553,10 @@ func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise 
 	if err != nil {
 		return err
 	}
-	return s.store.InsertEvidence(ctx, tx, item.ID, evidence)
+	if err := s.store.InsertEvidence(ctx, tx, item.ID, evidence); err != nil {
+		return err
+	}
+	return s.notify(ctx, tx, item.LessonID, item.UserID, item.ID)
 }
 
 func (s *Service) startOneAssignment(ctx context.Context, tx pgx.Tx, lesson Lesson, a Assignment, now time.Time) error {
@@ -621,7 +646,10 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 	if err := s.store.SetRunQueueCursor(ctx, tx, run.ID, queueIndex+1); err != nil {
 		return err
 	}
-	return s.scheduleEventsForAnchor(ctx, tx, item, version.Body.Events, "offered", now)
+	if err := s.scheduleEventsForAnchor(ctx, tx, item, version.Body.Events, "offered", now); err != nil {
+		return err
+	}
+	return s.notify(ctx, tx, lesson.ID, run.UserID, item.ID)
 }
 
 // checkSpawnQueuePlan makes event-driven cards deterministic: the next queue
@@ -932,6 +960,13 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	if err := s.store.ApplyItemDecision(ctx, tx, item.ID, patch); err != nil {
 		return Receipt{}, err
 	}
+	// One invalidation per command attempt, accepted or rejected — a
+	// rejected attempt still moves log_seq and is worth the instructor's
+	// monitor refreshing "last_action" for (ADR-018/RFC-001 §7.7: NOTIFY
+	// carries identifiers only, the client always re-reads PostgreSQL).
+	if err := s.notify(ctx, tx, item.LessonID, actor.UserID, item.ID); err != nil {
+		return Receipt{}, err
+	}
 	if decision.Accepted {
 		version, err := s.scenarios.VersionByID(ctx, tx, item.ScenarioVersionID)
 		if err != nil {
@@ -1134,6 +1169,9 @@ func (s *Service) recordControlReport(ctx context.Context, tx pgx.Tx, actor auth
 		}); err != nil {
 			return Receipt{}, err
 		}
+	}
+	if err := s.notify(ctx, tx, item.LessonID, actor.UserID, item.ID); err != nil {
+		return Receipt{}, err
 	}
 	return receipt, nil
 }
@@ -1352,7 +1390,10 @@ func (s *Service) tickEvent(ctx context.Context, eventID uuid.UUID) error {
 				return err
 			}
 		}
-		return s.store.DeliverItemEvent(ctx, tx, event.ID, now, now.Sub(event.DueAt) > 5*time.Second)
+		if err := s.store.DeliverItemEvent(ctx, tx, event.ID, now, now.Sub(event.DueAt) > 5*time.Second); err != nil {
+			return err
+		}
+		return s.notify(ctx, tx, lesson.ID, item.UserID, item.ID)
 	})
 }
 

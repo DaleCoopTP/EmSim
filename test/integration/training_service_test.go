@@ -1266,3 +1266,127 @@ func TestTrainingStopBarrierAndDurableClose(t *testing.T) {
 		t.Fatalf("Stop after finish state = %s, want finished", stoppedAfterFinish.State)
 	}
 }
+
+// TestTrainingMonitorSnapshotReflectsLiveState is slice-4-plan.md's C9:
+// Service.Monitor reads the instructor's live view straight from
+// PostgreSQL — one row per assignment with a run, active_items/queue_
+// left/done tracking each trainee's own progress independently, and
+// last_action reflecting the most recent command across the run's
+// items (not just its currently open one).
+func TestTrainingMonitorSnapshotReflectsLiveState(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	const svc = "training_monitor_svc"
+	pilotWorkflowService(t, ctx, pool, svc)
+	instructor := insertInstructor(t, ctx, pool, "training-monitor-instructor-"+uuid.NewString())
+	traineeA := insertActiveTrainee(t, ctx, pool, "training-monitor-a-"+uuid.NewString(), svc)
+	traineeB := insertActiveTrainee(t, ctx, pool, "training-monitor-b-"+uuid.NewString(), svc)
+	workstationA := insertWorkstation(t, ctx, pool, 221)
+	insertWorkstation(t, ctx, pool, 222)
+	versionA := pilotScenarioVersion(t, ctx, pool, svc, "ЮАО", instructor.ID)
+	versionB := pilotScenarioVersion(t, ctx, pool, svc, "ЮЗАО", instructor.ID)
+	instructorActor := principal(instructor, uuid.Nil)
+
+	lesson, err := service.CreateLesson(ctx, instructorActor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "Monitor", Mode: training.ModeTraining, Level: auth.LevelEasy,
+	}, "req-monitor-create")
+	if err != nil {
+		t.Fatalf("CreateLesson: %v", err)
+	}
+	if _, err := service.ReplaceAssignments(ctx, instructorActor, lesson.ID, []training.AssignmentInput{
+		{WorkstationNo: 221, UserID: traineeA.ID, ScenarioVersionIDs: []uuid.UUID{versionA, versionB}},
+		{WorkstationNo: 222, UserID: traineeB.ID, ScenarioVersionIDs: []uuid.UUID{versionB}},
+	}, "req-monitor-assign"); err != nil {
+		t.Fatalf("ReplaceAssignments: %v", err)
+	}
+
+	// Before start: no runs exist yet, so no rows (Monitor.rows[].run_id
+	// is required — an assignment with no run is omitted, not emitted
+	// with a zero id).
+	before, err := service.Monitor(ctx, instructorActor, lesson.ID)
+	if err != nil {
+		t.Fatalf("Monitor before start: %v", err)
+	}
+	if len(before.Rows) != 0 {
+		t.Fatalf("Monitor before start rows = %+v, want none", before.Rows)
+	}
+
+	if _, err := service.Start(ctx, instructorActor, lesson.ID, "req-monitor-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	actorA := principal(traineeA, workstationA)
+	itemsA, err := service.MyItems(ctx, actorA)
+	if err != nil || len(itemsA) != 1 {
+		t.Fatalf("MyItems A = %+v, %v", itemsA, err)
+	}
+	if _, err := service.Execute(ctx, actorA, itemsA[0].ID, training.Command{
+		CommandID: uuid.New(), ExpectedSeq: 0, Type: training.CommandOpen, Payload: []byte(`{}`),
+	}, "req-monitor-open"); err != nil {
+		t.Fatalf("Execute(open): %v", err)
+	}
+
+	result, err := service.Monitor(ctx, instructorActor, lesson.ID)
+	if err != nil {
+		t.Fatalf("Monitor: %v", err)
+	}
+	if len(result.Rows) != 2 {
+		t.Fatalf("Monitor rows = %d, want 2", len(result.Rows))
+	}
+	var rowA, rowB *training.MonitorRow
+	for i := range result.Rows {
+		switch result.Rows[i].User.ID {
+		case traineeA.ID:
+			rowA = &result.Rows[i]
+		case traineeB.ID:
+			rowB = &result.Rows[i]
+		}
+	}
+	if rowA == nil || rowB == nil {
+		t.Fatalf("Monitor rows missing a trainee: %+v", result.Rows)
+	}
+	if len(rowA.ActiveItems) != 1 || rowA.Done != 0 || rowA.QueueLeft != 1 {
+		t.Fatalf("rowA = %+v, want 1 active item, 0 done, queue_left=1", rowA)
+	}
+	if rowA.LastAction == nil || rowA.LastAction.Type != training.CommandOpen {
+		t.Fatalf("rowA.LastAction = %+v, want the open command", rowA.LastAction)
+	}
+	if len(rowB.ActiveItems) != 1 || rowB.Done != 0 || rowB.QueueLeft != 0 {
+		t.Fatalf("rowB = %+v, want 1 active item, 0 done, queue_left=0 (single-item queue)", rowB)
+	}
+	if rowB.LastAction != nil {
+		t.Fatalf("rowB.LastAction = %+v, want nil (nothing executed yet)", rowB.LastAction)
+	}
+
+	// Closing A's item advances it into Done and offers the next queued
+	// version, and Monitor reflects that on the very next read. The item
+	// is already open (seq 1) from above, so continue the sequence
+	// rather than reusing closePilotItem's own open-from-scratch flow.
+	for seq, command := range []training.Command{
+		{CommandID: uuid.New(), Type: training.CommandSetStatus, Payload: []byte(`{"status":"accepted"}`)},
+		{CommandID: uuid.New(), Type: training.CommandClose, Payload: []byte(`{}`)},
+	} {
+		command.ExpectedSeq = int64(seq + 1)
+		receipt, err := service.Execute(ctx, actorA, itemsA[0].ID, command, "req-monitor-close")
+		if err != nil || receipt.Outcome != training.OutcomeApplied {
+			t.Fatalf("close item command %s = %+v, %v", command.Type, receipt, err)
+		}
+	}
+	afterClose, err := service.Monitor(ctx, instructorActor, lesson.ID)
+	if err != nil {
+		t.Fatalf("Monitor after close: %v", err)
+	}
+	for i := range afterClose.Rows {
+		if afterClose.Rows[i].User.ID != traineeA.ID {
+			continue
+		}
+		if afterClose.Rows[i].Done != 1 || len(afterClose.Rows[i].ActiveItems) != 1 || afterClose.Rows[i].QueueLeft != 0 {
+			t.Fatalf("rowA after close = %+v, want done=1, 1 active item, queue_left=0", afterClose.Rows[i])
+		}
+	}
+}
