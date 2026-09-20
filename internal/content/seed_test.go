@@ -7,6 +7,8 @@ import (
 
 	"emsim/internal/content"
 	"emsim/internal/content/schema"
+
+	"github.com/google/uuid"
 )
 
 // mapCatalog is a Catalog backed by the seed files themselves — this test
@@ -26,6 +28,10 @@ func (c mapCatalog) Service(code string) (content.ServiceRecord, bool) {
 func (c mapCatalog) ClassifierType(code string) (string, bool) {
 	name, ok := c.classifier[code]
 	return name, ok
+}
+
+func (c mapCatalog) ScenarioVersion(uuid.UUID) (content.ScenarioVersionReference, bool) {
+	return content.ScenarioVersionReference{}, false
 }
 
 // TestSeedFilesAreValid loads the real seed/ files shipped for slice 2

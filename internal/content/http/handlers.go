@@ -330,15 +330,15 @@ func toVersionSummaryJSON(v content.VersionSummary) versionSummaryJSON {
 }
 
 // previewJSON is openapi.yaml's inline /scenarios/{id}/preview response
-// {card, reference}. reference is content.Reference unmodified — this
-// route is instructor-only, so it carries the full эталон, not an
-// allowlist projection. content.CardPreview itself carries no json tags
-// (like auth.User, it is a domain type, not a wire type — see
-// internal/auth/http's toUserJSON convention), so cardPreviewJSON maps it
-// field by field, matching openapi.yaml's CardPreview schema.
+// {card, reference}. This instructor-only route carries every populated
+// reference field, but through an explicit wire DTO so absent optional
+// values are omitted rather than serialized as null/invalid enum zeroes.
+// content.CardPreview itself carries no json tags (like auth.User, it is a
+// domain type, not a wire type — see internal/auth/http's toUserJSON
+// convention), so cardPreviewJSON maps it field by field too.
 type previewJSON struct {
-	Card      cardPreviewJSON   `json:"card"`
-	Reference content.Reference `json:"reference"`
+	Card      cardPreviewJSON      `json:"card"`
+	Reference referencePreviewJSON `json:"reference"`
 }
 
 type applicantPreviewJSON struct {
@@ -387,6 +387,49 @@ type cardPreviewJSON struct {
 	Contacts            []contactPreviewJSON      `json:"contacts"`
 }
 
+// referencePreviewJSON is deliberately separate from content.Reference.
+// Reference is a lossless domain/storage shape, so its zero values marshal
+// as null arrays, scoring:null, and invalid empty enum strings. The HTTP
+// contract instead omits optional properties and always emits the required
+// expected_chain array as an array.
+type referencePreviewJSON struct {
+	PrimaryDecision  primaryDecisionPreviewJSON   `json:"primary_decision"`
+	ExpectedChain    []content.Reaction           `json:"expected_chain"`
+	Call             callPreviewJSON              `json:"call"`
+	FieldCorrections []fieldCorrectionPreviewJSON `json:"field_corrections,omitempty"`
+	PilotGoal        string                       `json:"pilot_goal,omitempty"`
+	GuideRefs        []string                     `json:"guide_refs,omitempty"`
+	Notes            string                       `json:"notes,omitempty"`
+	Scoring          *scoringPreviewJSON          `json:"scoring,omitempty"`
+}
+
+type primaryDecisionPreviewJSON struct {
+	Status             content.Reaction `json:"status"`
+	ReasonTags         []string         `json:"reason_tags,omitempty"`
+	CommentRequired    bool             `json:"comment_required,omitempty"`
+	CommentMustMention []string         `json:"comment_must_mention,omitempty"`
+}
+
+type callPreviewJSON struct {
+	Required     bool             `json:"required"`
+	To           string           `json:"to,omitempty"`
+	MustMention  []string         `json:"must_mention,omitempty"`
+	BeforeStatus content.Reaction `json:"before_status,omitempty"`
+}
+
+type fieldCorrectionPreviewJSON struct {
+	Path          string           `json:"path"`
+	ExpectedValue string           `json:"expected_value"`
+	BeforeStatus  content.Reaction `json:"before_status"`
+}
+
+type scoringPreviewJSON struct {
+	Weights  map[string]float64 `json:"weights,omitempty"`
+	Critical []string           `json:"critical,omitempty"`
+	Disabled []string           `json:"disabled,omitempty"`
+	Note     string             `json:"note,omitempty"`
+}
+
 func toCardPreviewJSON(c content.CardPreview, contacts []content.ContactPreview) cardPreviewJSON {
 	notifications := make([]notificationPreviewJSON, len(c.NotificationList))
 	for i, n := range c.NotificationList {
@@ -411,10 +454,44 @@ func toCardPreviewJSON(c content.CardPreview, contacts []content.ContactPreview)
 	}
 }
 
+func toReferencePreviewJSON(r content.Reference) referencePreviewJSON {
+	expectedChain := append([]content.Reaction{}, r.ExpectedChain...)
+	fieldCorrections := make([]fieldCorrectionPreviewJSON, len(r.FieldCorrections))
+	for i, correction := range r.FieldCorrections {
+		fieldCorrections[i] = fieldCorrectionPreviewJSON{
+			Path: correction.Path, ExpectedValue: correction.ExpectedValue, BeforeStatus: correction.BeforeStatus,
+		}
+	}
+
+	var scoring *scoringPreviewJSON
+	if r.Scoring != nil {
+		scoring = &scoringPreviewJSON{
+			Weights: r.Scoring.Weights, Critical: r.Scoring.Critical,
+			Disabled: r.Scoring.Disabled, Note: r.Scoring.Note,
+		}
+	}
+
+	return referencePreviewJSON{
+		PrimaryDecision: primaryDecisionPreviewJSON{
+			Status: r.PrimaryDecision.Status, ReasonTags: r.PrimaryDecision.ReasonTags,
+			CommentRequired:    r.PrimaryDecision.CommentRequired,
+			CommentMustMention: r.PrimaryDecision.CommentMustMention,
+		},
+		ExpectedChain: expectedChain,
+		Call: callPreviewJSON{
+			Required: r.Call.Required, To: r.Call.To, MustMention: r.Call.MustMention,
+			BeforeStatus: r.Call.BeforeStatus,
+		},
+		FieldCorrections: fieldCorrections,
+		PilotGoal:        r.PilotGoal, GuideRefs: r.GuideRefs, Notes: r.Notes,
+		Scoring: scoring,
+	}
+}
+
 func toPreviewJSON(p content.ScenarioPreview) previewJSON {
 	return previewJSON{
 		Card:      toCardPreviewJSON(p.Card, p.Contacts),
-		Reference: p.Reference,
+		Reference: toReferencePreviewJSON(p.Reference),
 	}
 }
 

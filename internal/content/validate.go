@@ -1,26 +1,27 @@
 package content
 
-import "fmt"
+import (
+	"fmt"
 
-// Catalog is the reference-data lookup Validate needs to check a body's
-// target_service, notification_list and incident.type_code against
-// services/classifier_types. Unlike internal/auth's Store — an
-// application-service port that takes ctx and a live pgx.Tx — Catalog is
-// a plain value lookup over data its caller has already fetched: Validate
-// itself performs no I/O, consistent with CLAUDE.md's "domain rules are
-// independent of... SQL". Service (service.go, C3) implements it by
-// pre-fetching the services/classifier_types rows a given body
-// references inside its own transaction, before calling Validate.
+	"github.com/google/uuid"
+)
+
+// Catalog is the domain-facing reference-data lookup Validate needs for
+// services, classifier types, and referenced scenario versions. It exposes
+// plain values rather than contexts, transactions, or SQL; the production
+// adapter resolves those values through the import transaction while unit
+// tests use maps. Validate therefore remains independent of persistence.
 type Catalog interface {
 	Service(code string) (ServiceRecord, bool)
 	ClassifierType(code string) (name string, known bool)
+	ScenarioVersion(id uuid.UUID) (ScenarioVersionReference, bool)
 }
 
 // Validate checks a decoded Body against every semantic rule
 // scenario.schema.json cannot express structurally (slice-2-plan.md's C2:
-// service/classifier existence, notification_list shape, workflow
-// reachability, scoring references, field_corrections). It assumes body
-// already passed schema.Validator.ValidateFile — enum-restricted fields
+// service/classifier/scenario-version existence, notification_list shape,
+// workflow reachability, scoring references, field_corrections). It assumes
+// body already passed schema.Validator.ValidateFile — enum-restricted fields
 // (Reaction values, field_corrections[].path, exercise_type) are not
 // re-checked here.
 //
@@ -53,7 +54,7 @@ func Validate(body Body, catalog Catalog) error {
 	if err != nil {
 		return err
 	}
-	if err := validateEvents(body.Events, contactKeys); err != nil {
+	if err := validateEvents(body.Events, contactKeys, body.ExerciseType, body.TargetService, catalog); err != nil {
 		return err
 	}
 	if err := validateCall(body.Reference.Call, contactKeys); err != nil {
@@ -109,7 +110,7 @@ func validateContactKeys(contacts []Contact) (map[string]bool, error) {
 	return keys, nil
 }
 
-func validateEvents(events []Event, contactKeys map[string]bool) error {
+func validateEvents(events []Event, contactKeys map[string]bool, exerciseType ExerciseType, targetService string, catalog Catalog) error {
 	seenKeys := make(map[string]bool, len(events))
 	for i, e := range events {
 		if seenKeys[e.Key] {
@@ -126,8 +127,24 @@ func validateEvents(events []Event, contactKeys map[string]bool) error {
 			if e.Spawn == nil {
 				return invalid(fmt.Sprintf("events[%d].spawn", i), "required")
 			}
-			if e.Spawn.Kind == "scenario" && e.Spawn.ScenarioVersionID == nil {
-				return invalid(fmt.Sprintf("events[%d].spawn.scenario_version_id", i), "required")
+			if e.Spawn.Kind == "scenario" {
+				field := fmt.Sprintf("events[%d].spawn.scenario_version_id", i)
+				if e.Spawn.ScenarioVersionID == nil {
+					return invalid(field, "required")
+				}
+				ref, known := catalog.ScenarioVersion(*e.Spawn.ScenarioVersionID)
+				if !known {
+					return invalid(field, "unknown")
+				}
+				if !ref.Published || (ref.Status != "approved" && ref.Status != "superseded") {
+					return invalid(field, "not_approved")
+				}
+				if ref.ExerciseType != exerciseType {
+					return invalid(field, "exercise_type_mismatch")
+				}
+				if ref.TargetService != targetService {
+					return invalid(field, "target_service_mismatch")
+				}
 			}
 		}
 	}

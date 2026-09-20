@@ -19,7 +19,10 @@ import (
 
 	"emsim/internal/auth"
 	authpg "emsim/internal/auth/postgres"
+	"emsim/internal/content"
+	contentpg "emsim/internal/content/postgres"
 	"emsim/internal/platform/audit"
+	pgstore "emsim/internal/platform/postgres"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -368,6 +371,57 @@ func TestAuthStoreUpdateUserClearsServiceCode(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+func TestAuthServiceUpdateUserServiceLookupWithSingleConnection(t *testing.T) {
+	setupCtx, setupCancel := context.WithTimeout(context.Background(), time.Minute)
+	defer setupCancel()
+	databaseURL := openTestDatabase(t, setupCtx)
+	if err := pgstore.Up(setupCtx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatalf("parse pool config: %v", err)
+	}
+	config.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(setupCtx, config)
+	if err != nil {
+		t.Fatalf("open single-connection pool: %v", err)
+	}
+	defer pool.Close()
+
+	insertService(t, setupCtx, pool, "svc_old")
+	insertService(t, setupCtx, pool, "svc_new")
+	authStore := authpg.NewStore(pool)
+	var actor, target auth.User
+	if err := authStore.WithTx(setupCtx, func(tx pgx.Tx) error {
+		var err error
+		actor, err = authStore.InsertUser(setupCtx, tx, newAdmin("single-pool-admin"))
+		if err != nil {
+			return err
+		}
+		target, err = authStore.InsertUser(setupCtx, tx, newTrainee("single-pool-trainee", "svc_old"))
+		return err
+	}); err != nil {
+		t.Fatalf("insert users: %v", err)
+	}
+
+	catalog := content.NewService(contentpg.NewStore(pool), nil)
+	service := auth.NewService(authStore, nil, time.Hour, nil, catalog)
+	newCode := "svc_new"
+	updateCtx, updateCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer updateCancel()
+	updated, err := service.UpdateUser(updateCtx, target.ID, auth.Patch{ServiceCode: &newCode}, auth.Principal{
+		UserID: actor.ID,
+		Role:   actor.Role,
+	}, "single-pool-update")
+	if err != nil {
+		t.Fatalf("UpdateUser() with MaxConns=1 error = %v", err)
+	}
+	if updated.ServiceCode == nil || *updated.ServiceCode != newCode {
+		t.Fatalf("updated.ServiceCode = %v, want %q", updated.ServiceCode, newCode)
+	}
 }
 
 func TestAuthStoreCountActiveAdmins(t *testing.T) {

@@ -452,3 +452,29 @@ Open issues / risks:
 
 Next:
 - Slice 3 (`slice-planning.md` §4) — the first end-to-end single-card run: lesson draft, one assignment, start/run/item creation, the `training/dds` command surface, and the trainee's first working card screen.
+
+## 2026-09-20T09:33:43+03:00 — Claude — slice 2: post-review fixes (7 findings) verified
+
+Status: completed (uncommitted in the worktree at the time of writing)
+Slice: 2 — fixes for an external review of the C1–C7 commits; no new functionality. The fixes were applied by the user; this entry records the verification pass and the residual notes.
+
+Changed:
+- `internal/auth/admin.go`: `UpdateUser` runs `checkServiceCode` before `store.WithTx` — the catalog lookup owns its own transaction, so running it inside the update transaction needed a second pool connection (hard deadlock at `pool_max_conns=1`). Side effect: an unknown `service_code` on a non-existent user now yields 422 before the 404.
+- `migrations/00005_scenario_version_lifecycle.sql` (new) + `design-docs/contracts/schema.sql`: `protect_scenario_version_content` now also rejects backward status transitions (only draft→approved|superseded, approved→superseded) and any change to `approved_by/approved_at` outside a draft→approved step. This closes the delete bypass (rewind to draft, then DELETE). `platform/postgres.ExpectedSchemaVersion` = 5.
+- `internal/content/digest.go`: `Canonical` normalizes JSON numbers to PostgreSQL jsonb's exact-decimal rendering (`1e2`→`100`, `1.230e-5`→`0.00001230`, scale preserved) on strings, without float64; unstorable exponents are left as-is so the INSERT reports the storage error.
+- `internal/content/http/handlers.go`: `/scenarios/{id}/preview` serializes `reference` through a dedicated `referencePreviewJSON` DTO — absent optional fields are omitted instead of `null`/`""`, `expected_chain` is always an array.
+- `internal/content/validate.go` + `store.go` + `postgres/store.go` + `import.go`: `Catalog.ScenarioVersion(id)` and `Store.VersionReferenceByID`; `spawn_card` with `kind=scenario` is now validated for existence, published status (approved/superseded with attribution), matching `exercise_type` and `target_service`.
+- `internal/content/import.go`: decoded files are sorted by `(scenario key, numeric version, filename)` before application — a full history no longer depends on filename order (`v10` before `v2`).
+- `test/integration/harness_test.go`: `resetSchema` drops the content tables and the two trigger functions in dependency order (fixes `SQLSTATE 2BP01` on `TEST_DATABASE_URL` runs).
+
+Validation:
+- `gofmt -l` clean; `make verify` (format-check/build/test/vet/staticcheck) exit 0; `make test-integration` ok (~49 s) — includes new tests: single-connection `UpdateUser`, lifecycle rewind/reattribution rejected after migrating 4→5, `Canonical()` vs `::jsonb::text` on real PostgreSQL for six literals, unknown/compatible `spawn_card` references, ten-version misordered history, `resetSchema` round-trip.
+- `python3 design-docs/contracts/check.py` with `DATABASE_URL` against a throwaway `postgres:16-alpine` — DDL applied, all invariant checks passed.
+
+Open issues / risks:
+- `spawn_card.scenario_version_id` is a UUID assigned by `uuid.New()` at import, so seed files cannot reference another version reproducibly across installs; the new validation correctly rejects such files. Slice 4 must decide on deterministic version IDs or a `(source_key, version)` reference form before `spawn_card` scenarios can be shipped as seed data.
+- `storeCatalog` maps storage errors to "unknown"/"not found" (pre-existing pattern, now also for `ScenarioVersion`); a transient DB error during import surfaces as a validation error rather than `ErrStorage`.
+- Untracked `c.txt` (curl cookie jar) is present in the worktree; left untouched per user instruction — must not be committed.
+
+Next:
+- Commit these fixes, then slice 3 (`slice-planning.md` §4): lesson draft, single assignment, start/run/item, `training/dds` command surface, trainee card screen.

@@ -1,7 +1,8 @@
 // internal/postgres/postgres.go; adapted: Ready() checks for the set of
 // tables actually migrated so far — "tasks" (00001), "audit_log" (00002),
 // "users"/"workstations"/"sessions" (00003), and now "services"/
-// "classifier_types"/"tickets"/"scenarios"/"scenario_versions" (00004) —
+// "classifier_types"/"tickets"/"scenarios"/"scenario_versions" (00004),
+// with the scenario-version lifecycle tightened in 00005 —
 // not every domain table the eventual schema.sql has (most of it, e.g.
 // runs/items/dialogues, is not ported/built yet — see
 // docs/technical-discovery.md §3.5). applicationTables grows as later
@@ -26,7 +27,7 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-const ExpectedSchemaVersion int64 = 4
+const ExpectedSchemaVersion int64 = 5
 
 // applicationTables lists the platform tables Ready() requires to exist,
 // alongside the expected goose version — a version match alone would not

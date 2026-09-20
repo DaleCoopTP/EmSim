@@ -139,17 +139,41 @@ func resetSchema(t *testing.T, ctx context.Context, databaseURL string) {
 		t.Fatalf("open PostgreSQL for reset: %v", err)
 	}
 	defer pool.Close()
-	// sessions references users and workstations, so it must drop first.
+	// Drop dependants before their referenced tables. Trigger functions from
+	// the content migration outlive DROP TABLE and must also be removed or a
+	// subsequent migration 00004 fails with "function already exists".
 	if _, err := pool.Exec(ctx, `
+		DROP TABLE IF EXISTS scenario_versions;
+		DROP FUNCTION IF EXISTS reject_scenario_version_delete();
+		DROP FUNCTION IF EXISTS protect_scenario_version_content();
+		DROP TABLE IF EXISTS scenarios;
+		DROP TABLE IF EXISTS tickets;
+		DROP TABLE IF EXISTS classifier_types;
 		DROP TABLE IF EXISTS sessions;
 		DROP TABLE IF EXISTS audit_log;
 		DROP TABLE IF EXISTS tasks;
 		DROP TABLE IF EXISTS users;
 		DROP TABLE IF EXISTS workstations;
+		DROP TABLE IF EXISTS services;
 		DROP TABLE IF EXISTS goose_db_version;
 	`); err != nil {
 		t.Fatalf("reset schema: %v", err)
 	}
+}
+
+func TestResetSchemaAfterContentMigrations(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("first migrate up: %v", err)
+	}
+
+	resetSchema(t, ctx, databaseURL)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up after resetSchema: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	assertVersionAndReadiness(t, ctx, pool, pgstore.ExpectedSchemaVersion, true)
 }
 
 // openTestPool opens and pings a pool against an already-migrated test

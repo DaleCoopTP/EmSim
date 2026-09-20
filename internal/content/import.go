@@ -210,8 +210,9 @@ type ScenarioImportCount struct {
 // (key, version) collision within the batch, or an ErrConflict against
 // already-stored content rolls the whole batch back, so the catalogue
 // never ends up partially updated (slice-2-plan.md's C3). files is keyed
-// by filename only for error messages; ordering (sorted by filename) only
-// affects which duplicate is reported first, not the outcome.
+// by filename only for diagnostics. Decoding is deterministic by filename;
+// application is sorted by scenario key and numeric version so a complete,
+// valid history never depends on names such as v1/v2/v10.
 func (s *Service) ImportScenarios(ctx context.Context, files map[string]io.Reader, actorID uuid.UUID, actorRole, requestID string) (ScenarioImportCount, error) {
 	names := make([]string, 0, len(files))
 	for name := range files {
@@ -256,6 +257,15 @@ func (s *Service) ImportScenarios(ctx context.Context, files map[string]io.Reade
 		seenKeyVersion[key] = name
 		items = append(items, decodedFile{name: name, file: file, digest: digest, bodyJSON: bodyJSON})
 	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].file.Key != items[j].file.Key {
+			return items[i].file.Key < items[j].file.Key
+		}
+		if items[i].file.Version != items[j].file.Version {
+			return items[i].file.Version < items[j].file.Version
+		}
+		return items[i].name < items[j].name
+	})
 
 	var result ScenarioImportCount
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
@@ -419,4 +429,12 @@ func (c storeCatalog) ClassifierType(code string) (string, bool) {
 		return "", false
 	}
 	return t.Name, true
+}
+
+func (c storeCatalog) ScenarioVersion(id uuid.UUID) (ScenarioVersionReference, bool) {
+	ref, err := c.store.VersionReferenceByID(c.ctx, c.tx, id)
+	if err != nil {
+		return ScenarioVersionReference{}, false
+	}
+	return ref, true
 }

@@ -25,12 +25,49 @@ func TestCanonicalIgnoresKeyOrderAndWhitespace(t *testing.T) {
 	}
 }
 
-func TestCanonicalPreservesBigIntegerLiteral(t *testing.T) {
+func TestCanonicalPreservesBigIntegerPrecision(t *testing.T) {
 	v := decodeAny(t, `{"n": 12345678901234567890}`)
 	got := string(Canonical(v))
 	want := `{"n":12345678901234567890}`
 	if got != want {
 		t.Fatalf("Canonical = %s, want %s (float64 would have lost precision)", got, want)
+	}
+}
+
+func TestCanonicalNormalizesNumbersLikePostgreSQLJSONB(t *testing.T) {
+	tests := map[string]string{
+		`1e2`:       `100`,
+		`1.230e-5`:  `0.00001230`,
+		`0.001e1`:   `0.01`,
+		`123.4500`:  `123.4500`,
+		`-12.5e+2`:  `-1250`,
+		`-0.00e+10`: `0`,
+	}
+	for input, want := range tests {
+		t.Run(input, func(t *testing.T) {
+			if got := string(Canonical(decodeAny(t, input))); got != want {
+				t.Fatalf("Canonical(%s) = %s, want %s", input, got, want)
+			}
+		})
+	}
+}
+
+func TestDigestTreatsEquivalentNumberNotationsIdentically(t *testing.T) {
+	for _, pair := range [][2]string{
+		{`1e2`, `100`},
+		{`1.230e-5`, `0.00001230`},
+		{`0.001e1`, `0.01`},
+	} {
+		if got, want := Digest(decodeAny(t, pair[0])), Digest(decodeAny(t, pair[1])); got != want {
+			t.Fatalf("Digest(%s) = %x, want Digest(%s) = %x", pair[0], got, pair[1], want)
+		}
+	}
+}
+
+func TestCanonicalDoesNotExpandUnstorableExponent(t *testing.T) {
+	const literal = `1e999999999999999999999999`
+	if got := string(Canonical(decodeAny(t, literal))); got != literal {
+		t.Fatalf("Canonical(%s) = %s, want the unexpanded literal", literal, got)
 	}
 }
 

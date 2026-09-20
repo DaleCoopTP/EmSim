@@ -112,6 +112,19 @@ type ScenarioVersionRecord struct {
 	ApprovedAt   *time.Time
 }
 
+// ScenarioVersionReference is the small, closed projection semantic
+// validation needs for an events[].spawn.scenario_version_id. Loading only
+// these fields avoids decoding another version's full body merely to check
+// that it is published and compatible with the referring scenario. Published
+// is approval provenance rather than just status: a future cancelled draft
+// may be superseded without ever having been approved.
+type ScenarioVersionReference struct {
+	Status        string
+	Published     bool
+	ExerciseType  ExerciseType
+	TargetService string
+}
+
 // ScenarioSummary is the catalogue list row (openapi.yaml ScenarioSummary)
 // — a ScenarioRecord joined with its current version's number, for
 // GET /scenarios.
@@ -169,8 +182,8 @@ type ScenarioFilter struct {
 type Store interface {
 	WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 
-	// ServiceByCode/ClassifierTypeByCode are also how storeCatalog
-	// (import.go) implements Catalog during ImportScenarios.
+	// These reference lookups are also how storeCatalog (import.go)
+	// implements Catalog during ImportScenarios.
 	ServiceByCode(ctx context.Context, tx pgx.Tx, code string) (ServiceRecord, error)
 	ListServices(ctx context.Context, tx pgx.Tx) ([]ServiceRecord, error)
 	InsertService(ctx context.Context, tx pgx.Tx, s ServiceRecord) error
@@ -192,6 +205,7 @@ type Store interface {
 	// inserted in the same call sequence, but the type stays honest about
 	// "zero versions" being a real, checkable state during import.
 	MaxVersion(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID) (int, error)
+	VersionReferenceByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (ScenarioVersionReference, error)
 	VersionByNumber(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID, version int) (ScenarioVersionRecord, error)
 	ApprovedVersion(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID) (ScenarioVersionRecord, error)
 	ListVersions(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID) ([]VersionSummary, error)

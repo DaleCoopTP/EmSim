@@ -55,6 +55,17 @@ func (s *Service) CreateUser(ctx context.Context, n NewUser, actor Principal, re
 // the account — a stolen or now-wrong session must stop working
 // immediately, not linger until its natural expiry.
 func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, patch Patch, actor Principal, requestID string) (User, error) {
+	// ServiceExists owns its own transaction. Run that lookup before the
+	// update transaction so both operations never compete for another
+	// connection from the same pool (which deadlocks when MaxConns is 1).
+	// The user-dependent patch validation still runs below, against the row
+	// read by the update transaction.
+	if patch.ServiceCode != nil && *patch.ServiceCode != "" {
+		if err := s.checkServiceCode(ctx, patch.ServiceCode); err != nil {
+			return User{}, err
+		}
+	}
+
 	var updated User
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
 		current, err := s.store.UserByID(ctx, tx, id)
@@ -63,14 +74,6 @@ func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, patch Patch, act
 		}
 		if err := ValidateUserPatch(current, patch); err != nil {
 			return err
-		}
-		// A nil or empty-string ServiceCode means "leave unchanged" or
-		// "clear to NULL" (Patch's own convention) — neither needs a
-		// catalog lookup, only assigning a real code does.
-		if patch.ServiceCode != nil && *patch.ServiceCode != "" {
-			if err := s.checkServiceCode(ctx, patch.ServiceCode); err != nil {
-				return err
-			}
 		}
 		if wouldLoseLastActiveAdmin(current, patch) {
 			count, err := s.store.CountActiveAdmins(ctx, tx)

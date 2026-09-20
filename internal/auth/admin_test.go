@@ -6,7 +6,19 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
+
+type transactionTrackingStore struct {
+	*fakeStore
+	inTransaction bool
+}
+
+func (s *transactionTrackingStore) WithTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	s.inTransaction = true
+	defer func() { s.inTransaction = false }()
+	return s.fakeStore.WithTx(ctx, fn)
+}
 
 func testAdminActor(store *fakeStore) Principal {
 	user, _ := testAdmin("acting-admin", "correct-horse")
@@ -160,6 +172,32 @@ func TestUpdateUserRejectsUnknownServiceCode(t *testing.T) {
 	var ve *ValidationError
 	if !errors.As(err, &ve) || ve.Field != "service_code" || ve.Reason != "unknown" {
 		t.Fatalf("UpdateUser() error = %v, want *ValidationError{service_code, unknown}", err)
+	}
+}
+
+func TestUpdateUserChecksServiceCodeBeforeOpeningTransaction(t *testing.T) {
+	baseStore := newFakeStore()
+	store := &transactionTrackingStore{fakeStore: baseStore}
+	actor := testAdminActor(baseStore)
+	target, _ := testTrainee("dispatcher-svc-pool", "correct-horse", "dds_district")
+	baseStore.addUser(target)
+	newCode := "svc_new"
+	catalog := fakeCatalog{
+		known: map[string]bool{newCode: true},
+		check: func() {
+			if store.inTransaction {
+				t.Fatal("ServiceExists called while the update transaction is open")
+			}
+		},
+	}
+	service := NewService(store, NewPasswordIdentityProvider(store), 0, nil, catalog)
+
+	updated, err := service.UpdateUser(context.Background(), target.ID, Patch{ServiceCode: &newCode}, actor, "req-update-svc-pool")
+	if err != nil {
+		t.Fatalf("UpdateUser() error = %v", err)
+	}
+	if updated.ServiceCode == nil || *updated.ServiceCode != newCode {
+		t.Fatalf("updated.ServiceCode = %v, want %q", updated.ServiceCode, newCode)
 	}
 }
 

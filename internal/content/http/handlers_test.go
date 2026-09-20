@@ -300,6 +300,51 @@ func TestScenarioPreviewDoesNotLeakClosedFieldsOutsideReference(t *testing.T) {
 	}
 }
 
+func TestScenarioPreviewReferenceOmitsAbsentOptionalFields(t *testing.T) {
+	preview := content.ScenarioPreview{
+		Card: content.CardPreview{Number: "1"},
+		Reference: content.Reference{
+			PrimaryDecision: content.PrimaryDecision{Status: content.ReactionAccepted},
+		},
+	}
+	auth := &fakeAuth{validToken: "tok", principal: instructorPrincipal()}
+	mux := newTestMux(&fakeContentService{previewResult: preview}, auth)
+
+	response := httptest.NewRecorder()
+	wrapped(mux).ServeHTTP(response, authedRequest(http.MethodGet, "/api/v1/scenarios/"+uuid.New().String()+"/preview", "tok"))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Reference map[string]any `json:"reference"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, field := range []string{"scoring", "field_corrections", "pilot_goal", "guide_refs", "notes"} {
+		if _, exists := body.Reference[field]; exists {
+			t.Fatalf("preview.reference must omit absent %q: %s", field, response.Body.String())
+		}
+	}
+	chain, exists := body.Reference["expected_chain"]
+	if !exists {
+		t.Fatalf("preview.reference must include required expected_chain: %s", response.Body.String())
+	}
+	if items, ok := chain.([]any); !ok || len(items) != 0 {
+		t.Fatalf("expected_chain = %#v, want []", chain)
+	}
+	call, ok := body.Reference["call"].(map[string]any)
+	if !ok {
+		t.Fatalf("call = %#v, want object", body.Reference["call"])
+	}
+	if _, exists := call["before_status"]; exists {
+		t.Fatalf("preview.reference.call must omit absent before_status: %s", response.Body.String())
+	}
+	if _, exists := call["must_mention"]; exists {
+		t.Fatalf("preview.reference.call must omit absent must_mention: %s", response.Body.String())
+	}
+}
+
 func TestScenarioVersionsReturnsMetadata(t *testing.T) {
 	versionID := uuid.New()
 	createdBy := uuid.New()

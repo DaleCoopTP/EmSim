@@ -3,6 +3,8 @@ package content
 import (
 	"errors"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // fakeCatalog is an in-memory Catalog for Validate's tests — no pgx.Tx,
@@ -11,6 +13,7 @@ import (
 type fakeCatalog struct {
 	services   map[string]ServiceRecord
 	classifier map[string]string // code -> name
+	versions   map[uuid.UUID]ScenarioVersionReference
 }
 
 func (c fakeCatalog) Service(code string) (ServiceRecord, bool) {
@@ -21,6 +24,11 @@ func (c fakeCatalog) Service(code string) (ServiceRecord, bool) {
 func (c fakeCatalog) ClassifierType(code string) (string, bool) {
 	name, ok := c.classifier[code]
 	return name, ok
+}
+
+func (c fakeCatalog) ScenarioVersion(id uuid.UUID) (ScenarioVersionReference, bool) {
+	ref, ok := c.versions[id]
+	return ref, ok
 }
 
 // pilotWorkflow mirrors seed/services.json's minimal workflow
@@ -47,6 +55,7 @@ func pilotCatalog() fakeCatalog {
 		classifier: map[string]string{
 			"14080106": "Дерево упало во дворе",
 		},
+		versions: map[uuid.UUID]ScenarioVersionReference{},
 	}
 }
 
@@ -184,6 +193,50 @@ func TestValidateRejectsSpawnScenarioWithoutVersionID(t *testing.T) {
 	body := validPilotBody()
 	body.Events = []Event{{Key: "e1", Since: "accepted", Delivery: "spawn_card", Spawn: &EventSpawn{Kind: "scenario"}}}
 	assertInvalidField(t, Validate(body, pilotCatalog()), "events[0].spawn.scenario_version_id")
+}
+
+func TestValidateRejectsSpawnScenarioWithUnknownVersionID(t *testing.T) {
+	body := validPilotBody()
+	id := uuid.New()
+	body.Events = []Event{{Key: "e1", Since: "accepted", Delivery: "spawn_card", Spawn: &EventSpawn{Kind: "scenario", ScenarioVersionID: &id}}}
+	assertInvalidField(t, Validate(body, pilotCatalog()), "events[0].spawn.scenario_version_id")
+}
+
+func TestValidateAcceptsCompatiblePublishedSpawnScenario(t *testing.T) {
+	body := validPilotBody()
+	id := uuid.New()
+	body.Events = []Event{{Key: "e1", Since: "accepted", Delivery: "spawn_card", Spawn: &EventSpawn{Kind: "scenario", ScenarioVersionID: &id}}}
+	catalog := pilotCatalog()
+	catalog.versions[id] = ScenarioVersionReference{
+		Status: "superseded", Published: true, ExerciseType: body.ExerciseType, TargetService: body.TargetService,
+	}
+	if err := Validate(body, catalog); err != nil {
+		t.Fatalf("Validate(compatible spawn scenario) = %v, want nil", err)
+	}
+}
+
+func TestValidateRejectsIncompatibleSpawnScenario(t *testing.T) {
+	body := validPilotBody()
+	id := uuid.New()
+	body.Events = []Event{{Key: "e1", Since: "accepted", Delivery: "spawn_card", Spawn: &EventSpawn{Kind: "scenario", ScenarioVersionID: &id}}}
+
+	tests := map[string]ScenarioVersionReference{
+		"draft": {Status: "draft", ExerciseType: body.ExerciseType, TargetService: body.TargetService},
+		"unapproved superseded": {
+			Status: "superseded", ExerciseType: body.ExerciseType, TargetService: body.TargetService,
+		},
+		"exercise type": {
+			Status: "approved", Published: true, ExerciseType: ExerciseType("operator112_intake"), TargetService: body.TargetService,
+		},
+		"target service": {Status: "approved", Published: true, ExerciseType: body.ExerciseType, TargetService: "another_service"},
+	}
+	for name, ref := range tests {
+		t.Run(name, func(t *testing.T) {
+			catalog := pilotCatalog()
+			catalog.versions[id] = ref
+			assertInvalidField(t, Validate(body, catalog), "events[0].spawn.scenario_version_id")
+		})
+	}
 }
 
 func TestValidateRejectsCallRequiredWithUnknownContact(t *testing.T) {

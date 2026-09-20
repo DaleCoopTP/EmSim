@@ -58,9 +58,13 @@ func newTestServiceWithCatalog(store *fakeStore, catalog ServiceCatalog) *Servic
 type fakeCatalog struct {
 	known map[string]bool
 	err   error
+	check func()
 }
 
 func (c fakeCatalog) ServiceExists(_ context.Context, code string) (bool, error) {
+	if c.check != nil {
+		c.check()
+	}
 	if c.err != nil {
 		return false, c.err
 	}

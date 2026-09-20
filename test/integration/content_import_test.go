@@ -222,6 +222,52 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if len(preview.Reference.FieldCorrections) != 1 || preview.Reference.FieldCorrections[0].ExpectedValue != "ЮАО" {
 		t.Fatalf("preview.Reference.FieldCorrections not carried through: %+v", preview.Reference.FieldCorrections)
 	}
+
+	// PostgreSQL jsonb expands exponent notation on storage (1e2 -> 100).
+	// The canonical number form must do the same so the persisted body still
+	// reproduces the digest calculated before INSERT.
+	seedServiceAndClassifier(t, ctx, svc, actorID, actorRole)
+	numericScenario := strings.Replace(
+		scenarioFileJSON(t, "numeric-jsonb", 1, "Numeric JSONB", "accepted"),
+		`"features": {}`,
+		`"features": {"reading": 1e2}`,
+		1,
+	)
+	if _, err := svc.ImportScenarios(ctx, map[string]io.Reader{"numeric.json": strings.NewReader(numericScenario)}, actorID, actorRole, "req-numeric"); err != nil {
+		t.Fatalf("ImportScenarios(numeric): %v", err)
+	}
+	var numericID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM scenarios WHERE source_key = 'numeric-jsonb'`).Scan(&numericID); err != nil {
+		t.Fatalf("find numeric scenario: %v", err)
+	}
+	numericDetail, err := svc.ScenarioDetail(ctx, numericID)
+	if err != nil {
+		t.Fatalf("ScenarioDetail(numeric): %v", err)
+	}
+	var numericRaw any
+	numericDecoder := json.NewDecoder(bytes.NewReader(numericDetail.BodyJSON))
+	numericDecoder.UseNumber()
+	if err := numericDecoder.Decode(&numericRaw); err != nil {
+		t.Fatalf("decode stored numeric body: %v", err)
+	}
+	if got := content.Digest(numericRaw); got != numericDetail.Digest {
+		t.Fatalf("digest after jsonb number normalization = %x, want %x (body=%s)", got, numericDetail.Digest, numericDetail.BodyJSON)
+	}
+	for _, literal := range []string{`1e2`, `1.230e-5`, `0.001e1`, `123.4500`, `-12.5e+2`, `-0.00e+10`} {
+		var jsonbText string
+		if err := pool.QueryRow(ctx, `SELECT ($1::text)::jsonb::text`, literal).Scan(&jsonbText); err != nil {
+			t.Fatalf("render %s through jsonb: %v", literal, err)
+		}
+		decoder := json.NewDecoder(strings.NewReader(literal))
+		decoder.UseNumber()
+		var rawNumber any
+		if err := decoder.Decode(&rawNumber); err != nil {
+			t.Fatalf("decode number %s: %v", literal, err)
+		}
+		if canonical := string(content.Canonical(rawNumber)); canonical != jsonbText {
+			t.Fatalf("Canonical(%s) = %s, PostgreSQL jsonb renders %s", literal, canonical, jsonbText)
+		}
+	}
 }
 
 // TestContentImportConflicts checks that a re-import disagreeing with
@@ -299,6 +345,18 @@ func TestContentImportScenarioVersionRules(t *testing.T) {
 	svc := content.NewService(contentpg.NewStore(pool), mustValidator(t))
 
 	seedServiceAndClassifier(t, ctx, svc, actorID, actorRole)
+	unknownVersionID := uuid.New()
+	unknownSpawn := strings.Replace(
+		scenarioFileJSON(t, "unknown-spawn", 1, "Unknown spawn", "accepted"),
+		`"events": []`,
+		`"events": [{"key":"e1","at_s":0,"since":"accepted","delivery":"spawn_card","spawn":{"kind":"scenario","scenario_version_id":"`+unknownVersionID.String()+`"}}]`,
+		1,
+	)
+	_, err = svc.ImportScenarios(ctx, map[string]io.Reader{"unknown.json": strings.NewReader(unknownSpawn)}, actorID, actorRole, "r0")
+	var validationErr *content.ValidationError
+	if !errors.As(err, &validationErr) || validationErr.Field != "events[0].spawn.scenario_version_id" {
+		t.Fatalf("import with unknown spawn version error = %v, want scenario_version_id validation error", err)
+	}
 
 	v1 := scenarioFileJSON(t, "vtest", 1, "V1 title", "accepted")
 	if _, err := svc.ImportScenarios(ctx, map[string]io.Reader{"v1.json": strings.NewReader(v1)}, actorID, actorRole, "r1"); err != nil {
@@ -327,6 +385,16 @@ func TestContentImportScenarioVersionRules(t *testing.T) {
 	}
 	v1ApprovedBy := *v1Versions[0].ApprovedBy
 	v1ApprovedAt := *v1Versions[0].ApprovedAt
+
+	compatibleSpawn := strings.Replace(
+		scenarioFileJSON(t, "compatible-spawn", 1, "Compatible spawn", "accepted"),
+		`"events": []`,
+		`"events": [{"key":"e1","at_s":0,"since":"accepted","delivery":"spawn_card","spawn":{"kind":"scenario","scenario_version_id":"`+v1Versions[0].ID.String()+`"}}]`,
+		1,
+	)
+	if _, err := svc.ImportScenarios(ctx, map[string]io.Reader{"compatible.json": strings.NewReader(compatibleSpawn)}, actorID, actorRole, "r1b"); err != nil {
+		t.Fatalf("import with compatible spawn version: %v", err)
+	}
 
 	// v2 supersedes v1
 	v2 := scenarioFileJSON(t, "vtest", 2, "V1 title", "not_accepted")
@@ -414,6 +482,102 @@ func TestContentImportScenarioVersionRules(t *testing.T) {
 		if it.SourceKey != nil && *it.SourceKey == "vtest-batch" {
 			t.Fatalf("vtest-batch was persisted despite the batch containing an invalid file")
 		}
+	}
+
+	// A full history is applied by (scenario key, numeric version), not by
+	// filename. Lexicographic filename order here is v1, v10, v2... and
+	// used to fail at v10 with version_gap before v2 was processed.
+	history := make(map[string]io.Reader, 10)
+	for version := 1; version <= 10; version++ {
+		status := "accepted"
+		if version%2 == 0 {
+			status = "not_accepted"
+		}
+		name := "history-v" + strconv.Itoa(version) + ".json"
+		history[name] = strings.NewReader(scenarioFileJSON(t, "history-order", version, "History order", status))
+	}
+	historyResult, err := svc.ImportScenarios(ctx, history, actorID, actorRole, "r5")
+	if err != nil {
+		t.Fatalf("import lexicographically misordered history: %v", err)
+	}
+	if historyResult.NewScenarios != 1 || historyResult.NewVersions != 10 || historyResult.Unchanged != 0 {
+		t.Fatalf("history import = %+v, want one scenario and ten versions", historyResult)
+	}
+}
+
+func TestScenarioVersionLifecycleCannotBeRewoundOrReattributed(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	pool, err := pgstore.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open pool: %v", err)
+	}
+	defer pool.Close()
+	if err := pgstore.UpTo(ctx, databaseURL, 4); err != nil {
+		t.Fatalf("migrate up to vulnerable schema version 4: %v", err)
+	}
+
+	authStore := authpg.NewStore(pool)
+	actorID, actorRole := createContentAdmin(t, ctx, authStore, "lifecycle-admin")
+	otherAdminID, _ := createContentAdmin(t, ctx, authStore, "other-lifecycle-admin")
+	svc := content.NewService(contentpg.NewStore(pool), mustValidator(t))
+	seedServiceAndClassifier(t, ctx, svc, actorID, actorRole)
+
+	v1 := scenarioFileJSON(t, "lifecycle", 1, "Lifecycle", "accepted")
+	if _, err := svc.ImportScenarios(ctx, map[string]io.Reader{"v1.json": strings.NewReader(v1)}, actorID, actorRole, "r1"); err != nil {
+		t.Fatalf("import v1: %v", err)
+	}
+
+	var scenarioID, v1ID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT s.id, sv.id
+		FROM scenarios s
+		JOIN scenario_versions sv ON sv.scenario_id = s.id
+		WHERE s.source_key = 'lifecycle' AND sv.version = 1
+	`).Scan(&scenarioID, &v1ID); err != nil {
+		t.Fatalf("find imported v1: %v", err)
+	}
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("apply lifecycle migration: %v", err)
+	}
+
+	// This was the deletion bypass: clear attribution while rewinding an
+	// approved row to draft, then delete the now-unprotected draft.
+	if _, err := pool.Exec(ctx, `
+		UPDATE scenario_versions
+		SET status = 'draft', approved_by = NULL, approved_at = NULL
+		WHERE id = $1
+	`, v1ID); err == nil {
+		t.Fatal("approved -> draft rewind unexpectedly succeeded")
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM scenario_versions WHERE id = $1`, v1ID); err == nil {
+		t.Fatal("deleting an approved version unexpectedly succeeded after rejected rewind")
+	}
+	if _, err := pool.Exec(ctx, `UPDATE scenario_versions SET approved_by = $2 WHERE id = $1`, v1ID, otherAdminID); err == nil {
+		t.Fatal("changing saved approval attribution unexpectedly succeeded")
+	}
+
+	v2 := scenarioFileJSON(t, "lifecycle", 2, "Lifecycle", "not_accepted")
+	if _, err := svc.ImportScenarios(ctx, map[string]io.Reader{"v2.json": strings.NewReader(v2)}, actorID, actorRole, "r2"); err != nil {
+		t.Fatalf("import v2: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE scenario_versions
+		SET status = 'draft', approved_by = NULL, approved_at = NULL
+		WHERE id = $1
+	`, v1ID); err == nil {
+		t.Fatal("superseded -> draft rewind unexpectedly succeeded")
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM scenario_versions WHERE id = $1`, v1ID); err == nil {
+		t.Fatal("deleting a superseded version unexpectedly succeeded")
+	}
+
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM scenario_versions WHERE id = $1 AND scenario_id = $2`, v1ID, scenarioID).Scan(&status); err != nil {
+		t.Fatalf("read protected v1: %v", err)
+	}
+	if status != "superseded" {
+		t.Fatalf("v1.status = %q, want superseded", status)
 	}
 }
 
