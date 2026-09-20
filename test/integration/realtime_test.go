@@ -105,3 +105,87 @@ func waitForEvents(t *testing.T, hub *realtime.Hub, cursor string, timeout time.
 		}
 	}
 }
+
+// TestRealtimeListenerDeliversStopNotificationToTrainee covers Stop's
+// own per-trainee notify (added alongside the lesson-scoped one): before
+// this fix, Service.Stop only ever called notify with userID=uuid.Nil,
+// which streamLesson's own instructor feed matches on (filters by
+// LessonID) but streamMy's own trainee feed never does (filters by
+// UserID) — so a trainee's /my/stream never invalidated on stop at all,
+// and their workplace only refreshed once the durable lesson.close task
+// later interrupted an open item of theirs, or on the next unrelated
+// refetch if they had none open.
+func TestRealtimeListenerDeliversStopNotificationToTrainee(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	hub := realtime.NewHub()
+	listenerCtx, stopListener := context.WithCancel(ctx)
+	defer stopListener()
+	ready := make(chan struct{})
+	logger := observability.NewLogger(nil, "test", "test")
+	go realtime.RunListener(listenerCtx, pool, hub, logger, ready)
+	select {
+	case <-ready:
+	case <-time.After(10 * time.Second):
+		t.Fatal("listener did not start LISTEN in time")
+	}
+
+	startCursor := hub.Cursor()
+
+	_, trainee, _, lesson := setupPilotLesson(t, ctx, pool, service, "ЮАО")
+	instructorActor := principal(auth.User{ID: lesson.InstructorID, Role: auth.RoleInstructor}, uuid.Nil)
+	if _, err := service.Start(ctx, instructorActor, lesson.ID, "req-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Drain Start's own item.offered notification (which also carries
+	// this trainee's user_id, plus a real item_id) before capturing the
+	// cursor Stop's own events are measured from — otherwise an
+	// asynchronous LISTEN delivery still in flight for Start (the
+	// domain transaction already committed, but the separate LISTEN
+	// connection's delivery into the Hub is not synchronous with that
+	// commit) could land after hub.Cursor() is read and be
+	// indistinguishable from Stop's own per-trainee event.
+	if _, newCursor, resync := waitForEvents(t, hub, startCursor, 5*time.Second); resync {
+		t.Fatal("unexpected resync while waiting for Start's own notification")
+	} else {
+		startCursor = newCursor
+	}
+
+	if _, err := service.Stop(ctx, instructorActor, lesson.ID, nil, "req-stop"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	events, _, resync := waitForEvents(t, hub, startCursor, 5*time.Second)
+	if resync {
+		t.Fatal("unexpected resync while waiting for Stop's own notification")
+	}
+	// Stop's own per-trainee notify (the fix under test) never carries
+	// an item_id (Service.Stop's own barrier touches no single item);
+	// requiring ItemID == nil rules out this assertion being satisfied
+	// by a leftover item-scoped event instead of the fix itself.
+	foundTrainee, foundLessonWide := false, false
+	for _, e := range events {
+		if e.LessonID == nil || *e.LessonID != lesson.ID {
+			continue
+		}
+		if e.UserID != nil && *e.UserID == trainee.ID && e.ItemID == nil {
+			foundTrainee = true
+		}
+		if e.UserID == nil && e.ItemID == nil {
+			foundLessonWide = true
+		}
+	}
+	if !foundTrainee {
+		t.Fatalf("no item-less event scoped to the trainee's own user_id=%s after Stop, in %+v (streamMy would never invalidate)", trainee.ID, events)
+	}
+	if !foundLessonWide {
+		t.Fatalf("no lesson-wide event (user_id=nil, item_id=nil) after Stop, in %+v (streamLesson's own instructor feed would never invalidate)", events)
+	}
+}

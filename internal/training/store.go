@@ -103,6 +103,10 @@ type Store interface {
 	RunsDueForOffer(ctx context.Context, tx pgx.Tx, now time.Time) ([]Run, error)
 	SetRunQueueCursor(ctx context.Context, tx pgx.Tx, id uuid.UUID, cursor int) error
 	SetRunNextOfferAt(ctx context.Context, tx pgx.Tx, id uuid.UUID, nextOfferAt *time.Time) error
+	// ClearNextOfferForActiveRuns is Stop's own barrier stopping a
+	// hard-level run's future offer immediately, rather than only once
+	// the durable lesson.close task later finishes the run.
+	ClearNextOfferForActiveRuns(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID) error
 	FinishRun(ctx context.Context, tx pgx.Tx, id uuid.UUID, finishedAt time.Time) error
 	// FinishLesson marks the running lesson complete at the same server
 	// timestamp as its last run/item. Slice 3 has exactly one run, so a
@@ -147,14 +151,23 @@ type Store interface {
 	InsertControlReport(ctx context.Context, tx pgx.Tx, report ControlReport) (ControlReport, error)
 	ControlReportsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) ([]ControlReport, error)
 
-	// RecoverOpenItems is RFC-001 §7.2's server-restart marker: every
-	// still-open item (offered/opened/in_progress) of a running lesson
-	// gets entry appended to its items.interruptions, without touching
-	// offered_at/deadlines/due_at. Idempotent on entry.RecoveryID — an
-	// item that already carries this recovery_id is left alone, so a
-	// retried recovery call cannot append a duplicate marker. Returns the
-	// affected item ids for the caller's audit record.
-	RecoverOpenItems(ctx context.Context, tx pgx.Tx, entry Interruption) ([]uuid.UUID, error)
+	// RunningLessonIDs lists every lesson currently in state='running' —
+	// an unlocked enumeration read Service.Recover uses to know which
+	// lessons to individually lock and recover (RFC-001 §7.2: "в
+	// транзакции под барьером занятия").
+	RunningLessonIDs(ctx context.Context, tx pgx.Tx) ([]uuid.UUID, error)
+	// RecoverOpenItems is RFC-001 §7.2's server-restart marker for one
+	// lesson's own items: every still-open item (offered/opened/
+	// in_progress) of lessonID gets entry appended to its
+	// items.interruptions, without touching offered_at/deadlines/due_at.
+	// Idempotent on entry.RecoveryID — an item that already carries this
+	// recovery_id is left alone, so a retried recovery call cannot
+	// append a duplicate marker. The caller is expected to already hold
+	// lessonID's own lessons row FOR UPDATE (Service.Recover's own
+	// per-lesson barrier) — this method does not itself check or lock
+	// the lesson's state. Returns the affected item ids for the
+	// caller's audit record.
+	RecoverOpenItems(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID, entry Interruption) ([]uuid.UUID, error)
 
 	AuditRecord(ctx context.Context, tx pgx.Tx, entry audit.Entry) error
 

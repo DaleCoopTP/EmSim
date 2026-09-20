@@ -213,6 +213,25 @@ func (h *Handlers) serveSSE(w http.ResponseWriter, r *http.Request, match func(r
 		case <-ctx.Done():
 			return
 		case <-heartbeat.C:
+			// Also a self-heal re-check, not just a keep-alive ping: a
+			// Publish that lands in the narrow gap between an earlier
+			// wake's replaySince() (which reads the buffer as of that
+			// call, then returns) and this loop re-arming h.hub.Wait()
+			// on the next iteration closes a waiters channel nobody is
+			// blocked on yet — the missed wake is not a lost event
+			// (Since(cursor) always catches up from cursor, whenever
+			// next called), but with nothing here re-checking it, this
+			// connection would otherwise only catch up on the *next*
+			// Publish anywhere in the whole process (Wait() is
+			// hub-global), which self-heals almost instantly in a busy
+			// classroom but has no bound at all in an otherwise-quiet
+			// one. Re-checking Since(cursor) on every heartbeat caps
+			// that staleness at heartbeatInterval even in the fully
+			// idle case.
+			if h.replaySince(w, cursor, match, &cursor) {
+				flusher.Flush()
+				continue
+			}
 			fmt.Fprint(w, ": heartbeat\n\n")
 			flusher.Flush()
 		case <-h.hub.Wait():

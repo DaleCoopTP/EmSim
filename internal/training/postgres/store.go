@@ -380,6 +380,20 @@ func (s *Store) SetRunNextOfferAt(ctx context.Context, tx pgx.Tx, id uuid.UUID, 
 	return nil
 }
 
+// ClearNextOfferForActiveRuns unsets next_offer_at for every still-active
+// run of a lesson — Stop's own barrier (RFC-001 §7.5) calls this so a
+// hard-level run's own scheduled offer can never be selected by
+// RunsDueForOffer again after stop, without waiting for the durable
+// lesson.close task (which may be delayed, or never run at all if the
+// worker is unavailable) to finish the run first.
+func (s *Store) ClearNextOfferForActiveRuns(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE runs SET next_offer_at = NULL WHERE lesson_id = $1 AND state = 'active' AND next_offer_at IS NOT NULL`, lessonID)
+	if err != nil {
+		return mapErr(err)
+	}
+	return nil
+}
+
 func (s *Store) FinishRun(ctx context.Context, tx pgx.Tx, id uuid.UUID, finishedAt time.Time) error {
 	tag, err := tx.Exec(ctx, `UPDATE runs SET state = 'finished', finished_at = $2 WHERE id = $1`, id, finishedAt)
 	if err != nil {
@@ -572,29 +586,53 @@ func (s *Store) ApplyItemDecision(ctx context.Context, tx pgx.Tx, itemID uuid.UU
 	return nil
 }
 
+// RunningLessonIDs lists every lesson currently in state='running' — an
+// unlocked read (Service.Recover locks each one individually before
+// recovering it).
+func (s *Store) RunningLessonIDs(ctx context.Context, tx pgx.Tx) ([]uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `SELECT id FROM lessons WHERE state = 'running'`)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, mapErr(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return ids, nil
+}
+
 // RecoverOpenItems appends entry to items.interruptions for every open
-// item of a running lesson (RFC-001 §7.2), skipping any item that
-// already carries entry.RecoveryID so a retried call cannot duplicate
-// the marker. entry is marshaled once and appended verbatim via jsonb
+// item of lessonID (RFC-001 §7.2), skipping any item that already
+// carries entry.RecoveryID so a retried call cannot duplicate the
+// marker. entry is marshaled once and appended verbatim via jsonb
 // concatenation — offered_at/deadlines/due_at are never touched by this
-// statement.
-func (s *Store) RecoverOpenItems(ctx context.Context, tx pgx.Tx, entry training.Interruption) ([]uuid.UUID, error) {
+// statement. Scoped by lessonID alone (not lessons.state): the caller
+// already holds that lesson's row FOR UPDATE and has already verified
+// it is running (Service.Recover's own per-lesson barrier).
+func (s *Store) RecoverOpenItems(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID, entry training.Interruption) ([]uuid.UUID, error) {
 	entryJSON, err := json.Marshal(entry)
 	if err != nil {
 		return nil, fmt.Errorf("training/postgres: marshal interruption: %w", err)
 	}
 	rows, err := tx.Query(ctx, `
 		UPDATE items SET interruptions = items.interruptions || jsonb_build_array($1::jsonb)
-		FROM runs, lessons
-		WHERE items.run_id = runs.id AND runs.lesson_id = lessons.id
-		  AND lessons.state = 'running'
+		FROM runs
+		WHERE items.run_id = runs.id AND runs.lesson_id = $3
 		  AND items.state IN ('offered', 'opened', 'in_progress')
 		  AND NOT EXISTS (
 		    SELECT 1 FROM jsonb_array_elements(items.interruptions) elem
 		    WHERE elem ->> 'recovery_id' = $2
 		  )
 		RETURNING items.id
-	`, entryJSON, entry.RecoveryID.String())
+	`, entryJSON, entry.RecoveryID.String(), lessonID)
 	if err != nil {
 		return nil, mapErr(err)
 	}

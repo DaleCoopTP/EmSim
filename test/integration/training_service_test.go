@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1388,5 +1389,997 @@ func TestTrainingMonitorSnapshotReflectsLiveState(t *testing.T) {
 		if afterClose.Rows[i].Done != 1 || len(afterClose.Rows[i].ActiveItems) != 1 || afterClose.Rows[i].QueueLeft != 0 {
 			t.Fatalf("rowA after close = %+v, want done=1, 1 active item, queue_left=0", afterClose.Rows[i])
 		}
+	}
+}
+
+// TestTrainingHardQueueOffersOneCardPerTickAfterLongOutage is slice-4-
+// plan.md's C11: RFC-001 §7.2 requires that "после задержки или
+// рестарта за tick выдаётся не более одной карточки на run, пропущенные
+// интервалы не воспроизводятся пачкой" and that next_offer_at is always
+// computed from the real offer time, never by catching up to now(). A
+// run's next_offer_at is pushed an hour into the past (many multiples of
+// a 5s spawn interval), simulating a long scheduler outage; one Tick
+// must offer exactly one new card, and a second, immediate Tick must not
+// offer a third.
+func TestTrainingHardQueueOffersOneCardPerTickAfterLongOutage(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	const svc = "training_hard_outage_svc"
+	pilotWorkflowService(t, ctx, pool, svc)
+	instructor := insertInstructor(t, ctx, pool, "training-outage-instr-"+uuid.NewString())
+	target := pilotScenarioVersion(t, ctx, pool, svc, "ЮАО", instructor.ID)
+	trainee := insertActiveTrainee(t, ctx, pool, "training-outage-trainee-"+uuid.NewString(), svc)
+	workstation := insertWorkstation(t, ctx, pool, 251)
+	actor := principal(instructor, uuid.Nil)
+
+	interval := 5
+	lesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "Hard outage", Mode: training.ModeTraining, Level: auth.LevelHard,
+		Timing: &training.Timing{OpenS: 30, PrimaryS: 30, CompleteS: 180, SpawnEveryS: &interval},
+	}, "req-outage-create")
+	if err != nil {
+		t.Fatalf("CreateLesson: %v", err)
+	}
+	if _, err := service.ReplaceAssignments(ctx, actor, lesson.ID, []training.AssignmentInput{
+		{WorkstationNo: 251, UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{target, target, target}},
+	}, "req-outage-assign"); err != nil {
+		t.Fatalf("ReplaceAssignments: %v", err)
+	}
+	if _, err := service.Start(ctx, actor, lesson.ID, "req-outage-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	traineeActor := principal(trainee, workstation)
+	run, _, _, err := service.MyRun(ctx, traineeActor)
+	if err != nil {
+		t.Fatalf("MyRun: %v", err)
+	}
+	if run.NextOfferAt == nil {
+		t.Fatal("run.NextOfferAt is nil right after starting a 3-card hard queue")
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE runs SET next_offer_at = clock_timestamp() - interval '1 hour' WHERE id=$1`, run.ID); err != nil {
+		t.Fatalf("simulate outage: %v", err)
+	}
+
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("Tick (first, after outage): %v", err)
+	}
+	itemsAfterFirstTick, err := service.MyItems(ctx, traineeActor)
+	if err != nil {
+		t.Fatalf("MyItems after first tick: %v", err)
+	}
+	if len(itemsAfterFirstTick) != 2 {
+		t.Fatalf("items after one tick following a long outage = %d, want exactly 2 (one new offer, not a batch catch-up)", len(itemsAfterFirstTick))
+	}
+
+	runAfterFirstTick, _, _, err := service.MyRun(ctx, traineeActor)
+	if err != nil {
+		t.Fatalf("MyRun after first tick: %v", err)
+	}
+	if runAfterFirstTick.NextOfferAt == nil {
+		t.Fatal("run.NextOfferAt is nil after the second offer, want a third card still pending")
+	}
+	if !runAfterFirstTick.NextOfferAt.After(time.Now().Add(-time.Second)) {
+		t.Fatalf("next_offer_at = %s is already due, want it computed from the real offer time (~now+%ds), not the stale pre-outage deadline", runAfterFirstTick.NextOfferAt, interval)
+	}
+
+	// A second tick immediately afterward, with next_offer_at still in
+	// the future, must not add a third item.
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("Tick (second, immediately after): %v", err)
+	}
+	itemsAfterSecondTick, err := service.MyItems(ctx, traineeActor)
+	if err != nil {
+		t.Fatalf("MyItems after second tick: %v", err)
+	}
+	if len(itemsAfterSecondTick) != 2 {
+		t.Fatalf("items after an immediate second tick = %d, want still 2 (next_offer_at not yet due)", len(itemsAfterSecondTick))
+	}
+}
+
+// TestTrainingRecoverDeliversOverdueEventAsLate is slice-4-plan.md's
+// C11: RFC-001 §7.2's restart recovery leaves item_events' own anchor_at/
+// due_at untouched ("дедлайны не сдвигаются") — Recover only marks the
+// open item's interruption — and a scheduled event that has since become
+// more than 5s overdue (missed during the simulated outage) is delivered
+// with late=true on the next Tick, visible in the trainee's own
+// DeliveredEvent view.
+func TestTrainingRecoverDeliversOverdueEventAsLate(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	const svc = "training_late_event_svc"
+	pilotWorkflowService(t, ctx, pool, svc)
+	instructor := insertInstructor(t, ctx, pool, "training-late-instructor-"+uuid.NewString())
+	versionID := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "late-event-target", []content.Event{{
+		Key: "notice1", AtS: 0, Since: "offered", Delivery: "notice", From: "team", Text: "Бригада на месте",
+	}})
+	trainee := insertActiveTrainee(t, ctx, pool, "training-late-trainee-"+uuid.NewString(), svc)
+	workstation := insertWorkstation(t, ctx, pool, 241)
+	actor := principal(instructor, uuid.Nil)
+
+	lesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "Late event", Mode: training.ModeTraining, Level: auth.LevelEasy,
+	}, "req-late-create")
+	if err != nil {
+		t.Fatalf("CreateLesson: %v", err)
+	}
+	if _, err := service.ReplaceAssignments(ctx, actor, lesson.ID, []training.AssignmentInput{
+		{WorkstationNo: 241, UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{versionID}},
+	}, "req-late-assign"); err != nil {
+		t.Fatalf("ReplaceAssignments: %v", err)
+	}
+	if _, err := service.Start(ctx, actor, lesson.ID, "req-late-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	traineeActor := principal(trainee, workstation)
+	items, err := service.MyItems(ctx, traineeActor)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("MyItems = %+v, %v", items, err)
+	}
+	item := items[0]
+
+	var dueBefore time.Time
+	if err := pool.QueryRow(ctx, `SELECT due_at FROM item_events WHERE item_id=$1 AND event_key='notice1'`, item.ID).Scan(&dueBefore); err != nil {
+		t.Fatalf("read event before outage: %v", err)
+	}
+
+	// Simulate the event having missed its due time during a server
+	// outage: push due_at an hour into the past. No clock is moved and
+	// nothing recomputes the deadline — only the fact that this event is
+	// now far more than 5s overdue.
+	if _, err := pool.Exec(ctx, `UPDATE item_events SET due_at = due_at - interval '1 hour' WHERE item_id=$1 AND event_key='notice1'`, item.ID); err != nil {
+		t.Fatalf("simulate outage: %v", err)
+	}
+
+	recoveryID := uuid.New()
+	if _, err := service.Recover(ctx, recoveryID, "server_restart"); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+
+	var dueAfterRecover time.Time
+	if err := pool.QueryRow(ctx, `SELECT due_at FROM item_events WHERE item_id=$1 AND event_key='notice1'`, item.ID).Scan(&dueAfterRecover); err != nil {
+		t.Fatalf("read event after recovery: %v", err)
+	}
+	if !dueAfterRecover.Equal(dueBefore.Add(-time.Hour)) {
+		t.Fatalf("Recover changed the event's due_at: %s, want %s (deadlines must not shift)", dueAfterRecover, dueBefore.Add(-time.Hour))
+	}
+
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	var state string
+	var late bool
+	var deliveredAt *time.Time
+	if err := pool.QueryRow(ctx, `SELECT state, late, delivered_at FROM item_events WHERE item_id=$1 AND event_key='notice1'`, item.ID).Scan(&state, &late, &deliveredAt); err != nil {
+		t.Fatalf("read event after tick: %v", err)
+	}
+	if state != string(training.EventDelivered) || !late || deliveredAt == nil {
+		t.Fatalf("event after tick: state=%s late=%v delivered_at=%v, want delivered with late=true", state, late, deliveredAt)
+	}
+
+	_, _, delivered, err := service.ItemForTrainee(ctx, traineeActor, item.ID)
+	if err != nil {
+		t.Fatalf("ItemForTrainee: %v", err)
+	}
+	found := false
+	for _, e := range delivered {
+		if e.Key == "notice1" {
+			found = true
+			if !e.Late {
+				t.Fatalf("delivered event JSON is not marked late: %+v", e)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("delivered event notice1 missing from the trainee's own DeliveredEvent view")
+	}
+}
+
+// TestTrainingControlReportRejectsStaleExpectedSeq is slice-4-plan.md's
+// C11: control_report goes through the same idempotent command endpoint
+// as everything else (RFC-001 §7.5), so a second attempt against an
+// already-stale expected_seq must be rejected like any other command,
+// not silently accepted or treated as a replay of the first.
+func TestTrainingControlReportRejectsStaleExpectedSeq(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	_, trainee, workstationID, lesson := setupPilotLesson(t, ctx, pool, service, "ЮАО")
+	if _, err := service.Start(ctx, principal(auth.User{ID: lesson.InstructorID, Role: auth.RoleInstructor}, uuid.Nil), lesson.ID, "req-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	actor := principal(trainee, workstationID)
+	items, err := service.MyItems(ctx, actor)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("MyItems = %+v, %v", items, err)
+	}
+	item := items[0]
+
+	// open(0->1), accept(1->2), close(2->3): seq is 3 once closed.
+	closePilotItem(t, ctx, service, actor, item.ID)
+
+	first, err := service.Execute(ctx, actor, item.ID, training.Command{
+		CommandID: uuid.New(), ExpectedSeq: 3, Type: training.CommandControlReport,
+		Payload: []byte(`{"text":"первое сообщение"}`),
+	}, "req-cr-1")
+	if err != nil || first.Outcome != training.OutcomeApplied || first.Seq != 4 {
+		t.Fatalf("first control_report = %+v, %v", first, err)
+	}
+
+	stale, err := service.Execute(ctx, actor, item.ID, training.Command{
+		CommandID: uuid.New(), ExpectedSeq: 3, Type: training.CommandControlReport,
+		Payload: []byte(`{"text":"второе сообщение, устаревший seq"}`),
+	}, "req-cr-2")
+	if err != nil {
+		t.Fatalf("Execute(stale control_report): %v", err)
+	}
+	if stale.Outcome != training.OutcomeRejected || stale.ErrorCode == nil || *stale.ErrorCode != training.RejectStaleSeq {
+		t.Fatalf("stale control_report receipt = %+v", stale)
+	}
+
+	var reportCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM control_reports WHERE item_id=$1`, item.ID).Scan(&reportCount); err != nil {
+		t.Fatalf("count control_reports: %v", err)
+	}
+	if reportCount != 1 {
+		t.Fatalf("control_reports rows after a rejected stale attempt = %d, want 1", reportCount)
+	}
+
+	second, err := service.Execute(ctx, actor, item.ID, training.Command{
+		CommandID: uuid.New(), ExpectedSeq: 4, Type: training.CommandControlReport,
+		Payload: []byte(`{"text":"второе сообщение, верный seq"}`),
+	}, "req-cr-3")
+	if err != nil || second.Outcome != training.OutcomeApplied || second.Seq != 5 {
+		t.Fatalf("second control_report (correct seq) = %+v, %v", second, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM control_reports WHERE item_id=$1`, item.ID).Scan(&reportCount); err != nil {
+		t.Fatalf("recount control_reports: %v", err)
+	}
+	if reportCount != 2 {
+		t.Fatalf("control_reports rows after two accepted reports = %d, want 2", reportCount)
+	}
+}
+
+// TestTrainingTickSurvivesSpawnPlanMismatchAndDeliversOtherEvents covers
+// the fix for a real deadlock class: a hard-level run's own
+// next_offer_at scheduler tick can legitimately consume the queue slot
+// a spawn_card event was waiting to issue (ADR-018's checkSpawnQueuePlan
+// only proves the *static* plan is reachable, not that runtime issuance
+// order matches it). Before the fix, the resulting mismatch was
+// returned as a plain error on every single Tick forever (the event
+// stayed scheduled, so ScheduledItemEventsDue kept re-selecting it
+// first by due_at) and Tick aborted its whole batch on the first error
+// — starving every other running lesson's due events/offers, not just
+// this one. This test reproduces the exact race and asserts: (1) Tick
+// itself does not get stuck (an unrelated lesson's own due event is
+// still delivered in the very same Tick call the mismatch happens in),
+// and (2) the mismatched event reaches a terminal, non-scheduled state
+// instead of being retried forever.
+func TestTrainingTickSurvivesSpawnPlanMismatchAndDeliversOtherEvents(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	const svc = "training_race_svc"
+	pilotWorkflowService(t, ctx, pool, svc)
+	instructor := insertInstructor(t, ctx, pool, "training-race-instructor-"+uuid.NewString())
+	target := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "race-target", nil)
+	third := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "race-third", nil)
+	spawn := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "race-spawn", []content.Event{{
+		Key: "e1", AtS: 0, Since: "accepted", Delivery: "spawn_card",
+		Spawn: &content.EventSpawn{Kind: "scenario", ScenarioKey: "race-target", Version: 1},
+	}})
+	trainee := insertActiveTrainee(t, ctx, pool, "training-race-trainee-"+uuid.NewString(), svc)
+	ws := insertWorkstation(t, ctx, pool, 351)
+	actor := principal(instructor, uuid.Nil)
+	interval := 5
+	lesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "race", Mode: training.ModeTraining, Level: auth.LevelHard,
+		Timing: &training.Timing{OpenS: 30, PrimaryS: 30, CompleteS: 180, SpawnEveryS: &interval},
+	}, "req-race-create")
+	if err != nil {
+		t.Fatalf("CreateLesson: %v", err)
+	}
+	if _, err := service.ReplaceAssignments(ctx, actor, lesson.ID, []training.AssignmentInput{
+		{WorkstationNo: 351, UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{spawn, target, third}},
+	}, "req-race-assign"); err != nil {
+		t.Fatalf("ReplaceAssignments: %v", err)
+	}
+	if _, err := service.Start(ctx, actor, lesson.ID, "req-race-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	traineeActor := principal(trainee, ws)
+	run, _, _, err := service.MyRun(ctx, traineeActor)
+	if err != nil {
+		t.Fatalf("MyRun: %v", err)
+	}
+
+	// The hard timer fires before the trainee ever accepts the spawn
+	// card: it consumes queue[1] (target) itself, one tick ahead of the
+	// spawn_card event that also wants it.
+	if _, err := pool.Exec(ctx, `UPDATE runs SET next_offer_at=clock_timestamp()-interval '1 second' WHERE id=$1`, run.ID); err != nil {
+		t.Fatalf("make hard run due: %v", err)
+	}
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("Tick hard offer: %v", err)
+	}
+	items, err := service.MyItems(ctx, traineeActor)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("items after hard offer = %+v, %v, want 2", items, err)
+	}
+
+	// Now open+accept the spawn card: e1 schedules for "accepted",
+	// at_s=0, so it is immediately due — and immediately racing a queue
+	// slot the hard offer already took.
+	for seq, cmd := range []training.Command{
+		{CommandID: uuid.New(), Type: training.CommandOpen, Payload: []byte(`{}`)},
+		{CommandID: uuid.New(), Type: training.CommandSetStatus, Payload: []byte(`{"status":"accepted"}`)},
+	} {
+		cmd.ExpectedSeq = int64(seq)
+		receipt, err := service.Execute(ctx, traineeActor, items[0].ID, cmd, "req-race-cmd")
+		if err != nil || receipt.Outcome != training.OutcomeApplied {
+			t.Fatalf("command %s = %+v, %v", cmd.Type, receipt, err)
+		}
+	}
+
+	// A second, independent lesson with its own due event (an ordinary
+	// "offered" notice, due immediately) — due strictly after e1
+	// (created later), so ScheduledItemEventsDue's due_at ordering tries
+	// e1 first, exactly reproducing the old starvation.
+	other := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "race-other", []content.Event{{
+		Key: "n1", AtS: 0, Since: "offered", Delivery: "notice", From: "team", Text: "независимое занятие",
+	}})
+	otherTrainee := insertActiveTrainee(t, ctx, pool, "training-race-other-"+uuid.NewString(), svc)
+	insertWorkstation(t, ctx, pool, 352)
+	otherLesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "other", Mode: training.ModeTraining, Level: auth.LevelEasy,
+	}, "req-race-other-create")
+	if err != nil {
+		t.Fatalf("CreateLesson (other): %v", err)
+	}
+	if _, err := service.ReplaceAssignments(ctx, actor, otherLesson.ID, []training.AssignmentInput{
+		{WorkstationNo: 352, UserID: otherTrainee.ID, ScenarioVersionIDs: []uuid.UUID{other}},
+	}, "req-race-other-assign"); err != nil {
+		t.Fatalf("ReplaceAssignments (other): %v", err)
+	}
+	if _, err := service.Start(ctx, actor, otherLesson.ID, "req-race-other-start"); err != nil {
+		t.Fatalf("Start (other): %v", err)
+	}
+
+	// One Tick call must both resolve the mismatched e1 (not leave it
+	// scheduled forever) and still deliver the unrelated lesson's n1 —
+	// the exact case the old abort-on-first-error Tick could never
+	// reach.
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("Tick after race: %v", err)
+	}
+
+	var e1State string
+	var e1SkipReason *string
+	if err := pool.QueryRow(ctx, `SELECT state, skip_reason FROM item_events WHERE event_key='e1'`).Scan(&e1State, &e1SkipReason); err != nil {
+		t.Fatalf("read e1: %v", err)
+	}
+	if e1State != string(training.EventSkipped) {
+		t.Fatalf("e1 state = %q, want %q (terminal, not left scheduled)", e1State, training.EventSkipped)
+	}
+	if e1SkipReason == nil || *e1SkipReason != training.SkipReasonSpawnPlanMismatch {
+		t.Fatalf("e1 skip_reason = %v, want %q", e1SkipReason, training.SkipReasonSpawnPlanMismatch)
+	}
+
+	var n1State string
+	if err := pool.QueryRow(ctx, `SELECT state FROM item_events WHERE event_key='n1'`).Scan(&n1State); err != nil {
+		t.Fatalf("read n1: %v", err)
+	}
+	if n1State != string(training.EventDelivered) {
+		t.Fatalf("n1 (unrelated lesson's due event) state = %q, want %q — a poisoned event must not starve other lessons' scheduling", n1State, training.EventDelivered)
+	}
+
+	// A further Tick must not keep retrying the now-terminal e1 (no
+	// panic/error from re-selecting a skipped event — ScheduledItemEventsDue
+	// only selects state='scheduled').
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("Tick after terminal skip: %v", err)
+	}
+}
+
+// TestTrainingSpawnCardSetsSpawnedFromAndAppendsVariation covers
+// ADR-018's "variation добавляется к описанию экземпляра новой
+// карточки": a spawn_card event must both link the new item back to the
+// item that spawned it (items.spawned_from) and fold its variation text
+// into the new item's own card description, since the scenario body
+// itself is immutable and shared with the original item. Uses
+// kind=scenario (rather than kind=duplicate) purely to reach a queue
+// checkSpawnQueuePlan accepts: a duplicate spawn_card's own "next slot
+// must be the same version" rule means every occurrence of that version
+// in the queue carries the same spawn_card definition and demands yet
+// another occurrence after it, so no finite queue containing a
+// duplicate spawn_card can pass assignment-time validation today — a
+// separate, pre-existing gap this test does not attempt to fix.
+func TestTrainingSpawnCardSetsSpawnedFromAndAppendsVariation(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	const svc = "training_dup_spawn_svc"
+	pilotWorkflowService(t, ctx, pool, svc)
+	instructor := insertInstructor(t, ctx, pool, "training-dup-instructor-"+uuid.NewString())
+	const variation = "соседний дом, другой заявитель"
+	target := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "dup-target", nil)
+	source := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "dup-source", []content.Event{{
+		Key: "e1", AtS: 0, Since: "offered", Delivery: "spawn_card",
+		Spawn: &content.EventSpawn{Kind: "scenario", ScenarioKey: "dup-target", Version: 1, Variation: variation},
+	}})
+	trainee := insertActiveTrainee(t, ctx, pool, "training-dup-trainee-"+uuid.NewString(), svc)
+	ws := insertWorkstation(t, ctx, pool, 353)
+	actor := principal(instructor, uuid.Nil)
+
+	lesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "dup", Mode: training.ModeTraining, Level: auth.LevelEasy,
+	}, "req-dup-create")
+	if err != nil {
+		t.Fatalf("CreateLesson: %v", err)
+	}
+	if _, err := service.ReplaceAssignments(ctx, actor, lesson.ID, []training.AssignmentInput{
+		{WorkstationNo: 353, UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{source, target}},
+	}, "req-dup-assign"); err != nil {
+		t.Fatalf("ReplaceAssignments: %v", err)
+	}
+	if _, err := service.Start(ctx, actor, lesson.ID, "req-dup-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	traineeActor := principal(trainee, ws)
+	items, err := service.MyItems(ctx, traineeActor)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("MyItems before tick = %+v, %v", items, err)
+	}
+	sourceItemID := items[0].ID
+
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	items, err = service.MyItems(ctx, traineeActor)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("MyItems after spawn = %+v, %v, want 2", items, err)
+	}
+	var spawned training.Item
+	for _, it := range items {
+		if it.ID != sourceItemID {
+			spawned = it
+		}
+	}
+	if spawned.SpawnedFrom == nil || *spawned.SpawnedFrom != sourceItemID {
+		t.Fatalf("spawned item's SpawnedFrom = %v, want %s", spawned.SpawnedFrom, sourceItemID)
+	}
+	if !strings.Contains(spawned.Card.Incident.Description, variation) {
+		t.Fatalf("spawned item's card description = %q, want it to contain variation %q", spawned.Card.Incident.Description, variation)
+	}
+
+	// Close the spawned item and confirm evidence carries the same
+	// ancestry link (evidence.schema.json's spawned_from_item_id).
+	closePilotItem(t, ctx, service, traineeActor, spawned.ID)
+	var spawnedFromInEvidence string
+	if err := pool.QueryRow(ctx, `SELECT body->>'spawned_from_item_id' FROM evidence WHERE item_id=$1`, spawned.ID).Scan(&spawnedFromInEvidence); err != nil {
+		t.Fatalf("read evidence: %v", err)
+	}
+	if spawnedFromInEvidence != sourceItemID.String() {
+		t.Fatalf("evidence spawned_from_item_id = %q, want %q", spawnedFromInEvidence, sourceItemID.String())
+	}
+}
+
+// TestTrainingStopClearsHardRunNextOfferAt covers Stop's own barrier
+// freezing a hard-level run's next_offer_at immediately, rather than
+// leaving it for the durable lesson.close task (which may be delayed,
+// or never run at all if the worker is unavailable) to eventually
+// finish the run and thereby stop RunsDueForOffer from selecting it.
+// Before this fix, a stopped hard lesson's run stayed selectable by
+// RunsDueForOffer — not corrupting anything (tickHardRun's own
+// lesson.State check made it a no-op every time), but re-locking the
+// lesson and re-discovering "not running" on every single 500ms tick,
+// forever, until a worker eventually closed the run.
+func TestTrainingStopClearsHardRunNextOfferAt(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	const svc = "training_stop_hard_svc"
+	pilotWorkflowService(t, ctx, pool, svc)
+	instructor := insertInstructor(t, ctx, pool, "training-stphd-instr-"+uuid.NewString())
+	versionA := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "stophard-a", nil)
+	versionB := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "stophard-b", nil)
+	trainee := insertActiveTrainee(t, ctx, pool, "training-stphd-trn-"+uuid.NewString(), svc)
+	ws := insertWorkstation(t, ctx, pool, 361)
+	actor := principal(instructor, uuid.Nil)
+	interval := 5
+
+	lesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "stop-hard", Mode: training.ModeTraining, Level: auth.LevelHard,
+		Timing: &training.Timing{OpenS: 30, PrimaryS: 30, CompleteS: 180, SpawnEveryS: &interval},
+	}, "req-stophard-create")
+	if err != nil {
+		t.Fatalf("CreateLesson: %v", err)
+	}
+	if _, err := service.ReplaceAssignments(ctx, actor, lesson.ID, []training.AssignmentInput{
+		{WorkstationNo: 361, UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{versionA, versionB}},
+	}, "req-stophard-assign"); err != nil {
+		t.Fatalf("ReplaceAssignments: %v", err)
+	}
+	if _, err := service.Start(ctx, actor, lesson.ID, "req-stophard-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	traineeActor := principal(trainee, ws)
+	run, _, _, err := service.MyRun(ctx, traineeActor)
+	if err != nil {
+		t.Fatalf("MyRun: %v", err)
+	}
+	var nextOfferBefore *time.Time
+	if err := pool.QueryRow(ctx, `SELECT next_offer_at FROM runs WHERE id=$1`, run.ID).Scan(&nextOfferBefore); err != nil {
+		t.Fatalf("read next_offer_at before stop: %v", err)
+	}
+	if nextOfferBefore == nil {
+		t.Fatal("hard run's next_offer_at must be set right after start")
+	}
+
+	if _, err := service.Stop(ctx, actor, lesson.ID, nil, "req-stophard-stop"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	var nextOfferAfter *time.Time
+	if err := pool.QueryRow(ctx, `SELECT next_offer_at FROM runs WHERE id=$1`, run.ID).Scan(&nextOfferAfter); err != nil {
+		t.Fatalf("read next_offer_at after stop: %v", err)
+	}
+	if nextOfferAfter != nil {
+		t.Fatalf("next_offer_at after Stop = %v, want NULL (Stop's own barrier must clear it)", nextOfferAfter)
+	}
+
+	// Make the (now-cleared) offer moment due in the past regardless —
+	// RunsDueForOffer must not even select this run any more, so a
+	// further Tick offers nothing.
+	if _, err := pool.Exec(ctx, `UPDATE runs SET next_offer_at = NULL WHERE id=$1`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("Tick after stop: %v", err)
+	}
+	items, err := service.MyItems(ctx, traineeActor)
+	if err != nil {
+		t.Fatalf("MyItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items after stop+tick = %d, want 1 (no further hard offer once stopped)", len(items))
+	}
+}
+
+// TestTrainingRecoverAcrossMultipleRunningLessons covers Recover's own
+// per-lesson barrier (each running lesson locked and recovered in its
+// own transaction) still recovering every running lesson's own open
+// items correctly and idempotently, not just a single one — the
+// property a single cross-lesson bulk statement had for free and the
+// per-lesson loop must not regress.
+func TestTrainingRecoverAcrossMultipleRunningLessons(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	const svc = "training_recover_multi_svc"
+	pilotWorkflowService(t, ctx, pool, svc)
+	instructor := insertInstructor(t, ctx, pool, "training-recmulti-instr-"+uuid.NewString())
+	actor := principal(instructor, uuid.Nil)
+
+	setupOne := func(wsNo int, sourceKey string) uuid.UUID {
+		version := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, sourceKey, nil)
+		trainee := insertActiveTrainee(t, ctx, pool, "training-recmulti-trn-"+uuid.NewString(), svc)
+		insertWorkstation(t, ctx, pool, wsNo)
+		lesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{
+			ExerciseType: content.ExerciseTypeDDSProcessing, Title: sourceKey, Mode: training.ModeTraining, Level: auth.LevelEasy,
+		}, "req-recovermulti-create-"+sourceKey)
+		if err != nil {
+			t.Fatalf("CreateLesson(%s): %v", sourceKey, err)
+		}
+		if _, err := service.ReplaceAssignments(ctx, actor, lesson.ID, []training.AssignmentInput{
+			{WorkstationNo: wsNo, UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{version}},
+		}, "req-recovermulti-assign-"+sourceKey); err != nil {
+			t.Fatalf("ReplaceAssignments(%s): %v", sourceKey, err)
+		}
+		if _, err := service.Start(ctx, actor, lesson.ID, "req-recovermulti-start-"+sourceKey); err != nil {
+			t.Fatalf("Start(%s): %v", sourceKey, err)
+		}
+		traineeActor := principal(trainee, uuid.Nil)
+		items, err := service.MyItems(ctx, traineeActor)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("MyItems(%s) = %+v, %v", sourceKey, items, err)
+		}
+		return items[0].ID
+	}
+
+	itemA := setupOne(371, "recover-multi-a")
+	itemB := setupOne(372, "recover-multi-b")
+
+	interruptionCount := func(itemID uuid.UUID) int {
+		t.Helper()
+		var count int
+		if err := pool.QueryRow(ctx, `SELECT jsonb_array_length(interruptions) FROM items WHERE id=$1`, itemID).Scan(&count); err != nil {
+			t.Fatalf("count interruptions for %s: %v", itemID, err)
+		}
+		return count
+	}
+
+	firstRecoveryID := uuid.New()
+	affected, err := service.Recover(ctx, firstRecoveryID, "server_restart")
+	if err != nil {
+		t.Fatalf("Recover (first): %v", err)
+	}
+	if len(affected) != 2 {
+		t.Fatalf("Recover affected = %d items, want 2 (one per running lesson)", len(affected))
+	}
+	if interruptionCount(itemA) != 1 || interruptionCount(itemB) != 1 {
+		t.Fatalf("interruption counts after first Recover = %d, %d, want 1, 1", interruptionCount(itemA), interruptionCount(itemB))
+	}
+
+	// A repeat call with the same recovery_id is a no-op for both
+	// lessons, not just the first one the per-lesson loop visits.
+	if affected, err := service.Recover(ctx, firstRecoveryID, "server_restart"); err != nil || len(affected) != 0 {
+		t.Fatalf("Recover (repeat) = %+v, %v, want no items affected", affected, err)
+	}
+	if interruptionCount(itemA) != 1 || interruptionCount(itemB) != 1 {
+		t.Fatalf("interruption counts after repeat Recover = %d, %d, want unchanged 1, 1", interruptionCount(itemA), interruptionCount(itemB))
+	}
+
+	// A genuinely new recovery_id adds a second marker to both.
+	secondRecoveryID := uuid.New()
+	if affected, err := service.Recover(ctx, secondRecoveryID, "server_restart"); err != nil || len(affected) != 2 {
+		t.Fatalf("Recover (second, new id) = %+v, %v, want 2 items affected", affected, err)
+	}
+	if interruptionCount(itemA) != 2 || interruptionCount(itemB) != 2 {
+		t.Fatalf("interruption counts after second Recover = %d, %d, want 2, 2", interruptionCount(itemA), interruptionCount(itemB))
+	}
+}
+
+// TestTrainingConcurrentCommandVsStopRespectsBarrier covers RFC-001
+// §7.5's barrier guarantee under real concurrency, not just sequential
+// calls: "эффект либо до stop и в evidence, либо отклонён/отменён
+// после". A trainee's open command and the instructor's Stop race for
+// real, each in its own goroutine; PostgreSQL's own lock order
+// (Execute's lockForCommand takes lessons FOR SHARE for a non-close
+// command, Stop takes lessons FOR UPDATE) serializes them either way,
+// so exactly one of two outcomes must hold, checked against the item's
+// own frozen stop_cutoff_log_seq rather than assumed from goroutine
+// scheduling:
+//   - the open applied before the barrier: stop_cutoff_log_seq is set
+//     and is at least the open's own log_seq (its effect is inside the
+//     barrier, and will be included once a worker later closes the item);
+//   - the open lost the race entirely (lesson already stopped by the
+//     time its transaction reached the lock): it is rejected
+//     lesson_stopped, and its own log_seq is strictly greater than
+//     stop_cutoff_log_seq (the barrier came first; RFC-001 §7.5: "поздние
+//     отклонённые попытки остаются... вне этого снимка").
+//
+// No interleaving may produce anything else — in particular, "applied"
+// with a cutoff that excludes it, which would mean the barrier missed
+// an effect it should have captured.
+func TestTrainingConcurrentCommandVsStopRespectsBarrier(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	_, trainee, workstationID, lesson := setupPilotLesson(t, ctx, pool, service, "ЮАО")
+	instructorActor := principal(auth.User{ID: lesson.InstructorID, Role: auth.RoleInstructor}, uuid.Nil)
+	if _, err := service.Start(ctx, instructorActor, lesson.ID, "req-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	traineeActor := principal(trainee, workstationID)
+	items, err := service.MyItems(ctx, traineeActor)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("MyItems: %+v, %v", items, err)
+	}
+	itemID := items[0].ID
+
+	var wg sync.WaitGroup
+	var receipt training.Receipt
+	var execErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		receipt, execErr = service.Execute(ctx, traineeActor, itemID, training.Command{
+			CommandID: uuid.New(), ExpectedSeq: 0, Type: training.CommandOpen, Payload: []byte(`{}`),
+		}, "req-race-open")
+	}()
+	go func() {
+		defer wg.Done()
+		if _, err := service.Stop(ctx, instructorActor, lesson.ID, nil, "req-race-stop"); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	}()
+	wg.Wait()
+	if execErr != nil {
+		t.Fatalf("Execute returned an error instead of a receipt: %v", execErr)
+	}
+
+	var logSeq int64
+	var cutoff *int64
+	if err := pool.QueryRow(ctx, `SELECT log_seq, stop_cutoff_log_seq FROM items WHERE id=$1`, itemID).Scan(&logSeq, &cutoff); err != nil {
+		t.Fatalf("read item after race: %v", err)
+	}
+	if cutoff == nil {
+		t.Fatalf("stop_cutoff_log_seq is NULL after Stop committed — barrier did not freeze this item")
+	}
+
+	switch receipt.Outcome {
+	case training.OutcomeApplied:
+		if *cutoff < receipt.LogSeq {
+			t.Fatalf("open applied (log_seq=%d) but stop_cutoff_log_seq=%d excludes it — barrier missed an effect it committed after", receipt.LogSeq, *cutoff)
+		}
+	case training.OutcomeRejected:
+		if receipt.ErrorCode == nil || *receipt.ErrorCode != training.RejectLessonStopped {
+			t.Fatalf("rejected receipt = %+v, want lesson_stopped", receipt)
+		}
+		if *cutoff >= receipt.LogSeq {
+			t.Fatalf("open rejected as lesson_stopped (log_seq=%d) but stop_cutoff_log_seq=%d does not precede it — a late rejected attempt must sit strictly outside the barrier's own snapshot", receipt.LogSeq, *cutoff)
+		}
+	default:
+		t.Fatalf("unexpected receipt: %+v", receipt)
+	}
+}
+
+// TestTrainingConcurrentCloseOffersNextCardExactlyOnce covers "закрытие/
+// следующая карточка" under real concurrency: two close attempts on the
+// same item, different command_ids, racing at the same expected_seq —
+// exactly one may apply (mirrors TestTrainingConcurrentCommandsOneApplied's
+// own open-vs-open race, here specifically for close, since a close's
+// own accepted branch also offers the run's next queued item and that
+// is the invariant actually at risk — runs.queue_cursor and
+// UNIQUE(run_id, ordinal), RFC-001 §7.2). Asserts the queue advanced by
+// exactly one card, not zero and not two.
+func TestTrainingConcurrentCloseOffersNextCardExactlyOnce(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	const svc = "training_close_race_svc"
+	pilotWorkflowService(t, ctx, pool, svc)
+	instructor := insertInstructor(t, ctx, pool, "training-closerace-instr-"+uuid.NewString())
+	versionA := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "closerace-a", nil)
+	versionB := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "closerace-b", nil)
+	trainee := insertActiveTrainee(t, ctx, pool, "training-closerace-trn-"+uuid.NewString(), svc)
+	ws := insertWorkstation(t, ctx, pool, 381)
+	actor := principal(instructor, uuid.Nil)
+
+	lesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "close-race", Mode: training.ModeTraining, Level: auth.LevelEasy,
+	}, "req-closerace-create")
+	if err != nil {
+		t.Fatalf("CreateLesson: %v", err)
+	}
+	if _, err := service.ReplaceAssignments(ctx, actor, lesson.ID, []training.AssignmentInput{
+		{WorkstationNo: 381, UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{versionA, versionB}},
+	}, "req-closerace-assign"); err != nil {
+		t.Fatalf("ReplaceAssignments: %v", err)
+	}
+	if _, err := service.Start(ctx, actor, lesson.ID, "req-closerace-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	traineeActor := principal(trainee, ws)
+	items, err := service.MyItems(ctx, traineeActor)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("MyItems before close: %+v, %v", items, err)
+	}
+	itemID := items[0].ID
+
+	for seq, cmd := range []training.Command{
+		{CommandID: uuid.New(), Type: training.CommandOpen, Payload: []byte(`{}`)},
+		{CommandID: uuid.New(), Type: training.CommandSetStatus, Payload: []byte(`{"status":"accepted"}`)},
+	} {
+		cmd.ExpectedSeq = int64(seq)
+		r, err := service.Execute(ctx, traineeActor, itemID, cmd, "req-closerace-prep")
+		if err != nil || r.Outcome != training.OutcomeApplied {
+			t.Fatalf("prep command %s = %+v, %v", cmd.Type, r, err)
+		}
+	}
+
+	results := make(chan training.Receipt, 2)
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := service.Execute(ctx, traineeActor, itemID, training.Command{
+				CommandID: uuid.New(), ExpectedSeq: 2, Type: training.CommandClose, Payload: []byte(`{}`),
+			}, "req-closerace")
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- r
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	for e := range errs {
+		t.Fatalf("Execute returned an error instead of a rejected Receipt: %v", e)
+	}
+
+	// Unlike two racing "open" attempts (item.State never becomes Closed
+	// in between), the losing close here is decided against an item
+	// Execute's own switch already sees as item.State==Closed — that
+	// case is checked ahead of expected_seq (internal/training/
+	// service.go's Execute: item_closed before stale_seq) — so the
+	// loser is rejected item_closed, not stale_seq.
+	var applied, lostRace int
+	for r := range results {
+		switch {
+		case r.Outcome == training.OutcomeApplied:
+			applied++
+		case r.Outcome == training.OutcomeRejected && r.ErrorCode != nil &&
+			(*r.ErrorCode == training.RejectStaleSeq || *r.ErrorCode == training.RejectItemClosed):
+			lostRace++
+		default:
+			t.Fatalf("unexpected receipt: %+v", r)
+		}
+	}
+	if applied != 1 || lostRace != 1 {
+		t.Fatalf("applied=%d lostRace=%d, want 1 and 1 (exactly one close must win)", applied, lostRace)
+	}
+
+	finalItems, err := service.MyItems(ctx, traineeActor)
+	if err != nil {
+		t.Fatalf("MyItems after race: %v", err)
+	}
+	if len(finalItems) != 2 {
+		t.Fatalf("items after the close race = %d, want 2 (original closed + exactly one next card offered, not zero and not duplicated)", len(finalItems))
+	}
+	closedCount, offeredCount := 0, 0
+	for _, it := range finalItems {
+		switch it.State {
+		case training.ItemClosed:
+			closedCount++
+		case training.ItemOffered:
+			offeredCount++
+		}
+	}
+	if closedCount != 1 || offeredCount != 1 {
+		t.Fatalf("closed=%d offered=%d among %+v, want 1 and 1", closedCount, offeredCount, finalItems)
+	}
+}
+
+// TestTrainingThreeParticipantsIndependentQueues covers
+// slice-planning.md §4's DoD line literally ("преподаватель задаёт
+// разные очереди минимум трём участникам") — the existing group test
+// (TestTrainingGroupAssignmentsAdvanceIndependentQueues) only ever
+// covers two. Three trainees, three distinct queues, closing one
+// participant's item must not affect either of the other two's own
+// queue position or open item.
+func TestTrainingThreeParticipantsIndependentQueues(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	const svc = "training_three_participants_svc"
+	pilotWorkflowService(t, ctx, pool, svc)
+	instructor := insertInstructor(t, ctx, pool, "training-three-instr-"+uuid.NewString())
+	actor := principal(instructor, uuid.Nil)
+
+	versionA := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "three-a", nil)
+	versionB := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "three-b", nil)
+	versionC := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "three-c", nil)
+
+	traineeX := insertActiveTrainee(t, ctx, pool, "training-three-x-"+uuid.NewString(), svc)
+	traineeY := insertActiveTrainee(t, ctx, pool, "training-three-y-"+uuid.NewString(), svc)
+	traineeZ := insertActiveTrainee(t, ctx, pool, "training-three-z-"+uuid.NewString(), svc)
+	wsX, wsY, wsZ := insertWorkstation(t, ctx, pool, 391), insertWorkstation(t, ctx, pool, 392), insertWorkstation(t, ctx, pool, 393)
+
+	lesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "three", Mode: training.ModeTraining, Level: auth.LevelEasy,
+	}, "req-three-create")
+	if err != nil {
+		t.Fatalf("CreateLesson: %v", err)
+	}
+	if _, err := service.ReplaceAssignments(ctx, actor, lesson.ID, []training.AssignmentInput{
+		{WorkstationNo: 391, UserID: traineeX.ID, ScenarioVersionIDs: []uuid.UUID{versionA, versionB, versionC}},
+		{WorkstationNo: 392, UserID: traineeY.ID, ScenarioVersionIDs: []uuid.UUID{versionB, versionC}},
+		{WorkstationNo: 393, UserID: traineeZ.ID, ScenarioVersionIDs: []uuid.UUID{versionC}},
+	}, "req-three-assign"); err != nil {
+		t.Fatalf("ReplaceAssignments: %v", err)
+	}
+	if _, err := service.Start(ctx, actor, lesson.ID, "req-three-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	actorX, actorY, actorZ := principal(traineeX, wsX), principal(traineeY, wsY), principal(traineeZ, wsZ)
+	itemsX, err := service.MyItems(ctx, actorX)
+	if err != nil || len(itemsX) != 1 || itemsX[0].ScenarioVersionID != versionA {
+		t.Fatalf("X's items = %+v, %v, want [A]", itemsX, err)
+	}
+	itemsY, err := service.MyItems(ctx, actorY)
+	if err != nil || len(itemsY) != 1 || itemsY[0].ScenarioVersionID != versionB {
+		t.Fatalf("Y's items = %+v, %v, want [B]", itemsY, err)
+	}
+	itemsZ, err := service.MyItems(ctx, actorZ)
+	if err != nil || len(itemsZ) != 1 || itemsZ[0].ScenarioVersionID != versionC {
+		t.Fatalf("Z's items = %+v, %v, want [C]", itemsZ, err)
+	}
+
+	// Close X's first item — Y and Z, on entirely different queues and
+	// runs, must be completely unaffected.
+	closePilotItem(t, ctx, service, actorX, itemsX[0].ID)
+
+	itemsX, err = service.MyItems(ctx, actorX)
+	if err != nil || len(itemsX) != 2 || itemsX[1].ScenarioVersionID != versionB || itemsX[1].State != training.ItemOffered {
+		t.Fatalf("X's items after closing #1 = %+v, %v, want [closed A, offered B]", itemsX, err)
+	}
+	itemsYAfter, err := service.MyItems(ctx, actorY)
+	if err != nil || len(itemsYAfter) != 1 || itemsYAfter[0].ID != itemsY[0].ID || itemsYAfter[0].State != training.ItemOffered {
+		t.Fatalf("Y's items after X's close = %+v, %v, want unchanged [offered B]", itemsYAfter, err)
+	}
+	itemsZAfter, err := service.MyItems(ctx, actorZ)
+	if err != nil || len(itemsZAfter) != 1 || itemsZAfter[0].ID != itemsZ[0].ID || itemsZAfter[0].State != training.ItemOffered {
+		t.Fatalf("Z's items after X's close = %+v, %v, want unchanged [offered C]", itemsZAfter, err)
+	}
+
+	monitor, err := service.Monitor(ctx, actor, lesson.ID)
+	if err != nil {
+		t.Fatalf("Monitor: %v", err)
+	}
+	if len(monitor.Rows) != 3 {
+		t.Fatalf("monitor rows = %d, want 3", len(monitor.Rows))
+	}
+	doneByUser := map[uuid.UUID]int{}
+	for _, row := range monitor.Rows {
+		doneByUser[row.User.ID] = row.Done
+	}
+	if doneByUser[traineeX.ID] != 1 || doneByUser[traineeY.ID] != 0 || doneByUser[traineeZ.ID] != 0 {
+		t.Fatalf("monitor done counts = %+v, want X=1 Y=0 Z=0", doneByUser)
 	}
 }

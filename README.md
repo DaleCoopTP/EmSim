@@ -123,3 +123,24 @@ TEST_DATABASE_URL="postgres://user@localhost:5432/emsim_test?sslmode=disable" \
 покидает `reference`), администратор доходит до `/services`, но получает 403
 на `/scenarios`, неаутентифицированный запрос — 401, а создание обучаемого с
 неизвестным `service_code` — настоящий 422 от работающего процесса `api`.
+
+Срез 4 (групповые занятия, очереди, hard, монитор, stop, SSE, restart
+recovery) проверяется на трёх уровнях: unit — Hub epoch/cursor/resync
+(`internal/platform/realtime/hub_test.go`); `training.Service` напрямую
+против настоящего PostgreSQL (`test/integration/training_service_test.go`) —
+независимые очереди нескольких участников на одной и на разных версиях
+сценария, конкурентные команды на одной карточке, hard-очередь (валидация
+`spawn_every_s`, ровно одна выдача за tick даже после часового простоя
+планировщика — RFC-001 §7.2 «пропущенные интервалы не воспроизводятся
+пачкой»), stop как барьер с durable `lesson.close`, восстановление после
+рестарта (идемпотентные маркеры interruption, дедлайны и `due_at` карточек/
+событий не сдвигаются, просроченное событие доставляется с `late=true`),
+`control_report` — реплей, устаревший `expected_seq`, доказанная неизменность
+evidence — и живой `RunListener` поверх настоящего `LISTEN`/`NOTIFY`
+(`test/integration/realtime_test.go`); и, наконец, HTTP end-to-end через
+настоящий процесс `api` (`test/integration/training_realtime_e2e_test.go`,
+`TestAPIProcessSSEStreamSnapshotReplayResyncAndFiltering`) — RFC-001 §7.7
+целиком: `stream.ready` раньше любого другого события, переподключение по
+`Last-Event-ID` и по запасному `?cursor` (для нового `EventSource`
+без заголовков) реплеит пропущенное, неизвестный cursor даёт `resync`, а
+поток преподавателя и поток каждого обучаемого не видят чужих событий.

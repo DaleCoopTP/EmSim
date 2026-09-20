@@ -182,6 +182,14 @@ const (
 const (
 	SkipReasonItemClosed    = "item_closed"
 	SkipReasonLessonStopped = "lesson_stopped"
+	// SkipReasonSpawnPlanMismatch is tickEvent's own terminal outcome for
+	// a spawn_card event whose target no longer matches the run's queue
+	// cursor at due_at — the hard scheduler's next_offer_at tick can
+	// legitimately consume the same queue slot first (ADR-018 only
+	// guarantees the *static* plan is reachable, not that runtime
+	// issuance order matches it). Retrying such an event can never
+	// succeed, so it is skipped rather than left scheduled forever.
+	SkipReasonSpawnPlanMismatch = "spawn_plan_mismatch"
 )
 
 // ItemEvent is one scheduled or terminal scenario event for an item.

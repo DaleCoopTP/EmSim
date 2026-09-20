@@ -389,6 +389,16 @@ func (s *Service) Stop(ctx context.Context, actor auth.Principal, lessonID uuid.
 				return err
 			}
 		}
+		// A hard-level run's own next_offer_at must stop being
+		// actionable at the same barrier as everything else Stop
+		// freezes — otherwise tickHardRun's own every-500ms poll keeps
+		// re-selecting it (RunsDueForOffer only filters on the run's
+		// own state, not its lesson's) until the durable lesson.close
+		// task later finishes the run, which may be delayed or, if the
+		// worker is unavailable, may never happen at all.
+		if err := s.store.ClearNextOfferForActiveRuns(ctx, tx, lessonID); err != nil {
+			return err
+		}
 
 		if err := s.store.AuditRecord(ctx, tx, audit.Entry{
 			ActorID: &actor.UserID, ActorRole: string(actor.Role), Action: "lesson.stop",
@@ -404,6 +414,29 @@ func (s *Service) Stop(ctx context.Context, actor auth.Principal, lessonID uuid.
 			DedupKey: dedupKey, NextAttemptAt: now,
 		}); err != nil {
 			return err
+		}
+		// The lesson-scoped notify (no user_id) is what the
+		// instructor's own /lessons/{id}/stream matches on
+		// (streamLesson filters by e.LessonID). /my/stream filters by
+		// e.UserID instead (streamMy: "a trainee only ever has one
+		// active run, but that run's lesson id is not known up front"),
+		// so a userID=nil notify never reaches a trainee at all — before
+		// this fix, a trainee only learned their lesson had stopped once
+		// the durable lesson.close task actually interrupted their open
+		// item (or, with no open item, only via the next unrelated
+		// refetch). Notify every affected run's own trainee too, so
+		// every open workplace refreshes and shows the stop immediately.
+		runs, err := s.store.RunsByLesson(ctx, tx, lessonID)
+		if err != nil {
+			return err
+		}
+		for _, run := range runs {
+			if run.State != RunActive {
+				continue
+			}
+			if err := s.notify(ctx, tx, lessonID, run.UserID, uuid.Nil); err != nil {
+				return err
+			}
 		}
 		if err := s.notify(ctx, tx, lessonID, uuid.Nil, uuid.Nil); err != nil {
 			return err
@@ -609,13 +642,22 @@ func (s *Service) startOneAssignment(ctx context.Context, tx pgx.Tx, lesson Less
 		return err
 	}
 
-	return s.offerQueueVersion(ctx, tx, lesson, run, a, 0, now)
+	return s.offerQueueVersion(ctx, tx, lesson, run, a, 0, now, nil)
 }
 
 // offerQueueVersion snapshots the next approved scenario into an offered
 // item. The caller owns the run lock (or has just inserted the run), so the
 // ordinal and queue cursor cannot race another normal-close offer.
-func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesson, run Run, assignment Assignment, queueIndex int, now time.Time) error {
+// spawnOrigin carries where a spawn_card-created item came from
+// (ADR-018: "variation добавляется к описанию экземпляра новой
+// карточки") — nil for every ordinary queue offer (start, a normal
+// close, a hard-scheduler tick), non-nil only from spawnEventCard.
+type spawnOrigin struct {
+	itemID    uuid.UUID
+	variation string
+}
+
+func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesson, run Run, assignment Assignment, queueIndex int, now time.Time, origin *spawnOrigin) error {
 	if queueIndex < 0 || queueIndex >= len(assignment.ScenarioVersionIDs) {
 		return fmt.Errorf("training: queue index %d out of range", queueIndex)
 	}
@@ -629,12 +671,20 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 		return err
 	}
 	openAt := now.Add(time.Duration(lesson.Timing.OpenS) * time.Second)
+	card := content.ProjectCard(version.Body.Card)
+	var spawnedFrom *uuid.UUID
+	if origin != nil {
+		spawnedFrom = &origin.itemID
+		if origin.variation != "" {
+			card.Incident.Description = appendVariation(card.Incident.Description, origin.variation)
+		}
+	}
 	item := Item{
 		ID: uuid.New(), RunID: run.ID, LessonID: lesson.ID, UserID: run.UserID,
 		WorkstationNo: run.WorkstationNo, ScenarioVersionID: versionID,
 		ScenarioDigest: fmt.Sprintf("%x", version.Digest), TargetService: version.Body.TargetService,
-		Ordinal: queueIndex + 1, State: ItemOffered, Reaction: content.ReactionAdded,
-		Card: content.ProjectCard(version.Body.Card), Workflow: svc.Workflow,
+		Ordinal: queueIndex + 1, SpawnedFrom: spawnedFrom, State: ItemOffered, Reaction: content.ReactionAdded,
+		Card: card, Workflow: svc.Workflow,
 		PilotGoal: version.Body.Reference.PilotGoal, Mode: lesson.Mode,
 		TimingEffective: lesson.Timing,
 		Deadlines:       Deadlines{OpenAt: openAt, PrimaryAt: openAt},
@@ -1044,7 +1094,7 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	if lesson.Level != auth.LevelHard && run.QueueCursor < len(assignment.ScenarioVersionIDs) {
 		// A normal close advances an ordered queue. Hard-mode parallel
 		// issuance is intentionally delegated to C5's scheduler.
-		if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, closedAt); err != nil {
+		if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, closedAt, nil); err != nil {
 			return Receipt{}, err
 		}
 		return receipt, nil
@@ -1176,6 +1226,19 @@ func (s *Service) recordControlReport(ctx context.Context, tx pgx.Tx, actor auth
 	return receipt, nil
 }
 
+// appendVariation adds a duplicate spawn_card's own "чем отличается"
+// text (scenario.schema.json's events[].spawn.variation) to the new
+// item's card description, per ADR-018: "'variation' добавляется к
+// описанию экземпляра новой карточки" — the scenario body itself is
+// immutable and shared with the original item, so the distinguishing
+// detail can only live on the spawned item's own mutable card copy.
+func appendVariation(description, variation string) string {
+	if description == "" {
+		return variation
+	}
+	return description + " " + variation
+}
+
 func assignmentForRun(assignments []Assignment, run Run) (Assignment, bool) {
 	for _, assignment := range assignments {
 		if assignment.WorkstationID == run.WorkstationID && assignment.UserID == run.UserID {
@@ -1237,7 +1300,7 @@ func (s *Service) MyItems(ctx context.Context, actor auth.Principal) ([]Item, er
 	return items, err
 }
 
-// Recover marks every still-open item of a running lesson with one
+// Recover marks every still-open item of every running lesson with one
 // idempotent interruption entry, per RFC-001 §7.2's "упрощение MVP":
 // cause is always the constant server-restart cause, offered_at/
 // deadlines/due_at are never touched, and a repeat call (e.g. a retried
@@ -1248,14 +1311,58 @@ func (s *Service) MyItems(ctx context.Context, actor auth.Principal) ([]Item, er
 // после фиксации маркеров"); it does not itself decide when overdue
 // events are delivered — that is simply the scheduler's normal Tick
 // loop, started right after this returns, picking up whatever is due.
+//
+// Each running lesson is recovered under its own barrier — one
+// transaction per lesson, holding that lesson's own row FOR UPDATE for
+// its duration (RFC-001 §7.2: "в транзакции под барьером занятия"),
+// the same lock Start/Stop already use — rather than one bulk statement
+// spanning every running lesson under no lock at all. This MVP still
+// only ever calls Recover once, synchronously, before the api process
+// starts accepting any HTTP request (so nothing can race it today), but
+// a real per-lesson barrier means Recover stays correct even if that
+// single-process assumption is ever relaxed, instead of silently
+// depending on it.
 func (s *Service) Recover(ctx context.Context, recoveryID uuid.UUID, cause string) ([]uuid.UUID, error) {
+	var lessonIDs []uuid.UUID
+	if err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		lessonIDs, err = s.store.RunningLessonIDs(ctx, tx)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+
+	var affected []uuid.UUID
+	for _, lessonID := range lessonIDs {
+		items, err := s.recoverOneLesson(ctx, lessonID, recoveryID, cause)
+		if err != nil {
+			return nil, err
+		}
+		affected = append(affected, items...)
+	}
+	return affected, nil
+}
+
+// recoverOneLesson is Recover's own per-lesson barrier transaction: lock
+// lessonID FOR UPDATE, re-check it is still running (it could have
+// finished between RunningLessonIDs' unlocked read and this lock — a
+// lesson that raced its own natural close during startup needs no
+// recovery), then mark its open items.
+func (s *Service) recoverOneLesson(ctx context.Context, lessonID, recoveryID uuid.UUID, cause string) ([]uuid.UUID, error) {
 	var affected []uuid.UUID
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		lesson, err := s.store.LessonByID(ctx, tx, lessonID, LockUpdate)
+		if err != nil {
+			return err
+		}
+		if lesson.State != LessonRunning {
+			return nil
+		}
 		now, err := s.store.Now(ctx, tx)
 		if err != nil {
 			return err
 		}
-		affected, err = s.store.RecoverOpenItems(ctx, tx, Interruption{RecoveryID: recoveryID, Cause: cause, DetectedAt: now})
+		affected, err = s.store.RecoverOpenItems(ctx, tx, lessonID, Interruption{RecoveryID: recoveryID, Cause: cause, DetectedAt: now})
 		if err != nil {
 			return err
 		}
@@ -1263,7 +1370,7 @@ func (s *Service) Recover(ctx context.Context, recoveryID uuid.UUID, cause strin
 			return nil
 		}
 		return s.store.AuditRecord(ctx, tx, audit.Entry{
-			Action: "training.recover", ResourceType: "lesson", Outcome: audit.OutcomeOK,
+			Action: "training.recover", ResourceType: "lesson", ResourceID: &lessonID, Outcome: audit.OutcomeOK,
 			Details: map[string]any{"recovery_id": recoveryID.String(), "cause": cause, "item_count": len(affected)},
 		})
 	})
@@ -1297,17 +1404,28 @@ func (s *Service) Tick(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	// Each candidate is independent: one due run or event that fails —
+	// a transient lock conflict, or a structural error — must not stop
+	// every other due run/event in this same tick from being tried.
+	// Before this fix, the first error aborted the whole batch, and
+	// since ScheduledItemEventsDue orders by due_at, a candidate that
+	// fails the same way on every attempt (see tickEvent's own
+	// spawn_card-mismatch handling) starved the scheduler for every
+	// other running lesson forever, not just delayed it. Errors are
+	// joined and returned so the caller (runTrainingScheduler) still
+	// logs/observes them; they never abort the loop itself.
+	var errs []error
 	for _, run := range dueRuns {
 		if err := s.tickHardRun(ctx, run.ID); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("hard run %s: %w", run.ID, err))
 		}
 	}
 	for _, event := range dueEvents {
 		if err := s.tickEvent(ctx, event.ID); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("item event %s: %w", event.ID, err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *Service) tickHardRun(ctx context.Context, runID uuid.UUID) error {
@@ -1316,7 +1434,12 @@ func (s *Service) tickHardRun(ctx context.Context, runID uuid.UUID) error {
 		if err != nil {
 			return err
 		}
-		lesson, err := s.store.LessonByID(ctx, tx, peek.LessonID, LockUpdate)
+		// FOR SHARE, not FOR UPDATE: tickHardRun never writes to the
+		// lessons row itself (only Stop/Start/FinishLesson do), so
+		// FOR UPDATE here bought no extra safety and only blocked every
+		// trainee's own FOR SHARE command on this lesson, every 500ms
+		// (same reasoning as tickEvent's own lock, above).
+		lesson, err := s.store.LessonByID(ctx, tx, peek.LessonID, LockShare)
 		if err != nil {
 			return err
 		}
@@ -1328,7 +1451,24 @@ func (s *Service) tickHardRun(ctx context.Context, runID uuid.UUID) error {
 		if err != nil {
 			return err
 		}
-		if lesson.State != LessonRunning || lesson.Level != auth.LevelHard || run.State != RunActive || run.NextOfferAt == nil || run.NextOfferAt.After(now) {
+		if lesson.State != LessonRunning || lesson.Level != auth.LevelHard || run.State != RunActive {
+			// Stop's own barrier (Service.Stop) already clears
+			// next_offer_at for every active run of a lesson it stops,
+			// so this should not normally be reached with a non-nil
+			// NextOfferAt — but a defensive clear here costs nothing
+			// and guarantees this run can never be re-selected by
+			// RunsDueForOffer on the next tick regardless of how it
+			// stopped being tickable (a lesson stopped through some
+			// future path that forgets to clear it, a run finished by
+			// some other means, etc.).
+			if run.NextOfferAt != nil {
+				if err := s.store.SetRunNextOfferAt(ctx, tx, run.ID, nil); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if run.NextOfferAt == nil || run.NextOfferAt.After(now) {
 			return nil
 		}
 		assignments, err := s.store.AssignmentsByLesson(ctx, tx, lesson.ID)
@@ -1342,7 +1482,7 @@ func (s *Service) tickHardRun(ctx context.Context, runID uuid.UUID) error {
 		if run.QueueCursor >= len(assignment.ScenarioVersionIDs) {
 			return s.store.SetRunNextOfferAt(ctx, tx, run.ID, nil)
 		}
-		if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, now); err != nil {
+		if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, now, nil); err != nil {
 			return err
 		}
 		if lesson.Timing.SpawnEveryS == nil {
@@ -1373,13 +1513,41 @@ func (s *Service) tickEvent(ctx context.Context, eventID uuid.UUID) error {
 		if err != nil {
 			return err
 		}
-		lesson, err := s.store.LessonByID(ctx, tx, peekRun.LessonID, LockUpdate)
+		// The event's own definition is resolved from the unlocked peek
+		// before any lock is taken — item.ScenarioVersionID, like
+		// run.LessonID, never changes after insert (scenario versions
+		// are immutable, RFC-001 §6), so reading it this early is safe
+		// and lets the lock plan below be decided up front.
+		version, err := s.scenarios.VersionByID(ctx, tx, peekItem.ScenarioVersionID)
 		if err != nil {
 			return err
 		}
-		run, err := s.store.RunByID(ctx, tx, peekRun.ID, LockUpdate)
+		definition, ok := eventByKey(version.Body.Events, event.EventKey)
+		if !ok {
+			return fmt.Errorf("training: event %q missing from scenario version", event.EventKey)
+		}
+		// RFC-001 §7.2's own scheduler lock order is "lessons FOR SHARE
+		// → items FOR UPDATE → item_events...": tickEvent never writes
+		// to the lessons row itself (only Stop/Start/FinishLesson do),
+		// so FOR UPDATE here bought no additional safety — it only
+		// blocked every trainee's own FOR SHARE command on this lesson
+		// for the transaction's duration, every 500ms, including while
+		// an event sits waiting on status_in and is re-selected on
+		// every tick. runs FOR UPDATE is upgraded only for a spawn_card
+		// event, the one case that actually writes to runs
+		// (queue_cursor/next_offer_at) — RFC-001 §7.2: "если транзакция
+		// создаёт следующую карточку, она заранее берёт runs FOR UPDATE
+		// до блокировок items", which is exactly the order kept below.
+		lesson, err := s.store.LessonByID(ctx, tx, peekRun.LessonID, LockShare)
 		if err != nil {
 			return err
+		}
+		run := peekRun
+		if definition.Delivery == "spawn_card" {
+			run, err = s.store.RunByID(ctx, tx, peekRun.ID, LockUpdate)
+			if err != nil {
+				return err
+			}
 		}
 		item, err := s.store.ItemByID(ctx, tx, event.ItemID, LockUpdate)
 		if err != nil {
@@ -1392,27 +1560,72 @@ func (s *Service) tickEvent(ctx context.Context, eventID uuid.UUID) error {
 		if lesson.State != LessonRunning || item.State == ItemClosed || item.State == ItemInterrupted {
 			return s.store.SkipItemEvent(ctx, tx, event.ID, SkipReasonItemClosed)
 		}
-		version, err := s.scenarios.VersionByID(ctx, tx, item.ScenarioVersionID)
-		if err != nil {
-			return err
-		}
-		definition, ok := eventByKey(version.Body.Events, event.EventKey)
-		if !ok {
-			return fmt.Errorf("training: event %q missing from scenario version", event.EventKey)
-		}
 		if len(definition.StatusIn) > 0 && !reactionIn(definition.StatusIn, item.Reaction) {
 			return nil
 		}
 		if definition.Delivery == "spawn_card" {
 			if err := s.spawnEventCard(ctx, tx, lesson, run, item, definition, now); err != nil {
+				if isSpawnPlanMismatch(err) {
+					// The hard scheduler's own next_offer_at tick raced
+					// this event and consumed the queue slot spawn_card
+					// wanted first (ADR-018's plan check at assignment
+					// time only proves the *static* plan is reachable,
+					// not that runtime issuance order matches it).
+					// Retrying can never succeed once that slot is
+					// gone, so this is a terminal skip, not an error —
+					// before this fix, the same mismatch was returned
+					// on every tick forever, and (with Tick's old
+					// abort-on-first-error behaviour) starved the
+					// scheduler for every other lesson, not just this
+					// event.
+					if err := s.store.SkipItemEvent(ctx, tx, event.ID, SkipReasonSpawnPlanMismatch); err != nil {
+						return err
+					}
+					return s.notify(ctx, tx, lesson.ID, item.UserID, item.ID)
+				}
 				return err
 			}
 		}
-		if err := s.store.DeliverItemEvent(ctx, tx, event.ID, now, now.Sub(event.DueAt) > 5*time.Second); err != nil {
+		// late is RFC-001 §7.2's restart-recovery marker ("простой
+		// сервера"), not a generic "delivered more than 5s after
+		// due_at" flag: an event legitimately waiting on status_in
+		// (definition.StatusIn above) can clear that gate many seconds
+		// after due_at without any server outage ever happening, and
+		// schema.sql's own comment on item_events.late documents the
+		// restart-only meaning. Only mark late when this item actually
+		// carries an interruption detected at or after this event's own
+		// due_at — i.e. the scheduler itself was down for some or all
+		// of the time this event was pending.
+		late := now.Sub(event.DueAt) > 5*time.Second && interruptedSince(item.Interruptions, event.DueAt)
+		if err := s.store.DeliverItemEvent(ctx, tx, event.ID, now, late); err != nil {
 			return err
 		}
 		return s.notify(ctx, tx, lesson.ID, item.UserID, item.ID)
 	})
+}
+
+// isSpawnPlanMismatch reports whether err is spawnEventCard's own
+// deterministic "runtime queue state disagrees with this spawn_card's
+// target" rejection (all its own validationErr calls, field
+// "scenario_version_ids") as opposed to a structural failure (a content
+// lookup error, storage failure) that should still be retried/surfaced
+// as a real error.
+func isSpawnPlanMismatch(err error) bool {
+	var verr *ValidationError
+	return errors.As(err, &verr) && verr.Field == "scenario_version_ids"
+}
+
+// interruptedSince reports whether interruptions contains a marker
+// detected at or after threshold — used to distinguish an event
+// genuinely delivered late because of a server outage (RFC-001 §7.2)
+// from one that simply waited on status_in for a while.
+func interruptedSince(interruptions []Interruption, threshold time.Time) bool {
+	for _, in := range interruptions {
+		if !in.DetectedAt.Before(threshold) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) spawnEventCard(ctx context.Context, tx pgx.Tx, lesson Lesson, run Run, item Item, definition content.Event, now time.Time) error {
@@ -1451,7 +1664,11 @@ func (s *Service) spawnEventCard(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	default:
 		return validationErr("scenario_version_ids", "spawn_card kind is unsupported")
 	}
-	if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, now); err != nil {
+	origin := &spawnOrigin{itemID: item.ID}
+	if definition.Spawn != nil {
+		origin.variation = definition.Spawn.Variation
+	}
+	if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, now, origin); err != nil {
 		return err
 	}
 	if lesson.Level == auth.LevelHard && lesson.Timing.SpawnEveryS != nil {

@@ -36,6 +36,7 @@ func (exercise) Evidence(item training.Item, actions []training.Action, events [
 		ScenarioVersionID: item.ScenarioVersionID,
 		ScenarioDigest:    item.ScenarioDigest,
 		TargetService:     item.TargetService,
+		SpawnedFromItemID: item.SpawnedFrom,
 		Timing: training.EvidenceTiming{
 			OpenS:          item.TimingEffective.OpenS,
 			PrimaryS:       item.TimingEffective.PrimaryS,
