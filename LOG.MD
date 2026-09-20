@@ -503,3 +503,29 @@ Open issues / risks:
 
 Next:
 - C4 — `internal/training/service.go` (CreateLesson/ReplaceAssignments/Start/Execute/reads) and `internal/training/postgres/store.go`, per `slice-3-plan.md`'s C4 section: lock ordering, replay-before-state-check (ADR-004 §7.1), evidence insert atomic with item/run/lesson close.
+
+## 2026-09-20T10:59:12+03:00 — Claude — slice 3 C4 (transactional lessons/commands service)
+
+Status: in progress. C0–C4 of `slice-3-plan.md` committed; C5 (HTTP layer) next.
+
+Changed:
+- `internal/training/service.go`: the application layer — `CreateLesson`, `ReplaceAssignments`, `Start`, `Execute`, and reads (`MyRun`/`MyItems`/`ItemForTrainee`/`ItemForInstructor`/`RunActions`/`ListLessons`/`Lesson`/`LessonOptions`). `Execute` implements ADR-004 §7.1's full protocol: ownership/workstation check before any lock, lock order lessons→runs (close only)→items, replay lookup before running/closed/expected_seq, the three generic rejections decided here (not by the exercise), and one atomic transaction for the action insert + item update + (on close) evidence insert + run finish.
+- `internal/training/ports.go`: `UserDirectory`/`WorkstationDirectory`/`ScenarioReader`/`ServiceReader`, each with method signatures copied verbatim from existing `*authpg.Store`/`*contentpg.Store` methods — those concrete types satisfy these ports structurally, no adapter type needed. This is also why every port method takes the caller's own `pgx.Tx` rather than going through `*auth.Service`/`*content.Service` (see the 2026-09-20T09:33 entry's `pool_max_conns=1` deadlock).
+- `internal/training/postgres/store.go`: `training.Store` over pgx — lessons/assignments/runs/items/actions/evidence.
+- `internal/content`: `Store.VersionByID` (full `ScenarioVersionRecord` by version id) and `content.RubricVersion()`.
+- `internal/training/domain.go`/`exercise.go`/`lesson.go`/`receipt.go`/`store.go`: `Lesson`/`Assignment`/`Run`/`ItemPatch`/`Receipt` domain types; json tags added to `Timing`/`Deadlines` for JSONB storage; `Action` extended with `ItemID`/`RequestDigest`/`CommandID`/`Receipt`/`HTTPStatus`/`ClientAt` for persistence/replay (C3 only needed it for evidence assembly).
+
+A real bug found by this commit's own concurrent-command integration test: `recordDecision` originally only called `ApplyItemDecision` (which persists `items.log_seq`) when a decision was **accepted** — a rejected attempt's `log_seq` increment stayed in memory and was never written back, so the next command (either outcome) recomputed the same `log_seq` and collided with `actions`' `UNIQUE(item_id, log_seq)`. Fixed: `ApplyItemDecision` now always runs; only the close-specific `closed_at`/`close_reason` fields are conditional on `decision.Accepted && decision.Close != nil`.
+
+Validation:
+- `go build ./...`, `go vet ./...`, `make verify` (staticcheck included) — clean.
+- `go test -tags=integration -count=1 ./test/integration/...` — all green, twice in a row (to rule out the log_seq bug as a flake once fixed). New `test/integration/training_service_test.go`: full pilot flow end to end (evidence row, run finished, user/workstation freed); two independent assignments sharing one scenario version; concurrent commands on one item (one applied, one `stale_seq`); replay of an applied and a rejected action, a different body under the same `command_id` (`command_id_conflict`), replay after close; concurrent `Start` on one lesson (idempotent, no duplicate run); transaction rollback when evidence assembly fails (no partial action/item/run state, retry succeeds).
+- One `TestTrainingSchemaConstraints` run hit a transient testcontainers/Docker reaper failure (port-mapping race, unrelated to this change) and passed cleanly on retry.
+
+Open issues / risks:
+- `GroupItemRead` (a role group covering both instructor-with-reference and trainee-without-reference reads of `GET /items/{id}`) still does not exist in `internal/auth/authz.go`; needed by C5.
+- `Service.Execute`'s lock-acquisition (`lockForCommand`) does two unlocked "peek" reads (item, then run) before acquiring the real locks in RFC order — correct because `items.run_id`/`runs.lesson_id`/`runs.user_id`/`runs.workstation_id` never change after insert, but worth a reviewer's second look if a future slice ever makes any of those columns mutable.
+- `internal/training/service.go`'s `startOneAssignment` re-validates the scenario version's compatibility at start (in addition to `ReplaceAssignments`' own check) — intentional (RFC-001: assignment *and* start both check compatibility) but means content changes between assign and start are re-checked, not just approval status.
+
+Next:
+- C5 — `internal/training/http/handlers.go` (instructor lesson routes + `GET /lessons/options`; trainee `/my/run`, `/my/items`, `POST /items/{id}/actions`; `GET /items/{id}` under a new `GroupItemRead`), wired into `cmd/emsim/api.go` alongside the `*authpg.Store`/`*contentpg.Store`-backed `training.NewService(...)` composition this commit's own tests already exercise.
