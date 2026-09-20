@@ -652,11 +652,15 @@ func (s *Service) MyItems(ctx context.Context, actor auth.Principal) ([]Item, er
 	return items, err
 }
 
-// ItemForTrainee reads one item for its own trainee — ownership and
-// workstation checks match Execute's (a trainee reads only their own
-// run's items, from the workstation the run is assigned to).
-func (s *Service) ItemForTrainee(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (Item, error) {
+// ItemForTrainee reads one item and its action log for its own trainee —
+// ownership and workstation checks match Execute's (a trainee reads only
+// their own run's items, from the workstation the run is assigned to).
+// Actions are included because openapi.yaml's Item schema requires them
+// (the trainee's own action feed, not just the card) and the HTTP layer
+// (slice 3's C5) has no other port to read them through.
+func (s *Service) ItemForTrainee(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (Item, []Action, error) {
 	var item Item
+	var actions []Action
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
 		var err error
 		item, err = s.store.ItemByID(ctx, tx, itemID, LockNone)
@@ -673,16 +677,19 @@ func (s *Service) ItemForTrainee(ctx context.Context, actor auth.Principal, item
 		if actor.WorkstationID == nil || *actor.WorkstationID != run.WorkstationID {
 			return ErrWorkstationMismatch
 		}
-		return nil
+		actions, err = s.store.ActionsByItem(ctx, tx, itemID)
+		return err
 	})
-	return item, err
+	return item, actions, err
 }
 
-// ItemForInstructor reads one item for the instructor who owns its
-// lesson, alongside the scenario version's full Body (its reference is
-// only ever shown to the instructor — RFC-001 §5's Item schema).
-func (s *Service) ItemForInstructor(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (Item, content.Body, error) {
+// ItemForInstructor reads one item, its action log, and the scenario
+// version's full Body (its reference is only ever shown to the
+// instructor — RFC-001 §5's Item schema) for the instructor who owns its
+// lesson.
+func (s *Service) ItemForInstructor(ctx context.Context, actor auth.Principal, itemID uuid.UUID) (Item, []Action, content.Body, error) {
 	var item Item
+	var actions []Action
 	var body content.Body
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
 		var err error
@@ -706,9 +713,24 @@ func (s *Service) ItemForInstructor(ctx context.Context, actor auth.Principal, i
 			return err
 		}
 		body = version.Body
-		return nil
+		actions, err = s.store.ActionsByItem(ctx, tx, itemID)
+		return err
 	})
-	return item, body, err
+	return item, actions, body, err
+}
+
+// Now returns the server's authoritative clock (RFC-001 §7.2's
+// server_at/server_time convention) for a read-only response that needs
+// to show the caller "now" without that time driving any deadline or
+// ordering decision itself — e.g. GET /my/run's server_time.
+func (s *Service) Now(ctx context.Context) (time.Time, error) {
+	var now time.Time
+	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		now, err = s.store.Now(ctx, tx)
+		return err
+	})
+	return now, err
 }
 
 // RunActions is the instructor's action feed for one run (monitor/

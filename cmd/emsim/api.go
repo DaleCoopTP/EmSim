@@ -36,6 +36,10 @@ import (
 	"emsim/internal/platform/httpapi"
 	"emsim/internal/platform/observability"
 	pgstore "emsim/internal/platform/postgres"
+	"emsim/internal/training"
+	"emsim/internal/training/dds"
+	traininghttp "emsim/internal/training/http"
+	trainingpg "emsim/internal/training/postgres"
 	"emsim/web"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -121,6 +125,13 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API) (http.Handler, observabil
 	authhttp.NewAdminHandlers(authService, cfg.CookieSecure).Register(apiMux)
 
 	contenthttp.NewHandlers(contentService, authService, cfg.CookieSecure).Register(apiMux)
+
+	contentStore := contentpg.NewStore(pool)
+	trainingService := training.NewService(
+		trainingpg.NewStore(pool), authStore, authStore, contentStore, contentStore,
+		map[content.ExerciseType]training.Exercise{content.ExerciseTypeDDSProcessing: dds.Exercise},
+	)
+	traininghttp.NewHandlers(trainingService, authService, cfg.CookieSecure).Register(apiMux)
 
 	root := http.NewServeMux()
 	root.Handle("/api/", apiMux)

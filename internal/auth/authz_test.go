@@ -42,6 +42,13 @@ func TestAllowedMatchesRFC001Table(t *testing.T) {
 		{RoleInstructor, GroupTraineeSelf, false},
 		{RoleAdmin, GroupTraineeSelf, false},
 
+		// item_read (slice 3, ADR-017): the one route both an instructor
+		// (with reference) and a trainee (without it) may call — admin
+		// never reaches item content, same as content/lessons/assessment.
+		{RoleInstructor, GroupItemRead, true},
+		{RoleTrainee, GroupItemRead, true},
+		{RoleAdmin, GroupItemRead, false},
+
 		// tasks: admin and instructor (whoever started the task), never
 		// trainee.
 		{RoleAdmin, GroupTasks, true},
@@ -74,7 +81,7 @@ func TestAdminHasNoAccessToLessonOrAssessmentContent(t *testing.T) {
 	// оценкам") — spelled out as its own test so it survives an
 	// accidental groupRoles edit even if the table-driven cases above
 	// change shape.
-	for _, group := range []Group{GroupContent, GroupLessons, GroupAssessment, GroupTrainee, GroupTraineeSelf, GroupReports} {
+	for _, group := range []Group{GroupContent, GroupLessons, GroupAssessment, GroupTrainee, GroupTraineeSelf, GroupItemRead, GroupReports} {
 		if Allowed(RoleAdmin, group) {
 			t.Errorf("Allowed(admin, %s) = true, want false", group)
 		}

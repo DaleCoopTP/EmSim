@@ -41,6 +41,15 @@ const (
 	// GroupReports is /lessons/*/report*, /groups/progress,
 	// /users/*/progress — instructor.
 	GroupReports Group = "reports"
+	// GroupItemRead is GET /items/{itemId} (slice 3, RFC-001 §5's
+	// "trainee | ... /items/{id}"): both an instructor viewing their own
+	// lesson's item with its reference, and a trainee viewing their own
+	// item without it. Neither GroupLessons nor GroupTrainee alone covers
+	// both roles for this one route, and RequireRole checks only one
+	// group per route (middleware.go), so this route needs its own group;
+	// the handler itself still tells the two views apart and enforces
+	// ownership.
+	GroupItemRead Group = "item_read"
 	// GroupTasks is GET /tasks/{id} — polling status of a background task
 	// (scenario generation, import, report build) the caller itself
 	// started. openapi.yaml tags it "tasks", distinct from "admin", even
@@ -62,6 +71,7 @@ var groupRoles = map[Group][]Role{
 	GroupTrainee:     {RoleTrainee},
 	GroupAssessment:  {RoleInstructor},
 	GroupTraineeSelf: {RoleTrainee},
+	GroupItemRead:    {RoleInstructor, RoleTrainee},
 	GroupReports:     {RoleInstructor},
 	GroupTasks:       {RoleAdmin, RoleInstructor},
 }
