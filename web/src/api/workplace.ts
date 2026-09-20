@@ -14,7 +14,10 @@ export const itemQueryKey = (id: string) => ["training", "item", id] as const;
 export function useMyRun() {
   return useQuery({
     queryKey: myRunQueryKey,
-    queryFn: () => api.get<MyRun | undefined>("/my/run"),
+    // api.get maps HTTP 204 to undefined, but TanStack Query reserves
+    // undefined for "the query produced no data" and treats it as an
+    // error. Normalize the expected "no active run" response to null.
+    queryFn: async (): Promise<MyRun | null> => (await api.get<MyRun | undefined>("/my/run")) ?? null,
     refetchInterval: 2_000,
     refetchOnWindowFocus: true,
   });
