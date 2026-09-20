@@ -88,6 +88,7 @@ type Store interface {
 	// run — GET /my/run's "204 no active lesson" case.
 	ActiveRunByUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (Run, error)
 	RunsByLesson(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID) ([]Run, error)
+	SetRunQueueCursor(ctx context.Context, tx pgx.Tx, id uuid.UUID, cursor int) error
 	FinishRun(ctx context.Context, tx pgx.Tx, id uuid.UUID, finishedAt time.Time) error
 	// FinishLesson marks the running lesson complete at the same server
 	// timestamp as its last run/item. Slice 3 has exactly one run, so a

@@ -59,10 +59,9 @@ func defaultTiming() Timing {
 	return Timing{OpenS: 30, PrimaryS: 30, CompleteS: 180}
 }
 
-// CreateLesson creates a draft lesson (slice-planning.md §4). Only
-// exercise_type=dds_processing exists in this slice; timing defaults to
-// RFC-001 §7.2's policy when the caller does not override it, and
-// spawn_every_s is rejected — hard-level spawn issuance is slice 4.
+// CreateLesson creates a draft lesson. Hard lessons may opt into a positive
+// spawn interval; C5 uses it for parallel offers, while C4's ordinary queue
+// still waits for a normal close before issuing the next card.
 func (s *Service) CreateLesson(ctx context.Context, actor auth.Principal, in LessonCreate, requestID string) (Lesson, error) {
 	title := strings.TrimSpace(in.Title)
 	if title == "" {
@@ -81,11 +80,16 @@ func (s *Service) CreateLesson(ctx context.Context, actor auth.Principal, in Les
 	timing := defaultTiming()
 	if in.Timing != nil {
 		timing = *in.Timing
-		if timing.SpawnEveryS != nil {
-			return Lesson{}, validationErr("timing.spawn_every_s", "not supported until slice 4")
-		}
 		if timing.OpenS <= 0 || timing.PrimaryS <= 0 || timing.CompleteS <= 0 {
 			return Lesson{}, validationErr("timing", "open_s/primary_s/complete_s must be positive")
+		}
+		if timing.SpawnEveryS != nil {
+			if in.Level != auth.LevelHard {
+				return Lesson{}, validationErr("timing.spawn_every_s", "is allowed only for hard lessons")
+			}
+			if *timing.SpawnEveryS <= 0 {
+				return Lesson{}, validationErr("timing.spawn_every_s", "must be positive")
+			}
 		}
 	}
 
@@ -125,19 +129,13 @@ func (s *Service) CreateLesson(ctx context.Context, actor auth.Principal, in Les
 	return created, nil
 }
 
-// ReplaceAssignments sets lessonID's assignments — exactly one
-// assignment with exactly one scenario version in this slice
-// (slice-planning.md §4: "назначение одному обучаемому на одном РМ
-// одного подготовленного сценария"). Only the owning instructor may
-// call it, and only while the lesson is still a draft.
+// ReplaceAssignments replaces the full group plan while a lesson remains a
+// draft. Each workstation/user pair owns one ordered nonempty queue; a
+// user and a workstation may each occur only once in the plan.
 func (s *Service) ReplaceAssignments(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, inputs []AssignmentInput, requestID string) (Lesson, error) {
-	if len(inputs) != 1 {
-		return Lesson{}, validationErr("assignments", "exactly one assignment is supported until slice 4")
+	if len(inputs) == 0 {
+		return Lesson{}, validationErr("assignments", "at least one assignment is required")
 	}
-	if len(inputs[0].ScenarioVersionIDs) != 1 {
-		return Lesson{}, validationErr("scenario_version_ids", "exactly one scenario version is supported until slice 4")
-	}
-	in := inputs[0]
 
 	var lesson Lesson
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
@@ -153,48 +151,65 @@ func (s *Service) ReplaceAssignments(ctx context.Context, actor auth.Principal, 
 			return ErrConflict
 		}
 
-		ws, err := s.workstations.WorkstationByNumber(ctx, tx, in.WorkstationNo)
-		if errors.Is(err, auth.ErrNotFound) {
-			return validationErr("workstation_no", "unknown")
-		} else if err != nil {
-			return err
-		}
-		if !ws.Active {
-			return validationErr("workstation_no", "inactive")
-		}
+		assignments := make([]Assignment, 0, len(inputs))
+		workstations := make(map[int]struct{}, len(inputs))
+		users := make(map[uuid.UUID]struct{}, len(inputs))
+		for _, in := range inputs {
+			if _, exists := workstations[in.WorkstationNo]; exists {
+				return validationErr("workstation_no", "must be unique within a lesson")
+			}
+			workstations[in.WorkstationNo] = struct{}{}
+			if _, exists := users[in.UserID]; exists {
+				return validationErr("user_id", "must be unique within a lesson")
+			}
+			users[in.UserID] = struct{}{}
+			if len(in.ScenarioVersionIDs) == 0 {
+				return validationErr("scenario_version_ids", "at least one scenario version is required")
+			}
+			if lesson.Level == auth.LevelHard && len(in.ScenarioVersionIDs) > 1 &&
+				(lesson.Timing.SpawnEveryS == nil || *lesson.Timing.SpawnEveryS <= 0) {
+				return validationErr("timing.spawn_every_s", "is required for a hard queue with multiple scenarios")
+			}
 
-		trainee, err := s.users.UserByID(ctx, tx, in.UserID)
-		if errors.Is(err, auth.ErrNotFound) {
-			return validationErr("user_id", "unknown")
-		} else if err != nil {
-			return err
+			ws, err := s.workstations.WorkstationByNumber(ctx, tx, in.WorkstationNo)
+			if errors.Is(err, auth.ErrNotFound) {
+				return validationErr("workstation_no", "unknown")
+			} else if err != nil {
+				return err
+			}
+			if !ws.Active {
+				return validationErr("workstation_no", "inactive")
+			}
+			trainee, err := s.users.UserByID(ctx, tx, in.UserID)
+			if errors.Is(err, auth.ErrNotFound) {
+				return validationErr("user_id", "unknown")
+			} else if err != nil {
+				return err
+			}
+			if trainee.Role != auth.RoleTrainee {
+				return validationErr("user_id", "must be a trainee")
+			}
+			if !trainee.Active {
+				return validationErr("user_id", "inactive")
+			}
+			if trainee.ServiceCode == nil {
+				return validationErr("user_id", "trainee has no service_code")
+			}
+			for _, versionID := range in.ScenarioVersionIDs {
+				version, err := s.scenarios.VersionByID(ctx, tx, versionID)
+				if errors.Is(err, content.ErrNotFound) {
+					return validationErr("scenario_version_ids", "unknown")
+				} else if err != nil {
+					return err
+				}
+				if err := s.checkAssignableVersion(version, lesson.ExerciseType, *trainee.ServiceCode); err != nil {
+					return err
+				}
+			}
+			assignments = append(assignments, Assignment{LessonID: lessonID, WorkstationID: ws.ID, WorkstationNo: ws.Number,
+				UserID: trainee.ID, ScenarioVersionIDs: append([]uuid.UUID(nil), in.ScenarioVersionIDs...)})
 		}
-		if trainee.Role != auth.RoleTrainee {
-			return validationErr("user_id", "must be a trainee")
-		}
-		if !trainee.Active {
-			return validationErr("user_id", "inactive")
-		}
-		if trainee.ServiceCode == nil {
-			return validationErr("user_id", "trainee has no service_code")
-		}
-
-		versionID := in.ScenarioVersionIDs[0]
-		version, err := s.scenarios.VersionByID(ctx, tx, versionID)
-		if errors.Is(err, content.ErrNotFound) {
-			return validationErr("scenario_version_ids", "unknown")
-		} else if err != nil {
-			return err
-		}
-		if err := s.checkAssignableVersion(version, lesson.ExerciseType, *trainee.ServiceCode); err != nil {
-			return err
-		}
-
-		assignment := Assignment{
-			LessonID: lessonID, WorkstationID: ws.ID, WorkstationNo: ws.Number,
-			UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{versionID},
-		}
-		if err := s.store.ReplaceAssignments(ctx, tx, lessonID, []Assignment{assignment}); err != nil {
+		if err := s.store.ReplaceAssignments(ctx, tx, lessonID, assignments); err != nil {
 			return err
 		}
 		return s.store.AuditRecord(ctx, tx, audit.Entry{
@@ -314,13 +329,14 @@ func (s *Service) startOneAssignment(ctx context.Context, tx pgx.Tx, lesson Less
 		return validationErr("user_id", "trainee has no service_code")
 	}
 
-	versionID := a.ScenarioVersionIDs[0]
-	version, err := s.scenarios.VersionByID(ctx, tx, versionID)
-	if err != nil {
-		return err
-	}
-	if err := s.checkAssignableVersion(version, lesson.ExerciseType, *trainee.ServiceCode); err != nil {
-		return err
+	for _, versionID := range a.ScenarioVersionIDs {
+		version, err := s.scenarios.VersionByID(ctx, tx, versionID)
+		if err != nil {
+			return err
+		}
+		if err := s.checkAssignableVersion(version, lesson.ExerciseType, *trainee.ServiceCode); err != nil {
+			return err
+		}
 	}
 
 	if _, err := s.store.ActiveRunByUser(ctx, tx, trainee.ID); err == nil {
@@ -329,28 +345,42 @@ func (s *Service) startOneAssignment(ctx context.Context, tx pgx.Tx, lesson Less
 		return err
 	}
 
-	svc, err := s.services.ServiceByCode(ctx, tx, version.Body.TargetService)
-	if err != nil {
-		return err
-	}
-
 	run := Run{
 		ID: uuid.New(), ExerciseType: lesson.ExerciseType, LessonID: lesson.ID,
 		UserID: trainee.ID, WorkstationID: ws.ID, WorkstationNo: ws.Number,
 		Mode: lesson.Mode, State: RunActive, LevelAtStart: lesson.Level,
-		QueueCursor: 1, StartedAt: now,
+		QueueCursor: 0, StartedAt: now,
 	}
 	run, err = s.store.InsertRun(ctx, tx, run)
 	if err != nil {
 		return err
 	}
 
+	return s.offerQueueVersion(ctx, tx, lesson, run, a, 0, now)
+}
+
+// offerQueueVersion snapshots the next approved scenario into an offered
+// item. The caller owns the run lock (or has just inserted the run), so the
+// ordinal and queue cursor cannot race another normal-close offer.
+func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesson, run Run, assignment Assignment, queueIndex int, now time.Time) error {
+	if queueIndex < 0 || queueIndex >= len(assignment.ScenarioVersionIDs) {
+		return fmt.Errorf("training: queue index %d out of range", queueIndex)
+	}
+	versionID := assignment.ScenarioVersionIDs[queueIndex]
+	version, err := s.scenarios.VersionByID(ctx, tx, versionID)
+	if err != nil {
+		return err
+	}
+	svc, err := s.services.ServiceByCode(ctx, tx, version.Body.TargetService)
+	if err != nil {
+		return err
+	}
 	openAt := now.Add(time.Duration(lesson.Timing.OpenS) * time.Second)
 	item := Item{
-		ID: uuid.New(), RunID: run.ID, LessonID: lesson.ID, UserID: trainee.ID,
-		WorkstationNo: ws.Number, ScenarioVersionID: versionID,
+		ID: uuid.New(), RunID: run.ID, LessonID: lesson.ID, UserID: run.UserID,
+		WorkstationNo: run.WorkstationNo, ScenarioVersionID: versionID,
 		ScenarioDigest: fmt.Sprintf("%x", version.Digest), TargetService: version.Body.TargetService,
-		Ordinal: 1, State: ItemOffered, Reaction: content.ReactionAdded,
+		Ordinal: queueIndex + 1, State: ItemOffered, Reaction: content.ReactionAdded,
 		Card: content.ProjectCard(version.Body.Card), Workflow: svc.Workflow,
 		PilotGoal: version.Body.Reference.PilotGoal, Mode: lesson.Mode,
 		TimingEffective: lesson.Timing,
@@ -360,7 +390,7 @@ func (s *Service) startOneAssignment(ctx context.Context, tx pgx.Tx, lesson Less
 	if _, err := s.store.InsertItem(ctx, tx, item); err != nil {
 		return err
 	}
-	return nil
+	return s.store.SetRunQueueCursor(ctx, tx, run.ID, queueIndex+1)
 }
 
 // Execute is POST /items/{itemId}/actions (ADR-004 §7.1). cmd.Payload
@@ -423,7 +453,7 @@ func (s *Service) Execute(ctx context.Context, actor auth.Principal, itemID uuid
 			}
 		}
 
-		receipt, err = s.recordDecision(ctx, tx, exercise, actor, item, run, cmd, decision, now, requestID)
+		receipt, err = s.recordDecision(ctx, tx, lesson, exercise, actor, item, run, cmd, decision, now, requestID)
 		return err
 	})
 	if err != nil {
@@ -504,7 +534,7 @@ func replayReceipt(actorID, itemID uuid.UUID, cmd Command, existing Action) (Rec
 // decision.Accepted. log_seq increments for every attempt; seq only for
 // an applied one (RFC-001 §6 "log_seq нумерует все авторизованные
 // попытки... включая отклонённые").
-func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, exercise Exercise, actor auth.Principal, item Item, run Run, cmd Command, decision Decision, now time.Time, requestID string) (Receipt, error) {
+func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, exercise Exercise, actor auth.Principal, item Item, run Run, cmd Command, decision Decision, now time.Time, requestID string) (Receipt, error) {
 	digest, err := RequestDigest(actor.UserID, item.ID, cmd.Type, cmd.Payload, cmd.ExpectedSeq, cmd.ClientAt)
 	if err != nil {
 		return Receipt{}, err
@@ -611,17 +641,47 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, exercise Exerci
 	if err := s.store.InsertEvidence(ctx, tx, item.ID, evidence); err != nil {
 		return Receipt{}, err
 	}
-	// Slice 3 has exactly one item/run/assignment, so closing the item
-	// exhausts both the run and the lesson. They share closedAt and this
-	// transaction: observers can never see a finished run under a lesson
-	// that is still running.
+	assignments, err := s.store.AssignmentsByLesson(ctx, tx, item.LessonID)
+	if err != nil {
+		return Receipt{}, err
+	}
+	assignment, ok := assignmentForRun(assignments, run)
+	if !ok {
+		return Receipt{}, fmt.Errorf("training: missing assignment for run %s", run.ID)
+	}
+	if run.QueueCursor < len(assignment.ScenarioVersionIDs) {
+		// A normal close advances an ordered queue. Hard-mode parallel
+		// issuance is intentionally delegated to C5's scheduler.
+		if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, closedAt); err != nil {
+			return Receipt{}, err
+		}
+		return receipt, nil
+	}
 	if err := s.store.FinishRun(ctx, tx, run.ID, closedAt); err != nil {
 		return Receipt{}, err
+	}
+	runs, err := s.store.RunsByLesson(ctx, tx, item.LessonID)
+	if err != nil {
+		return Receipt{}, err
+	}
+	for _, candidate := range runs {
+		if candidate.State != RunFinished {
+			return receipt, nil
+		}
 	}
 	if err := s.store.FinishLesson(ctx, tx, item.LessonID, closedAt); err != nil {
 		return Receipt{}, err
 	}
 	return receipt, nil
+}
+
+func assignmentForRun(assignments []Assignment, run Run) (Assignment, bool) {
+	for _, assignment := range assignments {
+		if assignment.WorkstationID == run.WorkstationID && assignment.UserID == run.UserID {
+			return assignment, true
+		}
+	}
+	return Assignment{}, false
 }
 
 // MyRun returns the caller's active run and its lesson, or ErrNotFound

@@ -301,6 +301,17 @@ func (s *Store) RunsByLesson(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID)
 	return runs, nil
 }
 
+func (s *Store) SetRunQueueCursor(ctx context.Context, tx pgx.Tx, id uuid.UUID, cursor int) error {
+	tag, err := tx.Exec(ctx, `UPDATE runs SET queue_cursor = $2 WHERE id = $1`, id, cursor)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return training.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) FinishRun(ctx context.Context, tx pgx.Tx, id uuid.UUID, finishedAt time.Time) error {
 	tag, err := tx.Exec(ctx, `UPDATE runs SET state = 'finished', finished_at = $2 WHERE id = $1`, id, finishedAt)
 	if err != nil {

@@ -285,6 +285,128 @@ func TestTrainingPilotOneEndToEnd(t *testing.T) {
 	}
 }
 
+func closePilotItem(t *testing.T, ctx context.Context, service *training.Service, actor auth.Principal, itemID uuid.UUID) {
+	t.Helper()
+	for seq, command := range []training.Command{
+		{CommandID: uuid.New(), Type: training.CommandOpen, Payload: []byte(`{}`)},
+		{CommandID: uuid.New(), Type: training.CommandSetStatus, Payload: []byte(`{"status":"accepted"}`)},
+		{CommandID: uuid.New(), Type: training.CommandClose, Payload: []byte(`{}`)},
+	} {
+		command.ExpectedSeq = int64(seq)
+		receipt, err := service.Execute(ctx, actor, itemID, command, "req-queue-close")
+		if err != nil || receipt.Outcome != training.OutcomeApplied {
+			t.Fatalf("close item command %s = %+v, %v", command.Type, receipt, err)
+		}
+	}
+}
+
+func TestTrainingGroupAssignmentsAdvanceIndependentQueues(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	const svc = "training_group_queue_svc"
+	pilotWorkflowService(t, ctx, pool, svc)
+	instructor := insertInstructor(t, ctx, pool, "training-group-instructor-"+uuid.NewString())
+	traineeA := insertActiveTrainee(t, ctx, pool, "training-group-a-"+uuid.NewString(), svc)
+	traineeB := insertActiveTrainee(t, ctx, pool, "training-group-b-"+uuid.NewString(), svc)
+	workstationA := insertWorkstation(t, ctx, pool, 211)
+	workstationB := insertWorkstation(t, ctx, pool, 212)
+	versionA := pilotScenarioVersion(t, ctx, pool, svc, "ЮАО", instructor.ID)
+	versionB := pilotScenarioVersion(t, ctx, pool, svc, "ЮЗАО", instructor.ID)
+	instructorActor := principal(instructor, uuid.Nil)
+
+	lesson, err := service.CreateLesson(ctx, instructorActor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "Group queues", Mode: training.ModeTraining, Level: auth.LevelEasy,
+	}, "req-group-create")
+	if err != nil {
+		t.Fatalf("CreateLesson: %v", err)
+	}
+	if _, err := service.ReplaceAssignments(ctx, instructorActor, lesson.ID, []training.AssignmentInput{
+		{WorkstationNo: 211, UserID: traineeA.ID, ScenarioVersionIDs: []uuid.UUID{versionA, versionB}},
+		{WorkstationNo: 212, UserID: traineeB.ID, ScenarioVersionIDs: []uuid.UUID{versionB, versionA}},
+	}, "req-group-assign"); err != nil {
+		t.Fatalf("ReplaceAssignments: %v", err)
+	}
+	if _, err := service.Start(ctx, instructorActor, lesson.ID, "req-group-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	actorA, actorB := principal(traineeA, workstationA), principal(traineeB, workstationB)
+	itemsA, err := service.MyItems(ctx, actorA)
+	if err != nil || len(itemsA) != 1 || itemsA[0].ScenarioVersionID != versionA {
+		t.Fatalf("initial A items = %+v, %v", itemsA, err)
+	}
+	itemsB, err := service.MyItems(ctx, actorB)
+	if err != nil || len(itemsB) != 1 || itemsB[0].ScenarioVersionID != versionB {
+		t.Fatalf("initial B items = %+v, %v", itemsB, err)
+	}
+
+	closePilotItem(t, ctx, service, actorA, itemsA[0].ID)
+	itemsA, err = service.MyItems(ctx, actorA)
+	if err != nil || len(itemsA) != 2 || itemsA[1].ScenarioVersionID != versionB || itemsA[1].State != training.ItemOffered {
+		t.Fatalf("A after first close = %+v, %v", itemsA, err)
+	}
+	if _, _, err := service.MyRun(ctx, actorA); err != nil {
+		t.Fatalf("A run ended before queue exhausted: %v", err)
+	}
+	closePilotItem(t, ctx, service, actorB, itemsB[0].ID)
+	itemsB, err = service.MyItems(ctx, actorB)
+	if err != nil || len(itemsB) != 2 || itemsB[1].ScenarioVersionID != versionA || itemsB[1].State != training.ItemOffered {
+		t.Fatalf("B after first close = %+v, %v", itemsB, err)
+	}
+
+	closePilotItem(t, ctx, service, actorA, itemsA[1].ID)
+	if _, _, err := service.MyRun(ctx, actorA); !errors.Is(err, training.ErrNotFound) {
+		t.Fatalf("A run after queue exhausted = %v, want ErrNotFound", err)
+	}
+	closePilotItem(t, ctx, service, actorB, itemsB[1].ID)
+	var state string
+	if err := pool.QueryRow(ctx, `SELECT state FROM lessons WHERE id=$1`, lesson.ID).Scan(&state); err != nil {
+		t.Fatalf("read lesson state: %v", err)
+	}
+	if state != string(training.LessonFinished) {
+		t.Fatalf("lesson state = %q, want finished after both queues", state)
+	}
+}
+
+func TestTrainingHardQueueRequiresPositiveSpawnInterval(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	const svc = "training_hard_queue_svc"
+	pilotWorkflowService(t, ctx, pool, svc)
+	instructor := insertInstructor(t, ctx, pool, "training-hard-instructor-"+uuid.NewString())
+	trainee := insertActiveTrainee(t, ctx, pool, "training-hard-trainee-"+uuid.NewString(), svc)
+	insertWorkstation(t, ctx, pool, 221)
+	versionA := pilotScenarioVersion(t, ctx, pool, svc, "ЮАО", instructor.ID)
+	versionB := pilotScenarioVersion(t, ctx, pool, svc, "ЮЗАО", instructor.ID)
+	actor := principal(instructor, uuid.Nil)
+
+	lesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "Hard queue", Mode: training.ModeTraining, Level: auth.LevelHard,
+	}, "req-hard-create")
+	if err != nil {
+		t.Fatalf("CreateLesson: %v", err)
+	}
+	_, err = service.ReplaceAssignments(ctx, actor, lesson.ID, []training.AssignmentInput{
+		{WorkstationNo: 221, UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{versionA, versionB}},
+	}, "req-hard-assign")
+	var validation *training.ValidationError
+	if !errors.As(err, &validation) || validation.Field != "timing.spawn_every_s" {
+		t.Fatalf("hard queue without interval = %v, want timing.spawn_every_s validation", err)
+	}
+}
+
 func TestTrainingTwoIndependentRunsOnSameVersion(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := openTestDatabase(t, ctx)
