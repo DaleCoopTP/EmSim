@@ -92,6 +92,10 @@ func insertActiveTrainee(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 // accepted, pilot_goal=accept_card, no events, no required call) with
 // the given okrug value, and returns its id.
 func pilotScenarioVersion(t *testing.T, ctx context.Context, pool *pgxpool.Pool, targetService, okrug string, createdBy uuid.UUID) uuid.UUID {
+	return pilotScenarioVersionWithEvents(t, ctx, pool, targetService, okrug, createdBy, "", nil)
+}
+
+func pilotScenarioVersionWithEvents(t *testing.T, ctx context.Context, pool *pgxpool.Pool, targetService, okrug string, createdBy uuid.UUID, sourceKey string, events []content.Event) uuid.UUID {
 	t.Helper()
 	scenarioID, versionID := uuid.New(), uuid.New()
 	body := content.Body{
@@ -112,6 +116,7 @@ func pilotScenarioVersion(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 			PrimaryDecision: content.PrimaryDecision{Status: content.ReactionAccepted, CommentRequired: false},
 			PilotGoal:       "accept_card",
 		},
+		Events:       events,
 		Difficulty:   1,
 		ExerciseType: content.ExerciseTypeDDSProcessing,
 	}
@@ -121,9 +126,9 @@ func pilotScenarioVersion(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	}
 	digest := sha256.Sum256(bodyJSON)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO scenarios (id, title, target_service, difficulty, origin, status, created_by)
-		VALUES ($1, 'Fixture', $2, 1, 'manual', 'approved', $3)
-	`, scenarioID, targetService, createdBy); err != nil {
+		INSERT INTO scenarios (id, source_key, title, target_service, difficulty, origin, status, created_by)
+		VALUES ($1, NULLIF($2, ''), 'Fixture', $3, 1, 'manual', 'approved', $4)
+	`, scenarioID, sourceKey, targetService, createdBy); err != nil {
 		t.Fatalf("insert scenario: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -404,6 +409,92 @@ func TestTrainingHardQueueRequiresPositiveSpawnInterval(t *testing.T) {
 	var validation *training.ValidationError
 	if !errors.As(err, &validation) || validation.Field != "timing.spawn_every_s" {
 		t.Fatalf("hard queue without interval = %v, want timing.spawn_every_s validation", err)
+	}
+}
+
+func TestTrainingTickDeliversSpawnAndHardOffer(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	const svc = "training_tick_svc"
+	pilotWorkflowService(t, ctx, pool, svc)
+	instructor := insertInstructor(t, ctx, pool, "training-tick-instructor-"+uuid.NewString())
+	target := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "tick-target", nil)
+	spawn := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "tick-spawn", []content.Event{{
+		Key: "e1", AtS: 0, Since: "offered", Delivery: "spawn_card",
+		Spawn: &content.EventSpawn{Kind: "scenario", ScenarioKey: "tick-target", Version: 1},
+	}})
+	trainee := insertActiveTrainee(t, ctx, pool, "training-tick-trainee-"+uuid.NewString(), svc)
+	workstation := insertWorkstation(t, ctx, pool, 231)
+	actor := principal(instructor, uuid.Nil)
+	lesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "Event tick", Mode: training.ModeTraining, Level: auth.LevelEasy,
+	}, "req-event-create")
+	if err != nil {
+		t.Fatalf("CreateLesson: %v", err)
+	}
+	if _, err := service.ReplaceAssignments(ctx, actor, lesson.ID, []training.AssignmentInput{
+		{WorkstationNo: 231, UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{spawn, target}},
+	}, "req-event-assign"); err != nil {
+		t.Fatalf("ReplaceAssignments: %v", err)
+	}
+	if _, err := service.Start(ctx, actor, lesson.ID, "req-event-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("Tick spawn event: %v", err)
+	}
+	items, err := service.MyItems(ctx, principal(trainee, workstation))
+	if err != nil || len(items) != 2 || items[1].ScenarioVersionID != target {
+		t.Fatalf("spawn tick items = %+v, %v", items, err)
+	}
+	var eventState string
+	if err := pool.QueryRow(ctx, `SELECT state FROM item_events WHERE item_id=$1 AND event_key='e1'`, items[0].ID).Scan(&eventState); err != nil {
+		t.Fatalf("read event state: %v", err)
+	}
+	if eventState != string(training.EventDelivered) {
+		t.Fatalf("event state = %q, want delivered", eventState)
+	}
+
+	// Hard queues are driven by next_offer_at. Make that timestamp due
+	// without sleeping; one Tick must add exactly one new parallel item.
+	hardTrainee := insertActiveTrainee(t, ctx, pool, "training-hard-tick-"+uuid.NewString(), svc)
+	hardWS := insertWorkstation(t, ctx, pool, 232)
+	interval := 5
+	hardLesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "Hard tick", Mode: training.ModeTraining, Level: auth.LevelHard,
+		Timing: &training.Timing{OpenS: 30, PrimaryS: 30, CompleteS: 180, SpawnEveryS: &interval},
+	}, "req-hard-tick-create")
+	if err != nil {
+		t.Fatalf("Create hard lesson: %v", err)
+	}
+	if _, err := service.ReplaceAssignments(ctx, actor, hardLesson.ID, []training.AssignmentInput{
+		{WorkstationNo: 232, UserID: hardTrainee.ID, ScenarioVersionIDs: []uuid.UUID{target, target}},
+	}, "req-hard-tick-assign"); err != nil {
+		t.Fatalf("Replace hard assignments: %v", err)
+	}
+	if _, err := service.Start(ctx, actor, hardLesson.ID, "req-hard-tick-start"); err != nil {
+		t.Fatalf("Start hard lesson: %v", err)
+	}
+	hardActor := principal(hardTrainee, hardWS)
+	hardRun, _, err := service.MyRun(ctx, hardActor)
+	if err != nil {
+		t.Fatalf("MyRun hard: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE runs SET next_offer_at=clock_timestamp()-interval '1 second' WHERE id=$1`, hardRun.ID); err != nil {
+		t.Fatalf("make hard run due: %v", err)
+	}
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("Tick hard offer: %v", err)
+	}
+	hardItems, err := service.MyItems(ctx, hardActor)
+	if err != nil || len(hardItems) != 2 || hardItems[1].ScenarioVersionID != target {
+		t.Fatalf("hard tick items = %+v, %v", hardItems, err)
 	}
 }
 

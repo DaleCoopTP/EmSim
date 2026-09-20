@@ -206,6 +206,9 @@ func (s *Service) ReplaceAssignments(ctx context.Context, actor auth.Principal, 
 					return err
 				}
 			}
+			if err := s.checkSpawnQueuePlan(ctx, tx, in.ScenarioVersionIDs); err != nil {
+				return err
+			}
 			assignments = append(assignments, Assignment{LessonID: lessonID, WorkstationID: ws.ID, WorkstationNo: ws.Number,
 				UserID: trainee.ID, ScenarioVersionIDs: append([]uuid.UUID(nil), in.ScenarioVersionIDs...)})
 		}
@@ -239,9 +242,6 @@ func (s *Service) checkAssignableVersion(version content.ScenarioVersionRecord, 
 	}
 	if version.Body.TargetService != traineeServiceCode {
 		return validationErr("user_id", "service_code does not match the scenario's target_service")
-	}
-	if len(version.Body.Events) > 0 {
-		return validationErr("scenario_version_ids", "scenario events are not supported until slice 4")
 	}
 	if version.Body.Reference.Call.Required {
 		return validationErr("scenario_version_ids", "a required call is not supported until slice 5")
@@ -351,6 +351,10 @@ func (s *Service) startOneAssignment(ctx context.Context, tx pgx.Tx, lesson Less
 		Mode: lesson.Mode, State: RunActive, LevelAtStart: lesson.Level,
 		QueueCursor: 0, StartedAt: now,
 	}
+	if lesson.Level == auth.LevelHard && lesson.Timing.SpawnEveryS != nil {
+		nextOfferAt := now.Add(time.Duration(*lesson.Timing.SpawnEveryS) * time.Second)
+		run.NextOfferAt = &nextOfferAt
+	}
 	run, err = s.store.InsertRun(ctx, tx, run)
 	if err != nil {
 		return err
@@ -390,7 +394,86 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 	if _, err := s.store.InsertItem(ctx, tx, item); err != nil {
 		return err
 	}
-	return s.store.SetRunQueueCursor(ctx, tx, run.ID, queueIndex+1)
+	if err := s.store.SetRunQueueCursor(ctx, tx, run.ID, queueIndex+1); err != nil {
+		return err
+	}
+	return s.scheduleEventsForAnchor(ctx, tx, item, version.Body.Events, "offered", now)
+}
+
+// checkSpawnQueuePlan makes event-driven cards deterministic: the next queue
+// slot is the only card an event may consume. The stable source key is
+// resolved inside the same transaction, never persisted as an installation-
+// specific UUID in seed content.
+func (s *Service) checkSpawnQueuePlan(ctx context.Context, tx pgx.Tx, queue []uuid.UUID) error {
+	for index, versionID := range queue {
+		version, err := s.scenarios.VersionByID(ctx, tx, versionID)
+		if err != nil {
+			return err
+		}
+		spawnCount := 0
+		for _, event := range version.Body.Events {
+			if event.Delivery != "spawn_card" {
+				continue
+			}
+			spawnCount++
+			if spawnCount > 1 {
+				return validationErr("scenario_version_ids", "a queue scenario may have at most one spawn_card event")
+			}
+			if index+1 >= len(queue) {
+				return validationErr("scenario_version_ids", "spawn_card has no next queue scenario")
+			}
+			want := queue[index+1]
+			if event.Spawn == nil {
+				return validationErr("scenario_version_ids", "spawn_card is missing its target")
+			}
+			switch event.Spawn.Kind {
+			case "duplicate":
+				if want != versionID {
+					return validationErr("scenario_version_ids", "duplicate spawn_card must consume the same next version")
+				}
+			case "scenario":
+				scenario, err := s.scenarios.ScenarioByKey(ctx, tx, event.Spawn.ScenarioKey)
+				if err != nil {
+					return validationErr("scenario_version_ids", "spawn_card target is unknown")
+				}
+				target, err := s.scenarios.VersionByNumber(ctx, tx, scenario.ID, event.Spawn.Version)
+				if err != nil {
+					return validationErr("scenario_version_ids", "spawn_card target is unknown")
+				}
+				if target.ID != want {
+					return validationErr("scenario_version_ids", "spawn_card target must equal the next queue version")
+				}
+			default:
+				return validationErr("scenario_version_ids", "spawn_card kind is unsupported")
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Service) scheduleEventsForAnchor(ctx context.Context, tx pgx.Tx, item Item, events []content.Event, anchor string, anchorAt time.Time) error {
+	existing, err := s.store.ItemEventsByItem(ctx, tx, item.ID)
+	if err != nil {
+		return err
+	}
+	known := make(map[string]struct{}, len(existing))
+	for _, event := range existing {
+		known[event.EventKey] = struct{}{}
+	}
+	for _, event := range events {
+		if event.Since != anchor {
+			continue
+		}
+		if _, exists := known[event.Key]; exists {
+			continue
+		}
+		dueAt := anchorAt.Add(time.Duration(event.AtS) * time.Second)
+		if _, err := s.store.InsertItemEvent(ctx, tx, ItemEvent{ID: uuid.New(), ItemID: item.ID, EventKey: event.Key,
+			AnchorAt: anchorAt, DueAt: dueAt, State: EventScheduled}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Execute is POST /items/{itemId}/actions (ADR-004 §7.1). cmd.Payload
@@ -613,6 +696,32 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	if err := s.store.ApplyItemDecision(ctx, tx, item.ID, patch); err != nil {
 		return Receipt{}, err
 	}
+	if decision.Accepted {
+		version, err := s.scenarios.VersionByID(ctx, tx, item.ScenarioVersionID)
+		if err != nil {
+			return Receipt{}, err
+		}
+		anchor := ""
+		if cmd.Type == CommandOpen {
+			anchor = "opened"
+		} else {
+			switch decision.Reaction {
+			case content.ReactionAccepted:
+				anchor = "accepted"
+			case content.ReactionResponding:
+				anchor = "responding"
+			case content.ReactionArrived:
+				anchor = "arrived"
+			case content.ReactionWorking:
+				anchor = "working"
+			}
+		}
+		if anchor != "" {
+			if err := s.scheduleEventsForAnchor(ctx, tx, item, version.Body.Events, anchor, now); err != nil {
+				return Receipt{}, err
+			}
+		}
+	}
 	if !decision.Accepted || decision.Close == nil {
 		return receipt, nil
 	}
@@ -649,13 +758,27 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	if !ok {
 		return Receipt{}, fmt.Errorf("training: missing assignment for run %s", run.ID)
 	}
-	if run.QueueCursor < len(assignment.ScenarioVersionIDs) {
+	if lesson.Level != auth.LevelHard && run.QueueCursor < len(assignment.ScenarioVersionIDs) {
 		// A normal close advances an ordered queue. Hard-mode parallel
 		// issuance is intentionally delegated to C5's scheduler.
 		if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, closedAt); err != nil {
 			return Receipt{}, err
 		}
 		return receipt, nil
+	}
+	if lesson.Level == auth.LevelHard && run.QueueCursor < len(assignment.ScenarioVersionIDs) {
+		// The hard scheduler owns future offers; closing one parallel item
+		// neither pulls the schedule forward nor terminates the run.
+		return receipt, nil
+	}
+	items, err := s.store.ItemsByRun(ctx, tx, run.ID)
+	if err != nil {
+		return Receipt{}, err
+	}
+	for _, candidate := range items {
+		if candidate.ID != item.ID && candidate.State != ItemClosed && candidate.State != ItemInterrupted {
+			return receipt, nil
+		}
 	}
 	if err := s.store.FinishRun(ctx, tx, run.ID, closedAt); err != nil {
 		return Receipt{}, err
@@ -716,6 +839,209 @@ func (s *Service) MyItems(ctx context.Context, actor auth.Principal) ([]Item, er
 		return err
 	})
 	return items, err
+}
+
+// Tick advances durable time-based training work. It is deliberately a
+// synchronous, idempotent application method: C6 will arrange periodic
+// execution, while tests and a single-process server can call it directly.
+// Each candidate gets its own transaction and rechecks state under the
+// lesson -> run -> item lock order, so a stale poll result can do no harm.
+func (s *Service) Tick(ctx context.Context) error {
+	var now time.Time
+	var dueRuns []Run
+	var dueEvents []ItemEvent
+	if err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		now, err = s.store.Now(ctx, tx)
+		if err != nil {
+			return err
+		}
+		dueRuns, err = s.store.RunsDueForOffer(ctx, tx, now)
+		if err != nil {
+			return err
+		}
+		dueEvents, err = s.store.ScheduledItemEventsDue(ctx, tx, now)
+		return err
+	}); err != nil {
+		return err
+	}
+	for _, run := range dueRuns {
+		if err := s.tickHardRun(ctx, run.ID); err != nil {
+			return err
+		}
+	}
+	for _, event := range dueEvents {
+		if err := s.tickEvent(ctx, event.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) tickHardRun(ctx context.Context, runID uuid.UUID) error {
+	return s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		peek, err := s.store.RunByID(ctx, tx, runID, LockNone)
+		if err != nil {
+			return err
+		}
+		lesson, err := s.store.LessonByID(ctx, tx, peek.LessonID, LockUpdate)
+		if err != nil {
+			return err
+		}
+		run, err := s.store.RunByID(ctx, tx, runID, LockUpdate)
+		if err != nil {
+			return err
+		}
+		now, err := s.store.Now(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if lesson.State != LessonRunning || lesson.Level != auth.LevelHard || run.State != RunActive || run.NextOfferAt == nil || run.NextOfferAt.After(now) {
+			return nil
+		}
+		assignments, err := s.store.AssignmentsByLesson(ctx, tx, lesson.ID)
+		if err != nil {
+			return err
+		}
+		assignment, ok := assignmentForRun(assignments, run)
+		if !ok {
+			return fmt.Errorf("training: missing assignment for run %s", run.ID)
+		}
+		if run.QueueCursor >= len(assignment.ScenarioVersionIDs) {
+			return s.store.SetRunNextOfferAt(ctx, tx, run.ID, nil)
+		}
+		if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, now); err != nil {
+			return err
+		}
+		if lesson.Timing.SpawnEveryS == nil {
+			return fmt.Errorf("training: hard run %s lacks spawn interval", run.ID)
+		}
+		next := now.Add(time.Duration(*lesson.Timing.SpawnEveryS) * time.Second)
+		if run.QueueCursor+1 >= len(assignment.ScenarioVersionIDs) {
+			return s.store.SetRunNextOfferAt(ctx, tx, run.ID, nil)
+		}
+		return s.store.SetRunNextOfferAt(ctx, tx, run.ID, &next)
+	})
+}
+
+func (s *Service) tickEvent(ctx context.Context, eventID uuid.UUID) error {
+	return s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		event, err := s.store.ItemEventByID(ctx, tx, eventID)
+		if err != nil {
+			return err
+		}
+		if event.State != EventScheduled {
+			return nil
+		}
+		peekItem, err := s.store.ItemByID(ctx, tx, event.ItemID, LockNone)
+		if err != nil {
+			return err
+		}
+		peekRun, err := s.store.RunByID(ctx, tx, peekItem.RunID, LockNone)
+		if err != nil {
+			return err
+		}
+		lesson, err := s.store.LessonByID(ctx, tx, peekRun.LessonID, LockUpdate)
+		if err != nil {
+			return err
+		}
+		run, err := s.store.RunByID(ctx, tx, peekRun.ID, LockUpdate)
+		if err != nil {
+			return err
+		}
+		item, err := s.store.ItemByID(ctx, tx, event.ItemID, LockUpdate)
+		if err != nil {
+			return err
+		}
+		now, err := s.store.Now(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if lesson.State != LessonRunning || item.State == ItemClosed || item.State == ItemInterrupted {
+			return s.store.SkipItemEvent(ctx, tx, event.ID, "item_closed")
+		}
+		version, err := s.scenarios.VersionByID(ctx, tx, item.ScenarioVersionID)
+		if err != nil {
+			return err
+		}
+		definition, ok := eventByKey(version.Body.Events, event.EventKey)
+		if !ok {
+			return fmt.Errorf("training: event %q missing from scenario version", event.EventKey)
+		}
+		if len(definition.StatusIn) > 0 && !reactionIn(definition.StatusIn, item.Reaction) {
+			return nil
+		}
+		if definition.Delivery == "spawn_card" {
+			if err := s.spawnEventCard(ctx, tx, lesson, run, item, definition, now); err != nil {
+				return err
+			}
+		}
+		return s.store.DeliverItemEvent(ctx, tx, event.ID, now, now.Sub(event.DueAt) > 5*time.Second)
+	})
+}
+
+func (s *Service) spawnEventCard(ctx context.Context, tx pgx.Tx, lesson Lesson, run Run, item Item, definition content.Event, now time.Time) error {
+	assignments, err := s.store.AssignmentsByLesson(ctx, tx, lesson.ID)
+	if err != nil {
+		return err
+	}
+	assignment, ok := assignmentForRun(assignments, run)
+	if !ok {
+		return fmt.Errorf("training: missing assignment for run %s", run.ID)
+	}
+	if run.QueueCursor >= len(assignment.ScenarioVersionIDs) {
+		return validationErr("scenario_version_ids", "spawn_card queue is exhausted")
+	}
+	nextVersionID := assignment.ScenarioVersionIDs[run.QueueCursor]
+	if definition.Spawn == nil {
+		return validationErr("scenario_version_ids", "spawn_card is missing its target")
+	}
+	switch definition.Spawn.Kind {
+	case "duplicate":
+		if nextVersionID != item.ScenarioVersionID {
+			return validationErr("scenario_version_ids", "duplicate spawn_card does not match next queue version")
+		}
+	case "scenario":
+		scenario, err := s.scenarios.ScenarioByKey(ctx, tx, definition.Spawn.ScenarioKey)
+		if err != nil {
+			return err
+		}
+		target, err := s.scenarios.VersionByNumber(ctx, tx, scenario.ID, definition.Spawn.Version)
+		if err != nil {
+			return err
+		}
+		if target.ID != nextVersionID {
+			return validationErr("scenario_version_ids", "spawn_card does not match next queue version")
+		}
+	default:
+		return validationErr("scenario_version_ids", "spawn_card kind is unsupported")
+	}
+	if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, now); err != nil {
+		return err
+	}
+	if lesson.Level == auth.LevelHard && lesson.Timing.SpawnEveryS != nil {
+		next := now.Add(time.Duration(*lesson.Timing.SpawnEveryS) * time.Second)
+		return s.store.SetRunNextOfferAt(ctx, tx, run.ID, &next)
+	}
+	return nil
+}
+
+func eventByKey(events []content.Event, key string) (content.Event, bool) {
+	for _, event := range events {
+		if event.Key == key {
+			return event, true
+		}
+	}
+	return content.Event{}, false
+}
+
+func reactionIn(reactions []content.Reaction, reaction content.Reaction) bool {
+	for _, candidate := range reactions {
+		if candidate == reaction {
+			return true
+		}
+	}
+	return false
 }
 
 // ItemForTrainee reads one item and its action log for its own trainee —

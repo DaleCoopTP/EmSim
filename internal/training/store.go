@@ -88,7 +88,9 @@ type Store interface {
 	// run — GET /my/run's "204 no active lesson" case.
 	ActiveRunByUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (Run, error)
 	RunsByLesson(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID) ([]Run, error)
+	RunsDueForOffer(ctx context.Context, tx pgx.Tx, now time.Time) ([]Run, error)
 	SetRunQueueCursor(ctx context.Context, tx pgx.Tx, id uuid.UUID, cursor int) error
+	SetRunNextOfferAt(ctx context.Context, tx pgx.Tx, id uuid.UUID, nextOfferAt *time.Time) error
 	FinishRun(ctx context.Context, tx pgx.Tx, id uuid.UUID, finishedAt time.Time) error
 	// FinishLesson marks the running lesson complete at the same server
 	// timestamp as its last run/item. Slice 3 has exactly one run, so a
@@ -115,7 +117,11 @@ type Store interface {
 	InsertEvidence(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, ev Evidence) error
 
 	InsertItemEvent(ctx context.Context, tx pgx.Tx, event ItemEvent) (ItemEvent, error)
+	ItemEventByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (ItemEvent, error)
 	ItemEventsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) ([]ItemEvent, error)
+	ScheduledItemEventsDue(ctx context.Context, tx pgx.Tx, now time.Time) ([]ItemEvent, error)
+	DeliverItemEvent(ctx context.Context, tx pgx.Tx, id uuid.UUID, deliveredAt time.Time, late bool) error
+	SkipItemEvent(ctx context.Context, tx pgx.Tx, id uuid.UUID, reason string) error
 	InsertControlReport(ctx context.Context, tx pgx.Tx, report ControlReport) (ControlReport, error)
 	ControlReportsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) ([]ControlReport, error)
 

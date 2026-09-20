@@ -257,10 +257,10 @@ func scanRun(row pgx.Row) (training.Run, error) {
 
 func (s *Store) InsertRun(ctx context.Context, tx pgx.Tx, r training.Run) (training.Run, error) {
 	err := tx.QueryRow(ctx, `
-		INSERT INTO runs (exercise_type, id, lesson_id, user_id, workstation_id, mode, state, level_at_start, queue_cursor, started_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9)
+		INSERT INTO runs (exercise_type, id, lesson_id, user_id, workstation_id, mode, state, level_at_start, next_offer_at, queue_cursor, started_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9, $10)
 		RETURNING started_at
-	`, r.ExerciseType, r.ID, r.LessonID, r.UserID, r.WorkstationID, r.Mode, r.LevelAtStart, r.QueueCursor, r.StartedAt).
+	`, r.ExerciseType, r.ID, r.LessonID, r.UserID, r.WorkstationID, r.Mode, r.LevelAtStart, r.NextOfferAt, r.QueueCursor, r.StartedAt).
 		Scan(&r.StartedAt)
 	if err != nil {
 		return training.Run{}, mapErr(err)
@@ -301,8 +301,41 @@ func (s *Store) RunsByLesson(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID)
 	return runs, nil
 }
 
+func (s *Store) RunsDueForOffer(ctx context.Context, tx pgx.Tx, now time.Time) ([]training.Run, error) {
+	rows, err := tx.Query(ctx, `SELECT `+runSelectColumns+` `+runFrom+`
+		WHERE r.state = 'active' AND r.next_offer_at IS NOT NULL AND r.next_offer_at <= $1
+		ORDER BY r.next_offer_at, r.id`, now)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	var runs []training.Run
+	for rows.Next() {
+		run, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return runs, nil
+}
+
 func (s *Store) SetRunQueueCursor(ctx context.Context, tx pgx.Tx, id uuid.UUID, cursor int) error {
 	tag, err := tx.Exec(ctx, `UPDATE runs SET queue_cursor = $2 WHERE id = $1`, id, cursor)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return training.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) SetRunNextOfferAt(ctx context.Context, tx pgx.Tx, id uuid.UUID, nextOfferAt *time.Time) error {
+	tag, err := tx.Exec(ctx, `UPDATE runs SET next_offer_at = $2 WHERE id = $1`, id, nextOfferAt)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -639,6 +672,52 @@ func (s *Store) ItemEventsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUI
 		return nil, mapErr(err)
 	}
 	return events, nil
+}
+
+func (s *Store) ItemEventByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (training.ItemEvent, error) {
+	return scanItemEvent(tx.QueryRow(ctx, `SELECT `+itemEventColumns+` FROM item_events WHERE id = $1`, id))
+}
+
+func (s *Store) ScheduledItemEventsDue(ctx context.Context, tx pgx.Tx, now time.Time) ([]training.ItemEvent, error) {
+	rows, err := tx.Query(ctx, `SELECT `+itemEventColumns+` FROM item_events WHERE state = 'scheduled' AND due_at <= $1 ORDER BY due_at, id`, now)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	var events []training.ItemEvent
+	for rows.Next() {
+		event, err := scanItemEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return events, nil
+}
+
+func (s *Store) DeliverItemEvent(ctx context.Context, tx pgx.Tx, id uuid.UUID, deliveredAt time.Time, late bool) error {
+	tag, err := tx.Exec(ctx, `UPDATE item_events SET state='delivered', delivered_at=$2, late=$3 WHERE id=$1 AND state='scheduled'`, id, deliveredAt, late)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return training.ErrConflict
+	}
+	return nil
+}
+
+func (s *Store) SkipItemEvent(ctx context.Context, tx pgx.Tx, id uuid.UUID, reason string) error {
+	tag, err := tx.Exec(ctx, `UPDATE item_events SET state='skipped', skip_reason=$2 WHERE id=$1 AND state='scheduled'`, id, reason)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return training.ErrConflict
+	}
+	return nil
 }
 
 const controlReportColumns = `id, item_id, action_id, text, created_at`
