@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	assessmenthttp "emsim/internal/assessment/http"
 	"emsim/internal/auth"
 	authhttp "emsim/internal/auth/http"
 	authpg "emsim/internal/auth/postgres"
@@ -206,6 +207,8 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.
 
 	trainingService := newTrainingService(pool, mustTaskEnqueuer(pool))
 	traininghttp.NewHandlers(trainingService, authService, cfg.CookieSecure, hub).Register(apiMux)
+	assessmentService := newAssessmentService(pool, mustTaskEnqueuer(pool))
+	assessmenthttp.NewHandlers(assessmentService, trainingService, authService, cfg.CookieSecure).Register(apiMux)
 
 	root := http.NewServeMux()
 	root.Handle("/api/", apiMux)
