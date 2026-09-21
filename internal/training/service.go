@@ -274,9 +274,6 @@ func (s *Service) checkAssignableVersion(version content.ScenarioVersionRecord, 
 	if version.Body.TargetService != traineeServiceCode {
 		return validationErr("user_id", "service_code does not match the scenario's target_service")
 	}
-	if version.Body.Reference.Call.Required {
-		return validationErr("scenario_version_ids", "a required call is not supported until slice 5")
-	}
 	for _, fc := range version.Body.Reference.FieldCorrections {
 		if fc.Path != allowedFieldCorrectionPath {
 			return validationErr("scenario_version_ids", "an unsupported field correction path is referenced")

@@ -34,10 +34,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS runtime
 WORKDIR /app
-USER 65532:65532
 COPY --from=build /out/emsim /app/emsim
 # seed/ (slice 2's C3 pilot catalogue) is read by "emsim import seed
 # --actor ... /app/seed" — compose.yaml's one-shot "seed" service.
 COPY seed /app/seed
 RUN mkdir /app/blobs && chown 65532:65532 /app/blobs
+USER 65532:65532
 ENTRYPOINT ["/app/emsim"]

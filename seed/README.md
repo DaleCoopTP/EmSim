@@ -34,6 +34,12 @@
   «+7 (749) 512-34-56», перенесённый в `card.phones.provided` как есть). Звонки и
   события в пилоте не нужны (`contacts: []`, `events: []`) — `slice-planning.md`
   §3 ограничивает срез 2 загрузкой и просмотром.
+- `scenarios/pilot-phone-01.json` — immutable-пилот среза 5: до `accepted`
+  требуется завершить звонок руководителю бригады (учебный номер 4152) с
+  адресом, типом происшествия и принятыми мерами.
+- `voice-assets/manifest.json` и два PCM WAV-файла — greeting/ack этого
+  контакта (mono, 16-bit, 16 kHz). `import seed` после сценариев импортирует
+  их идемпотентно в content-addressed `BLOB_ROOT`.
 
 ## Порядок загрузки
 

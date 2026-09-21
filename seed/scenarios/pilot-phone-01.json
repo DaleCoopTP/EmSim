@@ -1,0 +1,42 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "pilot-phone-01",
+  "version": 1,
+  "title": "Дерево во дворе — доклад руководителю бригады",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "target_service": "dds_district",
+    "card": {
+      "number": "881514",
+      "registered_at_offset_s": -45,
+      "applicant": { "name": "Смирнова, житель", "phone": "+77495124514", "status": "witness" },
+      "address": {
+        "country": "Россия", "city": "Москва", "okrug": "ЮАО", "district": "Чертаново Южное",
+        "street": "Чертановская улица", "house": "62", "entrance": "3",
+        "text": "Россия, Москва, (ЮАО, Чертаново Южное), Чертановская улица, 62, под. 3"
+      },
+      "incident": {
+        "type_code": "14080106", "type_name": "Дерево упало во дворе",
+        "features": { "объект": "Дерево", "состояние": "Упало, сломано", "место": "Двор, пешеходная дорожка" },
+        "description": "Упавшее дерево перекрыло пешеходную дорожку во дворе. Пострадавших нет; участок ограждён жильцами.", "victims": 0
+      },
+      "notification_list": [{ "service": "dds_district", "status": "added", "mine": true }],
+      "phones": { "aon": "+77495124514", "provided": "+7 (749) 512-45-14" }
+    },
+    "contacts": [{
+      "key": "crew_leader", "label": "Руководитель бригады", "number": "4152", "voice": "crew_leader_recorded",
+      "phrases": { "greeting": "Диспетчерская, руководитель бригады, слушаю вас.", "ack": "Информация принята. Бригада направлена по указанному адресу." }
+    }],
+    "events": [],
+    "reference": {
+      "primary_decision": { "status": "accepted", "comment_required": false },
+      "expected_chain": [],
+      "call": { "required": true, "to": "crew_leader", "must_mention": ["address", "incident_type", "measures"], "before_status": "accepted" },
+      "field_corrections": [], "pilot_goal": "accept_card",
+      "guide_refs": ["Учебный пилот Slice 5: доклад руководителю бригады"],
+      "notes": "До принятия карточки обучаемый обязан завершить звонок руководителю бригады и сообщить адрес, тип происшествия и принятые меры."
+    },
+    "difficulty": 2, "exercise_type": "dds_processing"
+  }
+}

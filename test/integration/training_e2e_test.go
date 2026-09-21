@@ -47,10 +47,10 @@ func setupTrainingE2E(t *testing.T) trainingE2EFixture {
 
 	const adminLogin, adminPassword = "e2e-training-admin", "correct-horse-battery-staple"
 	runBootstrapAdminProcess(t, ctx, binary, databaseURL, adminLogin, adminPassword)
-	runImportSeedProcess(t, ctx, binary, databaseURL, adminLogin, "../../seed")
+	blobRoot := runImportSeedProcess(t, ctx, binary, databaseURL, adminLogin, "../../seed")
 
 	publicAddr, adminAddr := freeAddr(t), freeAddr(t)
-	api := startAPIProcess(t, binary, databaseURL, publicAddr, adminAddr)
+	api := startAPIProcess(t, binary, databaseURL, publicAddr, adminAddr, blobRoot)
 	t.Cleanup(func() { api.stop(t) })
 	return trainingE2EFixture{ctx: ctx, databaseURL: databaseURL, baseURL: "http://" + publicAddr}
 }

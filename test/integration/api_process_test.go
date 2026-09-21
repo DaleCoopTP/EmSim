@@ -63,8 +63,12 @@ func freeAddr(t *testing.T) string {
 	return addr
 }
 
-func startAPIProcess(t *testing.T, binary, databaseURL, publicAddr, adminAddr string) *apiProcess {
+func startAPIProcess(t *testing.T, binary, databaseURL, publicAddr, adminAddr string, blobRoots ...string) *apiProcess {
 	t.Helper()
+	blobRoot := t.TempDir()
+	if len(blobRoots) > 0 {
+		blobRoot = blobRoots[0]
+	}
 	log, err := os.Create(filepath.Join(t.TempDir(), "api.log"))
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +78,7 @@ func startAPIProcess(t *testing.T, binary, databaseURL, publicAddr, adminAddr st
 	cmd.Env = append(os.Environ(),
 		"DATABASE_URL="+databaseURL, "API_LISTEN_ADDR="+publicAddr, "ADMIN_LISTEN_ADDR="+adminAddr,
 		"COOKIE_SECURE=false", // no TLS in this test, same as compose's demo profile
+		"BLOB_ROOT="+blobRoot,
 	)
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
@@ -354,13 +359,15 @@ func seedServiceFixture(t *testing.T, ctx context.Context, databaseURL, code str
 // runImportSeedProcess runs `emsim import seed --actor <actorLogin>
 // <seedDir>` as a subprocess, the same way an operator or compose's
 // one-shot "seed" service does (seed/README.md).
-func runImportSeedProcess(t *testing.T, ctx context.Context, binary, databaseURL, actorLogin, seedDir string) {
+func runImportSeedProcess(t *testing.T, ctx context.Context, binary, databaseURL, actorLogin, seedDir string) string {
 	t.Helper()
+	blobRoot := t.TempDir()
 	cmd := exec.CommandContext(ctx, binary, "import", "seed", "--actor", actorLogin, seedDir)
-	cmd.Env = append(os.Environ(), "DATABASE_URL="+databaseURL)
+	cmd.Env = append(os.Environ(), "DATABASE_URL="+databaseURL, "BLOB_ROOT="+blobRoot)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("import seed: %v\n%s", err, output)
 	}
+	return blobRoot
 }
 
 // TestAPIProcessContentCatalogAccess is slice 2's end-to-end check
@@ -463,9 +470,9 @@ func TestAPIProcessContentCatalogAccess(t *testing.T) {
 		Total int `json:"total"`
 	}
 	response = jsonRequest(t, ctx, instructorClient, baseURL, http.MethodGet, "/api/v1/scenarios", nil, &scenarioList)
-	// The slice-4 event fixture is part of the imported catalogue too;
-	// this access check asserts visibility rather than a brittle seed count.
-	if response.StatusCode != http.StatusOK || scenarioList.Total != 3 || len(scenarioList.Items) != 3 {
+	// The slice-4 event and slice-5 phone fixtures are part of the imported
+	// catalogue too; this access check asserts that the full offline seed loaded.
+	if response.StatusCode != http.StatusOK || scenarioList.Total != 4 || len(scenarioList.Items) != 4 {
 		t.Fatalf("instructor GET /scenarios status = %d, body = %+v", response.StatusCode, scenarioList)
 	}
 
