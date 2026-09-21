@@ -68,3 +68,25 @@ func TestRegisterKindsIncludesLessonClose(t *testing.T) {
 		t.Fatalf("lesson.close spec = %+v, want pool=short priority=100 max_attempts=5", spec)
 	}
 }
+
+// TestRegisterKindsIncludesAssessmentEvaluate guards slice 6's C5
+// invariant: training.KindAssessmentEvaluate must already be registered
+// so the api process's own EnqueueWaitingTx (training's close) can find
+// a Spec — without this, closing a training item would fail with
+// ErrUnknownKind at runtime instead of here.
+func TestRegisterKindsIncludesAssessmentEvaluate(t *testing.T) {
+	registry, err := tasks.NewRegistry(tasks.DefaultPolicy())
+	if err != nil {
+		t.Fatalf("tasks.NewRegistry: %v", err)
+	}
+	if err := registerKinds(registry); err != nil {
+		t.Fatalf("registerKinds: %v", err)
+	}
+	spec, ok := registry.Lookup(training.KindAssessmentEvaluate)
+	if !ok {
+		t.Fatal("registerKinds did not register training.KindAssessmentEvaluate")
+	}
+	if spec.Pool != "llm" || spec.Priority != 100 || spec.MaxAttempts != 3 {
+		t.Fatalf("assessment.evaluate spec = %+v, want pool=llm priority=100 max_attempts=3", spec)
+	}
+}

@@ -113,6 +113,17 @@ func TestTrainingPhoneCallRecordingAndEvidenceEndToEnd(t *testing.T) {
 	runLesson(t, f, instructor, "Phone A", "training", 51, currentUserID(t, f, traineeA), versionID)
 	runLesson(t, f, instructor, "Phone B", "training", 52, currentUserID(t, f, traineeB), versionID)
 	itemA, itemB := currentItemID(t, f, traineeA), currentItemID(t, f, traineeB)
+	var offered struct {
+		Card struct {
+			Contacts []struct {
+				Key    string `json:"key"`
+				Number string `json:"number"`
+			} `json:"contacts"`
+		} `json:"card"`
+	}
+	if itemResponse := jsonRequest(t, f.ctx, traineeA, f.baseURL, http.MethodGet, "/api/v1/items/"+itemA, nil, &offered); itemResponse.StatusCode != http.StatusOK || len(offered.Card.Contacts) != 1 || offered.Card.Contacts[0].Key != "crew_leader" || offered.Card.Contacts[0].Number != "4152" {
+		t.Fatalf("offered phone contacts status=%d body=%+v", itemResponse.StatusCode, offered)
+	}
 	for _, tc := range []struct {
 		client *http.Client
 		item   string

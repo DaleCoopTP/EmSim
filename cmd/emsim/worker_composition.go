@@ -46,9 +46,27 @@ func registerKinds(registry *tasks.Registry) error {
 	}
 	// slice-4-plan.md's C8 spec: pool short, priority 100, lease 2
 	// minutes, 5 attempts, retry base 200ms.
-	return registry.Register(tasks.Spec{
+	if err := registry.Register(tasks.Spec{
 		Name: training.KindLessonClose, Pool: "short", MaxAttempts: 5,
 		Lease: 2 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 100,
+	}); err != nil {
+		return err
+	}
+	// slice-6-plan.md's C5/C6 spec (RFC-001 §7.4): pool llm, priority
+	// 100, lease 5 minutes, 3 attempts. RetryBase is 200ms, same as
+	// lesson.close above — not because assessment.evaluate needs a fast
+	// retry, but because this one Registry is shared with e2eRecoveryPolicy
+	// (RetryCap 400ms) in this file's own e2e-fast tests, and every
+	// registered Spec must satisfy the strictest policy that will ever
+	// validate it; the real production retry cadence for assessment.evaluate
+	// is a slice 6/C6 concern (its own coordinator/handler/finalizer,
+	// registered separately once internal/assessment exists), not this
+	// placeholder Spec's. training's close (this file's own api process)
+	// enqueues it straight into waiting via EnqueueWaitingTx, which — like
+	// EnqueueTx above — reads the Spec from this Registry.
+	return registry.Register(tasks.Spec{
+		Name: training.KindAssessmentEvaluate, Pool: "llm", MaxAttempts: 3,
+		Lease: 5 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 100,
 	})
 }
 

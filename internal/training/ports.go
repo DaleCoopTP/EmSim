@@ -60,14 +60,17 @@ type ServiceReader interface {
 
 // TaskEnqueuer is training's write access to platform's technical queue
 // (CLAUDE.md: "platform/tasks — a module writes only its own tables";
-// training enqueues into it, it never writes a tasks row directly). The
-// method signature matches *tasks.Store.EnqueueTx exactly, so that
-// concrete type satisfies this structurally — same pattern as
-// UserDirectory/ScenarioReader above. Stop (C8) uses this to enqueue
-// lesson.close atomically with the barrier it sets under lessons
-// FOR UPDATE (CLAUDE.md: "Preserve one database transaction where a
+// training enqueues into it, it never writes a tasks row directly). Both
+// method signatures match *tasks.Store's own EnqueueTx/EnqueueWaitingTx
+// exactly, so that concrete type satisfies this structurally — same
+// pattern as UserDirectory/ScenarioReader above. Stop (C8) uses EnqueueTx
+// to enqueue lesson.close atomically with the barrier it sets under
+// lessons FOR UPDATE; close (slice 6's C5) uses EnqueueWaitingTx to put
+// assessment.evaluate straight into waiting atomically with the evidence
+// it depends on (CLAUDE.md: "Preserve one database transaction where a
 // domain change, audit record, notification, and related background-
 // task enqueue must be atomic").
 type TaskEnqueuer interface {
 	EnqueueTx(ctx context.Context, tx pgx.Tx, request tasks.EnqueueRequest) (id uuid.UUID, created bool, err error)
+	EnqueueWaitingTx(ctx context.Context, tx pgx.Tx, request tasks.EnqueueWaitingRequest) (id uuid.UUID, created bool, err error)
 }

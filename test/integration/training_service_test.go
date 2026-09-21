@@ -61,6 +61,17 @@ func mustTaskEnqueuer(pool *pgxpool.Pool) *tasks.Store {
 	}); err != nil {
 		panic("mustTaskEnqueuer: " + err.Error())
 	}
+	// assessment.evaluate: training only ever enqueues it (straight into
+	// waiting), never claims it, but EnqueueWaitingTx still looks up the
+	// Spec by Kind to fill in max_attempts — this Spec's shape is a
+	// placeholder for that lookup, not the one assessment's own
+	// composition (slice 6's C6) will register.
+	if err := registry.Register(tasks.Spec{
+		Name: training.KindAssessmentEvaluate, Pool: "llm", MaxAttempts: 3,
+		Lease: 5 * time.Minute, RetryBase: 5 * time.Second, Priority: 100,
+	}); err != nil {
+		panic("mustTaskEnqueuer: " + err.Error())
+	}
 	return tasks.NewStore(pool, registry)
 }
 
@@ -196,6 +207,15 @@ func principal(u auth.User, workstationID uuid.UUID) auth.Principal {
 // returns everything a test needs to Start and Execute against it.
 func setupPilotLesson(t *testing.T, ctx context.Context, pool *pgxpool.Pool, service *training.Service, okrug string) (instructor, trainee auth.User, workstationID uuid.UUID, lesson training.Lesson) {
 	t.Helper()
+	return setupPilotLessonWithMode(t, ctx, pool, service, okrug, training.ModeTraining)
+}
+
+// setupPilotLessonWithMode is setupPilotLesson with an explicit lesson
+// mode — slice 6's C5 needs an intro-mode lesson to assert that closing
+// an intro item never enqueues assessment.evaluate (slice-planning.md
+// §9: "intro не ставит задачу оценки").
+func setupPilotLessonWithMode(t *testing.T, ctx context.Context, pool *pgxpool.Pool, service *training.Service, okrug string, mode training.Mode) (instructor, trainee auth.User, workstationID uuid.UUID, lesson training.Lesson) {
+	t.Helper()
 	const svc = "training_pilot_svc"
 	pilotWorkflowService(t, ctx, pool, svc)
 
@@ -207,7 +227,7 @@ func setupPilotLesson(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ser
 	instructorPrincipal := principal(instructor, uuid.Nil)
 	created, err := service.CreateLesson(ctx, instructorPrincipal, training.LessonCreate{
 		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "Fixture lesson",
-		Mode: training.ModeTraining, Level: auth.LevelEasy,
+		Mode: mode, Level: auth.LevelEasy,
 	}, "req-create")
 	if err != nil {
 		t.Fatalf("CreateLesson: %v", err)
@@ -330,6 +350,183 @@ func closePilotItem(t *testing.T, ctx context.Context, service *training.Service
 		if err != nil || receipt.Outcome != training.OutcomeApplied {
 			t.Fatalf("close item command %s = %+v, %v", command.Type, receipt, err)
 		}
+	}
+}
+
+// assessmentEvaluateTaskRow reads the single tasks row (if any) matching
+// training.EvaluateDedupKey(itemID); ok is false if no such row exists.
+func assessmentEvaluateTaskRow(t *testing.T, ctx context.Context, pool *pgxpool.Pool, itemID uuid.UUID) (status, waitReason string, payload []byte, digest []byte, ok bool) {
+	t.Helper()
+	rows, err := pool.Query(ctx, `SELECT status, coalesce(wait_reason, ''), payload FROM tasks WHERE dedup_key = $1`, training.EvaluateDedupKey(itemID))
+	if err != nil {
+		t.Fatalf("query assessment.evaluate task: %v", err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		count++
+		if err := rows.Scan(&status, &waitReason, &payload); err != nil {
+			t.Fatalf("scan assessment.evaluate task: %v", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate assessment.evaluate task rows: %v", err)
+	}
+	if count > 1 {
+		t.Fatalf("assessment.evaluate tasks for item %s = %d, want at most 1 (dedup_key must prevent duplicates)", itemID, count)
+	}
+	if count == 0 {
+		return "", "", nil, nil, false
+	}
+	if err := pool.QueryRow(ctx, `SELECT digest FROM evidence WHERE item_id = $1`, itemID).Scan(&digest); err != nil {
+		t.Fatalf("read evidence digest: %v", err)
+	}
+	return status, waitReason, payload, digest, true
+}
+
+// TestTrainingCloseEnqueuesAssessmentEvaluateWaiting covers slice 6's C5
+// (slice-6-plan.md): closing a training-mode item must enqueue exactly
+// one assessment.evaluate task, straight into waiting with input_id=nil,
+// atomically with the evidence it will score.
+func TestTrainingCloseEnqueuesAssessmentEvaluateWaiting(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	_, trainee, workstationID, lesson := setupPilotLesson(t, ctx, pool, service, "ЮАО")
+	if _, err := service.Start(ctx, principal(auth.User{ID: lesson.InstructorID, Role: auth.RoleInstructor}, uuid.Nil), lesson.ID, "req-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	actor := principal(trainee, workstationID)
+	items, err := service.MyItems(ctx, actor)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("MyItems = %+v, %v, want exactly one item", items, err)
+	}
+	itemID := items[0].ID
+
+	closePilotItem(t, ctx, service, actor, itemID)
+
+	status, waitReason, payload, digest, ok := assessmentEvaluateTaskRow(t, ctx, pool, itemID)
+	if !ok {
+		t.Fatal("no assessment.evaluate task was enqueued for the closed training item")
+	}
+	if status != "waiting" || waitReason != "awaiting_input" {
+		t.Fatalf("status/wait_reason = %q/%q, want waiting/awaiting_input", status, waitReason)
+	}
+	var body struct {
+		ItemID         uuid.UUID `json:"item_id"`
+		EvidenceDigest string    `json:"evidence_digest"`
+		RubricVersion  string    `json:"rubric_version"`
+		InputID        *string   `json:"input_id"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if body.ItemID != itemID {
+		t.Fatalf("payload.item_id = %s, want %s", body.ItemID, itemID)
+	}
+	if body.EvidenceDigest != fmt.Sprintf("%x", digest) {
+		t.Fatalf("payload.evidence_digest = %s, want %x (the item's own sealed evidence)", body.EvidenceDigest, digest)
+	}
+	if body.RubricVersion != lesson.RubricVersion {
+		t.Fatalf("payload.rubric_version = %s, want %s (the lesson's frozen rubric_version)", body.RubricVersion, lesson.RubricVersion)
+	}
+	if body.InputID != nil {
+		t.Fatalf("payload.input_id = %v, want null (sealed only by the coordinator, per RFC-001 §7.4)", *body.InputID)
+	}
+}
+
+// TestTrainingIntroCloseDoesNotEnqueueAssessmentEvaluate covers
+// slice-planning.md §9: an intro-mode item's close must not create an
+// assessment.evaluate task at all.
+func TestTrainingIntroCloseDoesNotEnqueueAssessmentEvaluate(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	_, trainee, workstationID, lesson := setupPilotLessonWithMode(t, ctx, pool, service, "ЮАО", training.ModeIntro)
+	if _, err := service.Start(ctx, principal(auth.User{ID: lesson.InstructorID, Role: auth.RoleInstructor}, uuid.Nil), lesson.ID, "req-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	actor := principal(trainee, workstationID)
+	items, err := service.MyItems(ctx, actor)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("MyItems = %+v, %v, want exactly one item", items, err)
+	}
+	itemID := items[0].ID
+
+	closePilotItem(t, ctx, service, actor, itemID)
+
+	if _, _, _, _, ok := assessmentEvaluateTaskRow(t, ctx, pool, itemID); ok {
+		t.Fatal("an intro item's close enqueued an assessment.evaluate task, want none")
+	}
+}
+
+// TestTrainingCloseReplayDoesNotDuplicateAssessmentEvaluate closes the
+// same item twice with the identical close command_id (the client's own
+// retry-until-receipt behaviour, RFC-001 §7.1) and asserts the second
+// call is a replay that does not enqueue a second assessment.evaluate
+// task.
+func TestTrainingCloseReplayDoesNotDuplicateAssessmentEvaluate(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	_, trainee, workstationID, lesson := setupPilotLesson(t, ctx, pool, service, "ЮАО")
+	if _, err := service.Start(ctx, principal(auth.User{ID: lesson.InstructorID, Role: auth.RoleInstructor}, uuid.Nil), lesson.ID, "req-start"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	actor := principal(trainee, workstationID)
+	items, err := service.MyItems(ctx, actor)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("MyItems = %+v, %v, want exactly one item", items, err)
+	}
+	itemID := items[0].ID
+
+	if _, err := service.Execute(ctx, actor, itemID, training.Command{
+		CommandID: uuid.New(), ExpectedSeq: 0, Type: training.CommandOpen, Payload: []byte(`{}`),
+	}, "req-open"); err != nil {
+		t.Fatalf("Execute(open): %v", err)
+	}
+	if _, err := service.Execute(ctx, actor, itemID, training.Command{
+		CommandID: uuid.New(), ExpectedSeq: 1, Type: training.CommandSetStatus, Payload: []byte(`{"status":"accepted"}`),
+	}, "req-accept"); err != nil {
+		t.Fatalf("Execute(set_status accepted): %v", err)
+	}
+
+	closeCommandID := uuid.New()
+	closeCommand := training.Command{CommandID: closeCommandID, ExpectedSeq: 2, Type: training.CommandClose, Payload: []byte(`{}`)}
+	first, err := service.Execute(ctx, actor, itemID, closeCommand, "req-close")
+	if err != nil || first.Outcome != training.OutcomeApplied || first.Replayed {
+		t.Fatalf("first close = %+v, %v, want applied, not replayed", first, err)
+	}
+	_, _, firstPayload, _, ok := assessmentEvaluateTaskRow(t, ctx, pool, itemID)
+	if !ok {
+		t.Fatal("first close did not enqueue assessment.evaluate")
+	}
+
+	second, err := service.Execute(ctx, actor, itemID, closeCommand, "req-close-retry")
+	if err != nil || second.Outcome != training.OutcomeApplied || !second.Replayed {
+		t.Fatalf("second close = %+v, %v, want applied and replayed=true", second, err)
+	}
+	_, _, secondPayload, _, ok := assessmentEvaluateTaskRow(t, ctx, pool, itemID)
+	if !ok {
+		t.Fatal("assessment.evaluate task disappeared after a replayed close")
+	}
+	if string(firstPayload) != string(secondPayload) {
+		t.Fatalf("payload changed across replay: %s -> %s, want the same row untouched", firstPayload, secondPayload)
 	}
 }
 
@@ -1226,6 +1423,18 @@ func TestTrainingStopBarrierAndDurableClose(t *testing.T) {
 	if evidenceCount != 1 {
 		t.Fatalf("evidence rows = %d, want 1 (the retry must not insert a second)", evidenceCount)
 	}
+
+	// slice 6's C5: the stop-triggered closeInterruptedItem path must
+	// also enqueue assessment.evaluate exactly once, even though
+	// CloseStoppedLesson ran twice above (worker at-least-once retry).
+	status, waitReason, _, _, ok := assessmentEvaluateTaskRow(t, ctx, pool, item.ID)
+	if !ok {
+		t.Fatal("no assessment.evaluate task was enqueued for the interrupted item")
+	}
+	if status != "waiting" || waitReason != "awaiting_input" {
+		t.Fatalf("interrupted item's assessment.evaluate status/wait_reason = %q/%q, want waiting/awaiting_input", status, waitReason)
+	}
+
 	var evidenceBody []byte
 	if err := pool.QueryRow(ctx, `SELECT body FROM evidence WHERE item_id=$1`, item.ID).Scan(&evidenceBody); err != nil {
 		t.Fatalf("read evidence: %v", err)

@@ -382,12 +382,22 @@ func TestAPIProcessTrainingPilotOneEndToEnd(t *testing.T) {
 	if resp, receipt := sendCommand(t, f, traineeBClient, itemBID, randomCommandID(), 2, "close", map[string]any{}); resp.StatusCode != http.StatusOK || receipt.Outcome != "applied" {
 		t.Fatalf("intro close status=%d receipt=%+v", resp.StatusCode, receipt)
 	}
+	// Slice 6: trainee A's training close enqueued exactly one
+	// assessment.evaluate (waiting, for itemID); trainee B's intro close
+	// must not add a second (slice-planning.md §9: intro never gets one).
 	var taskCount int
 	if err := pool.QueryRow(f.ctx, `SELECT count(*) FROM tasks`).Scan(&taskCount); err != nil {
 		t.Fatalf("count tasks: %v", err)
 	}
-	if taskCount != 0 {
-		t.Fatalf("tasks table has %d rows after an intro close, want 0 (no assessment queued until slice 6)", taskCount)
+	if taskCount != 1 {
+		t.Fatalf("tasks table has %d rows after training close + intro close, want 1 (only trainee A's assessment.evaluate)", taskCount)
+	}
+	var evaluateStatus, evaluateScopeID string
+	if err := pool.QueryRow(f.ctx, `SELECT status, scope_id::text FROM tasks WHERE kind = 'assessment.evaluate'`).Scan(&evaluateStatus, &evaluateScopeID); err != nil {
+		t.Fatalf("read assessment.evaluate task: %v", err)
+	}
+	if evaluateStatus != "waiting" || evaluateScopeID != itemID {
+		t.Fatalf("assessment.evaluate task = status=%q scope_id=%q, want waiting/%s", evaluateStatus, evaluateScopeID, itemID)
 	}
 	var traineeBLevel string
 	if err := pool.QueryRow(f.ctx, `SELECT level FROM users WHERE id = $1`, traineeUserBID).Scan(&traineeBLevel); err != nil {

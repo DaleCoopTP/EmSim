@@ -2,6 +2,7 @@ package training
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +27,24 @@ import (
 // exact same Kind this package enqueues — a mismatch there would leave
 // enqueued tasks with no worker ever claiming them.
 const KindLessonClose tasks.Kind = "lesson.close"
+
+// KindAssessmentEvaluate is platform/tasks' kind for the assessment
+// module's own scoring pipeline (RFC-001 §7.4, slice 6/ADR-019).
+// training only ever enqueues it — straight into waiting, never pending
+// (assessment's own coordinator promotes it once evidence is sealed) —
+// and never claims or registers a Spec/handler for it; that belongs to
+// internal/assessment and its own composition, the same separation
+// KindLessonClose's doc comment describes for the worker side of stop.
+// Exported so both sides agree on the exact Kind string.
+const KindAssessmentEvaluate tasks.Kind = "assessment.evaluate"
+
+// EvaluateDedupKey is assessment.evaluate's own dedup_key convention
+// (RFC-001 §7.4/tasks.schema.json: "одна auto на item") — one evaluate
+// task per item, ever, regardless of how many times close's own
+// transaction retries.
+func EvaluateDedupKey(itemID uuid.UUID) string {
+	return fmt.Sprintf("assessment.evaluate:%s", itemID)
+}
 
 // allowedFieldCorrectionPath mirrors internal/training/dds's own
 // constant — the application service needs it once, at assignment time,
@@ -503,7 +522,7 @@ func (s *Service) CloseStoppedLesson(ctx context.Context, tx pgx.Tx, lessonID uu
 			if item.State == ItemClosed || item.State == ItemInterrupted {
 				continue
 			}
-			if err := s.closeInterruptedItem(ctx, tx, exercise, item, stoppedAt, lesson.RecordingGraceS); err != nil {
+			if err := s.closeInterruptedItem(ctx, tx, exercise, lesson, item, stoppedAt); err != nil {
 				return err
 			}
 		}
@@ -548,7 +567,7 @@ func (s *Service) CloseStoppedLesson(ctx context.Context, tx pgx.Tx, lessonID uu
 // an item Stop's own SetStopCutoffForOpenItems already touched), and no
 // new action row is written: this is a server-side interruption, not a
 // client command.
-func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise Exercise, item Item, stoppedAt time.Time, recordingGraceS int) error {
+func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise Exercise, lesson Lesson, item Item, stoppedAt time.Time) error {
 	cutoff := item.LogSeq
 	if item.StopCutoffLogSeq != nil {
 		cutoff = *item.StopCutoffLogSeq
@@ -564,7 +583,7 @@ func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise 
 	if err := s.store.SkipRemainingItemEvents(ctx, tx, item.ID, SkipReasonLessonStopped); err != nil {
 		return err
 	}
-	if err := s.store.SetCallRecordingDeadline(ctx, tx, item.ID, stoppedAt.Add(time.Duration(recordingGraceS)*time.Second)); err != nil {
+	if err := s.store.SetCallRecordingDeadline(ctx, tx, item.ID, stoppedAt.Add(time.Duration(lesson.RecordingGraceS)*time.Second)); err != nil {
 		return err
 	}
 
@@ -594,7 +613,40 @@ func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise 
 	if err := s.store.InsertEvidence(ctx, tx, item.ID, evidence); err != nil {
 		return err
 	}
+	if err := s.enqueueEvaluateWaiting(ctx, tx, lesson, item, evidence, stoppedAt); err != nil {
+		return err
+	}
 	return s.notify(ctx, tx, item.LessonID, item.UserID, item.ID)
+}
+
+// enqueueEvaluateWaiting puts assessment.evaluate straight into waiting
+// (RFC-001 §7.4: "close ставит waiting без input_id"), atomically with
+// the evidence it scores — the same transaction as InsertEvidence, both
+// on the ordinary close path (recordDecision) and the stop-triggered one
+// (closeInterruptedItem). Intro carries no assessment at all
+// (slice-planning.md §9: "intro не ставит задачу оценки, не создаёт
+// итоговую оценку"): only mode=training items ever get one.
+// assessment.evaluate's own Spec/handler are registered by
+// internal/assessment's composition, never by training — this package
+// only ever enqueues, per KindAssessmentEvaluate's own doc comment.
+func (s *Service) enqueueEvaluateWaiting(ctx context.Context, tx pgx.Tx, lesson Lesson, item Item, evidence Evidence, now time.Time) error {
+	if lesson.Mode != ModeTraining {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{
+		"item_id":         item.ID,
+		"evidence_digest": hex.EncodeToString(evidence.Digest[:]),
+		"rubric_version":  lesson.RubricVersion,
+		"input_id":        nil,
+	})
+	if err != nil {
+		return fmt.Errorf("training: marshal assessment.evaluate payload: %w", err)
+	}
+	_, _, err = s.tasks.EnqueueWaitingTx(ctx, tx, tasks.EnqueueWaitingRequest{
+		TaskID: uuid.New(), Kind: KindAssessmentEvaluate, ScopeType: "item", ScopeID: &item.ID,
+		DedupKey: EvaluateDedupKey(item.ID), Payload: payload, WaitUntil: now, WaitReason: "awaiting_input",
+	})
+	return err
 }
 
 func (s *Service) startOneAssignment(ctx context.Context, tx pgx.Tx, lesson Lesson, a Assignment, now time.Time) error {
@@ -677,6 +729,7 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 	}
 	openAt := now.Add(time.Duration(lesson.Timing.OpenS) * time.Second)
 	card := content.ProjectCard(version.Body.Card)
+	card.Contacts = content.ProjectContacts(version.Body.Contacts)
 	var spawnedFrom *uuid.UUID
 	if origin != nil {
 		spawnedFrom = &origin.itemID
@@ -1133,6 +1186,9 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 		return Receipt{}, err
 	}
 	if err := s.store.InsertEvidence(ctx, tx, item.ID, evidence); err != nil {
+		return Receipt{}, err
+	}
+	if err := s.enqueueEvaluateWaiting(ctx, tx, lesson, closedItem, evidence, closedAt); err != nil {
 		return Receipt{}, err
 	}
 	assignments, err := s.store.AssignmentsByLesson(ctx, tx, item.LessonID)
