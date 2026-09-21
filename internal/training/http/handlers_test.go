@@ -278,6 +278,27 @@ func TestTraineeItemHasExactPublicShapeAndNoReferenceLeak(t *testing.T) {
 	}
 }
 
+func TestTraineeItemUsesScenarioContactsForPhonePanel(t *testing.T) {
+	svc := trainingFixture()
+	svc.item.Contacts = []content.Contact{{Key: "crew_leader", Label: "Руководитель бригады", Number: "4152", Voice: "crew_leader_recorded"}}
+	response := httptest.NewRecorder()
+	trainingMux(svc, trainingPrincipal(auth.RoleTrainee)).ServeHTTP(response, trainingRequest("GET", "/api/v1/items/"+svc.item.ID.String(), nil, true))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Card struct {
+			Contacts []content.ContactPreview `json:"contacts"`
+		} `json:"card"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Card.Contacts) != 1 || body.Card.Contacts[0].Key != "crew_leader" || body.Card.Contacts[0].Number != "4152" {
+		t.Fatalf("card contacts=%+v, want crew_leader/4152 from scenario", body.Card.Contacts)
+	}
+}
+
 func TestCommandResponseStatusesAndErrors(t *testing.T) {
 	itemID := uuid.New()
 	base := training.Receipt{CommandID: uuid.New(), Seq: 1, Reaction: content.ReactionReceived, ItemState: training.ItemOpened, ActionID: uuid.New(), LogSeq: 1}

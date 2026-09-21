@@ -849,13 +849,13 @@ type cardViewJSON struct {
 	Contacts         []content.ContactPreview      `json:"contacts,omitempty"`
 }
 
-func toCardViewJSON(card content.CardPreview, offeredAt time.Time) cardViewJSON {
+func toCardViewJSON(card content.CardPreview, contacts []content.Contact, offeredAt time.Time) cardViewJSON {
 	registeredAt := offeredAt.Add(time.Duration(card.RegisteredAtOffsetS) * time.Second)
 	return cardViewJSON{
 		Number: card.Number, RegisteredAt: formatTime(registeredAt),
 		Applicant: card.Applicant, Address: card.Address, Incident: card.Incident,
 		NotificationList: card.NotificationList, Phones: card.Phones,
-		Channel: card.Channel, Contacts: card.Contacts,
+		Channel: card.Channel, Contacts: content.ProjectContacts(contacts),
 	}
 }
 
@@ -1018,7 +1018,7 @@ func toItemJSON(item training.Item, actions []training.Action, events []training
 	return itemJSON{
 		itemSummaryJSON:    toItemSummaryJSON(item),
 		Mode:               string(item.Mode),
-		Card:               toCardViewJSON(item.Card, item.OfferedAt),
+		Card:               toCardViewJSON(item.Card, item.Contacts, item.OfferedAt),
 		AllowedTransitions: allowed,
 		Actions:            actionItems,
 		Events:             toDeliveredEventsJSON(events),
