@@ -76,8 +76,8 @@ const (
 	CommandAddComment    CommandType = "add_comment"
 	CommandSetCardField  CommandType = "set_card_field" // ADR-017
 	CommandClose         CommandType = "close"
-	CommandCallStart     CommandType = "call_start"     // not implemented until slice 5
-	CommandCallEnd       CommandType = "call_end"       // not implemented until slice 5
+	CommandCallStart     CommandType = "call_start"
+	CommandCallEnd       CommandType = "call_end"
 	CommandControlReport CommandType = "control_report" // not implemented until slice 4/5
 )
 

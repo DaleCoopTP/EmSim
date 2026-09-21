@@ -147,11 +147,13 @@ func resetSchema(t *testing.T, ctx context.Context, databaseURL string) {
 		DROP TABLE IF EXISTS item_events;
 		DROP TABLE IF EXISTS evidence;
 		DROP TABLE IF EXISTS actions;
+		DROP TABLE IF EXISTS calls;
 		DROP TABLE IF EXISTS items;
 		DROP TABLE IF EXISTS runs;
 		DROP TABLE IF EXISTS assignments;
 		DROP TABLE IF EXISTS lessons;
 		DROP FUNCTION IF EXISTS reject_immutable_change();
+		DROP TABLE IF EXISTS voice_assets;
 		DROP TABLE IF EXISTS scenario_versions;
 		DROP FUNCTION IF EXISTS reject_scenario_version_delete();
 		DROP FUNCTION IF EXISTS protect_scenario_version_content();
@@ -164,6 +166,7 @@ func resetSchema(t *testing.T, ctx context.Context, databaseURL string) {
 		DROP TABLE IF EXISTS users;
 		DROP TABLE IF EXISTS workstations;
 		DROP TABLE IF EXISTS services;
+		DROP TABLE IF EXISTS blobs;
 		DROP TABLE IF EXISTS goose_db_version;
 	`); err != nil {
 		t.Fatalf("reset schema: %v", err)
@@ -258,10 +261,10 @@ func assertTableSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatalf("iterate application tables: %v", err)
 	}
 	want := []string{
-		"actions", "assignments", "audit_log", "classifier_types", "control_reports", "evidence",
+		"actions", "assignments", "audit_log", "blobs", "calls", "classifier_types", "control_reports", "evidence",
 		"item_events",
 		"items", "lessons", "runs", "scenario_versions", "scenarios",
-		"services", "sessions", "tasks", "tickets", "users", "workstations",
+		"services", "sessions", "tasks", "tickets", "users", "voice_assets", "workstations",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("application tables = %v, want %v", got, want)
@@ -275,9 +278,9 @@ func assertApplicationTablesAbsent(t *testing.T, ctx context.Context, pool *pgxp
 		SELECT count(*)
 		FROM pg_catalog.pg_tables
 		WHERE schemaname = 'public' AND tablename IN (
-			'actions', 'assignments', 'audit_log', 'classifier_types', 'control_reports', 'evidence', 'item_events',
+			'actions', 'assignments', 'audit_log', 'blobs', 'calls', 'classifier_types', 'control_reports', 'evidence', 'item_events',
 			'items', 'lessons', 'runs', 'scenario_versions', 'scenarios',
-			'services', 'sessions', 'tasks', 'tickets', 'users', 'workstations'
+			'services', 'sessions', 'tasks', 'tickets', 'users', 'voice_assets', 'workstations'
 		)
 	`).Scan(&count); err != nil {
 		t.Fatalf("count application tables: %v", err)

@@ -128,6 +128,7 @@ type receiptResponse struct {
 	ItemState string  `json:"item_state"`
 	Replayed  bool    `json:"replayed"`
 	ErrorCode *string `json:"error_code"`
+	CallID    string  `json:"call_id"`
 }
 
 // provisionWorkstations replaces the active workstation inventory in one

@@ -15,7 +15,7 @@ import (
 // close-time snapshot RFC-001 §6/§7.4 requires. Struct tags mirror the
 // schema's property names exactly, so json.Marshal produces a document
 // that validates against it as-is (see internal/training/dds's evidence
-// tests). Calls are always empty — the phone is slice 5. Interruption
+// tests). Calls contain the immutable close-time phone projection. Interruption
 // (singular, the stop-triggered snapshot) is slice 4's C8; Interruptions
 // (the server-restart recovery markers, RFC-001 §7.2) is populated from
 // the closed item's own accumulated history as of C6.

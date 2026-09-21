@@ -191,6 +191,31 @@ func TestEvidenceValidatesAgainstSchema(t *testing.T) {
 	}
 }
 
+func TestEvidencePreservesStartedActiveCallOnStop(t *testing.T) {
+	item := baseItem(t, "ЮАО")
+	closedAt := item.OfferedAt.Add(20 * time.Second)
+	interrupted := training.CloseInterrupted
+	item.State = training.ItemInterrupted
+	item.CloseReason = &interrupted
+	item.Calls = []training.Call{{
+		ID: uuid.New(), ItemID: item.ID, ContactKey: "crew_leader",
+		StartedAt: item.OfferedAt.Add(5 * time.Second), ReactionAtCall: content.ReactionReceived,
+		RecordingState: training.RecordingAbsent,
+	}}
+
+	evidence, err := Exercise.Evidence(item, nil, nil, 0, closedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body training.EvidenceBody
+	if err := json.Unmarshal(evidence.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Calls) != 1 || body.Calls[0].CallID != item.Calls[0].ID || body.Calls[0].EndedAt != nil || body.Calls[0].AcceptedBy != nil || body.Calls[0].Summary != nil {
+		t.Fatalf("active call projection = %+v", body.Calls)
+	}
+}
+
 // TestEvidenceProjectsEventsAndInterruptions is C6's own coverage: a
 // closed item that accumulated a delivered event, a skipped one and a
 // restart-recovery marker must carry all three into the sealed evidence,

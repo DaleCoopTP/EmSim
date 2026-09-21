@@ -695,8 +695,6 @@ Status: implemented.
 
 Next: run the complete repository verification sweep and address any integration regressions.
 
-
-
 ## 2026-09-20T21:50:43+03:00 — Claude Sonnet 5 — slice 4 review fixes (scheduler starvation, SSE staleness, late/spawn semantics)
 
 Status: completed. Fixes four findings from a post-C11 review of slice 4 (not itself a new C-step) — one critical, three significant. No plan/scope change.
@@ -746,3 +744,31 @@ Validation:
 Open issues / risks: none new beyond what the first review-fixes entry above already listed (`checkSpawnQueuePlan`'s duplicate-chain gap; the SSE heartbeat self-heal fix's own lack of a fast unit test). The remaining review item this pass did not touch — `sse-events.schema.json` not reflecting the actual `invalidate`/`stream.ready`/`resync` wire shape — is a contract-documentation gap, not a behavior bug; still open.
 
 Next: slice 5 — телефон и запись доклада (slice-planning.md §6).
+
+## 2026-09-21 — Slice 5 C8–C9
+
+Status: completed.
+
+- Added immutable `pilot-phone-01` and the selected final greeting/ack as
+  PCM WAV (mono, 16-bit, 16 kHz); offline seed imports their immutable
+  manifests into the shared content-addressed blob volume idempotently.
+- Enabled required-call scenarios in lesson assignment and fixed the runtime
+  image ownership order so `/app/blobs` is created before switching to UID
+  65532.
+- Added end-to-end acceptance coverage through the real seed CLI and HTTP API:
+  independent active calls, command replay, phrase download, manifest upload,
+  upload replay/conflict, `recording=null`, close/evidence, protected instructor
+  download, lost in-memory bytes and deadline expiry.
+- Recording upload conflicts now expose the contracted
+  `recording_conflict` and `recording_deadline_passed` API codes instead of a
+  generic `conflict`.
+- Browser-only acceptance steps for Chrome, Edge and Яндекс Браузер are
+  documented in README; they require an interactive host with those browsers
+  and microphone controls.
+
+Validation: `make verify`, full PostgreSQL/Testcontainers integration suite
+(103s), web lint/typecheck/build, Compose config and `docker compose build` —
+all green. Chrome is available on this host; Edge and Яндекс Браузер are not
+installed, so the documented three-browser manual matrix could not be run here.
+
+Next: slice 6.

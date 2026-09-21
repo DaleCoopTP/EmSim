@@ -24,6 +24,10 @@ var (
 	// partial unique indexes (migrations/00006) reject.
 	ErrConflict   = errors.New("conflict")
 	ErrValidation = errors.New("validation failed")
+	// Recording conflicts have stable public API codes distinct from
+	// generic lesson/assignment conflicts.
+	ErrRecordingConflict       = errors.New("recording conflict")
+	ErrRecordingDeadlinePassed = errors.New("recording deadline passed")
 	// ErrCommandIDConflict is ADR-004's command_id_conflict: the same
 	// command_id was already used for a different item, actor or body.
 	// The original receipt is never disclosed for this case.

@@ -1871,7 +1871,7 @@ func (s *Service) UploadRecording(ctx context.Context, actor auth.Principal, ite
 			return ErrNotFound
 		}
 		if call.Recording == nil || call.Recording.SHA256 != blob.SHA256 || call.Recording.Size != blob.Size || call.Recording.MIME != blob.MIME {
-			return ErrConflict
+			return ErrRecordingConflict
 		}
 		if call.RecordingState == RecordingReady {
 			return nil
@@ -1881,7 +1881,7 @@ func (s *Service) UploadRecording(ctx context.Context, actor auth.Principal, ite
 			return err
 		}
 		if item.ClosedAt != nil && call.RecordingUploadDeadlineAt != nil && now.After(*call.RecordingUploadDeadlineAt) {
-			return ErrConflict
+			return ErrRecordingDeadlinePassed
 		}
 		stored, _, err := s.store.InsertBlob(ctx, tx, blob)
 		if err != nil {

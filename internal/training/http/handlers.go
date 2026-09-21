@@ -627,6 +627,10 @@ func writeTrainingError(w http.ResponseWriter, r *http.Request, err error) {
 		httpapi.WriteError(w, r, httpapi.CodeNotFound, "not found", nil)
 	case errors.Is(err, training.ErrWorkstationMismatch):
 		httpapi.WriteError(w, r, httpapi.CodeForbidden, "workstation mismatch", map[string]any{"reason": "workstation_mismatch"})
+	case errors.Is(err, training.ErrRecordingConflict):
+		httpapi.WriteError(w, r, httpapi.CodeRecordingConflict, "recording does not match the declared manifest", nil)
+	case errors.Is(err, training.ErrRecordingDeadlinePassed):
+		httpapi.WriteError(w, r, httpapi.CodeRecordingDeadlinePassed, "recording upload deadline passed", nil)
 	case errors.Is(err, training.ErrConflict):
 		httpapi.WriteError(w, r, httpapi.CodeConflict, "conflict", nil)
 	case errors.As(err, &ve):
