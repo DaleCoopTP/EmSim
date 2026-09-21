@@ -1,0 +1,143 @@
+// Package assessment implements RFC-001 §7.4's deterministic assessment
+// pipeline (slice 6, ADR-006/013/016/019): rubric merging and scoring,
+// sealing evidence + rules into an immutable assessment_inputs snapshot,
+// the single auto rev=1 a worker produces from it, the shared finalizer
+// for exhausted retries, and instructor expert revisions. STT and the LLM
+// judge (rubric criteria of kind=llm) are slice 9 — every llm-kind
+// criterion here always resolves to CriterionUnavailable.
+//
+// Like internal/training, assessment keeps its domain rules
+// (rubric.go/input.go/revision.go, and the DDS rule set in
+// internal/assessment/dds) independent of HTTP/PostgreSQL: Service
+// (service.go) coordinates use cases and transactions, Store/ports.go
+// declare the narrow persistence and cross-module read ports it needs.
+package assessment
+
+import (
+	"errors"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+var (
+	// ErrNotFound is a missing item/assessment/input a caller looked up
+	// directly by id.
+	ErrNotFound = errors.New("assessment: not found")
+	// ErrNotClosed is returned for an item that has not reached
+	// closed/interrupted yet — there is no evidence to assess.
+	ErrNotClosed = errors.New("assessment: item is not closed")
+	// ErrStaleRevision is a manual revision whose base_revision no longer
+	// matches the item's current final revision (RFC-001 §7.4: "Под
+	// блокировкой item проверяется base_revision; stale → 409").
+	ErrStaleRevision = errors.New("assessment: stale base revision")
+	// ErrValidation wraps a rejected AssessmentRevision request — see
+	// ValidationError for the specific field/reason.
+	ErrValidation = errors.New("assessment: validation failed")
+)
+
+// ValidationError names the offending field of a rejected
+// AssessmentRevision, the same convention internal/training.ValidationError
+// uses for command payloads.
+type ValidationError struct {
+	Field  string
+	Reason string
+}
+
+func (e *ValidationError) Error() string { return "assessment: " + e.Field + ": " + e.Reason }
+func (e *ValidationError) Unwrap() error { return ErrValidation }
+
+func validationErr(field, reason string) error {
+	return &ValidationError{Field: field, Reason: reason}
+}
+
+// Kind is assessments.kind.
+type Kind string
+
+const (
+	KindAuto   Kind = "auto"
+	KindExpert Kind = "expert"
+)
+
+// Status is assessments.status — RFC-001 §7.4/ADR-013's three outcomes.
+// needs_review and unavailable both carry a NULL score (ADR-016 A3): the
+// distinction is administrative (an auto pipeline that ran vs one that
+// never got sealed input), not a different scoring rule.
+type Status string
+
+const (
+	StatusReady       Status = "ready"
+	StatusNeedsReview Status = "needs_review"
+	StatusUnavailable Status = "unavailable"
+)
+
+// CriterionStatus is one criterion's outcome — rubric.schema.json's
+// implicit vocabulary, made explicit here (also assessment-inputs.schema.
+// json's rule_results.status).
+type CriterionStatus string
+
+const (
+	CriterionMet           CriterionStatus = "met"
+	CriterionPartial       CriterionStatus = "partial"
+	CriterionNotMet        CriterionStatus = "not_met"
+	CriterionNotApplicable CriterionStatus = "not_applicable"
+	CriterionUnavailable   CriterionStatus = "unavailable"
+)
+
+// CriterionResult is one row of assessments.criteria (openapi.yaml's
+// CriterionResult). Weight is the criterion's raw rubric_effective
+// weight (before disabled/not_applicable normalization) — Score.Compute
+// normalizes on the fly from RubricEffective, so this field stays a
+// stable, auditable number independent of which other criteria happened
+// to apply to this particular item.
+type CriterionResult struct {
+	ID           string
+	Status       CriterionStatus
+	Score        *float64 // 0..1; nil for not_applicable/unavailable
+	Weight       float64
+	Critical     bool
+	EvidenceRefs []string
+	Explanation  string
+}
+
+// Feedback is one assessments.feedback entry (openapi.yaml).
+type Feedback struct {
+	CriterionID string
+	Severity    string // info | warning | critical
+	Text        string
+	GuideRef    string
+}
+
+// Assessment is one assessments row (domain shape; Store's postgres
+// adapter marshals Criteria/Feedback/RubricEffective to/from jsonb).
+type Assessment struct {
+	ID              uuid.UUID
+	ItemID          uuid.UUID
+	Revision        int
+	Kind            Kind
+	Status          Status
+	EvidenceDigest  [32]byte
+	InputID         *uuid.UUID
+	SourceTaskID    *uuid.UUID
+	BaseRevision    *int
+	RubricVersion   string
+	RubricEffective Rubric
+	Score           *float64 // 0..100
+	Passed          *bool
+	Criteria        []CriterionResult
+	CriticalErrors  []string
+	Feedback        []Feedback
+	Model           *string
+	CreatedBy       *uuid.UUID
+	Reason          *string
+	CreatedAt       time.Time
+}
+
+// TraineeAssessmentState is trainee_assessment_state — assessment's own
+// basis-versioning row (ADR-016 B5). Advice is slice 10; only Version is
+// meaningful in slice 6.
+type TraineeAssessmentState struct {
+	UserID       uuid.UUID
+	ExerciseType string
+	Version      int64
+}
