@@ -9,8 +9,10 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"emsim/internal/platform/tasks"
+	"emsim/internal/reporting"
 	"emsim/internal/training"
 )
 
@@ -88,5 +90,19 @@ func TestRegisterKindsIncludesAssessmentEvaluate(t *testing.T) {
 	}
 	if spec.Pool != "llm" || spec.Priority != 100 || spec.MaxAttempts != 3 {
 		t.Fatalf("assessment.evaluate spec = %+v, want pool=llm priority=100 max_attempts=3", spec)
+	}
+}
+
+func TestRegisterKindsIncludesReportBuildInDedicatedPool(t *testing.T) {
+	registry, err := tasks.NewRegistry(tasks.DefaultPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registerKinds(registry); err != nil {
+		t.Fatal(err)
+	}
+	spec, ok := registry.Lookup(reporting.KindBuild)
+	if !ok || spec.Pool != "report" || spec.MaxAttempts != 3 || spec.Lease != 2*time.Minute {
+		t.Fatalf("report.build spec = %+v", spec)
 	}
 }

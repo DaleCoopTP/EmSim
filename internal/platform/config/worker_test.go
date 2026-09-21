@@ -10,7 +10,7 @@ func TestWorkerConfigurationIsRoleAwareAndExplicit(t *testing.T) {
 		"DATABASE_URL": "postgres://example.invalid/emsim", "WORKER_ID": "worker-1",
 		"WORKER_POLL_INTERVAL": "250ms", "WORKER_DRAIN_TIMEOUT": "10s",
 		"WORKER_ADMIN_LISTEN_ADDR": "127.0.0.1:8082",
-		"SHORT_CONCURRENCY":        "4", "LLM_CONCURRENCY": "1", "STT_CONCURRENCY": "1",
+		"SHORT_CONCURRENCY":        "4", "LLM_CONCURRENCY": "1", "STT_CONCURRENCY": "1", "REPORT_CONCURRENCY": "1",
 	}
 	lookup := func(name string) string { return values[name] }
 	for _, role := range []string{"worker", "maintenance", "all"} {

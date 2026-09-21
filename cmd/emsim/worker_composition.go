@@ -3,7 +3,7 @@
 // services to compose — this skeleton registers the one kind that exists
 // so far, system.noop (a health-check task with no domain effect; a
 // training/assessment module registers its own kinds against the same
-// Registry once it exists). Pools are short/llm/stt instead of one Runner
+// Registry once it exists). Pools are short/llm/stt/report instead of one Runner
 // per fixed Kind. e2eRecoveryPolicy keeps the shared timing knobs, but no
 // longer touches retry bases (those are per-kind Spec.RetryBase now, set
 // once in registerKinds regardless of policy — see kindSystemNoop).
@@ -18,6 +18,8 @@ import (
 	"emsim/internal/platform/config"
 	"emsim/internal/platform/observability"
 	"emsim/internal/platform/tasks"
+	"emsim/internal/reporting"
+	reportingpg "emsim/internal/reporting/postgres"
 	"emsim/internal/training"
 
 	"github.com/jackc/pgx/v5"
@@ -65,10 +67,17 @@ func registerKinds(registry *tasks.Registry) error {
 	// placeholder Spec's. training's close (this file's own api process)
 	// enqueues it straight into waiting via EnqueueWaitingTx, which — like
 	// EnqueueTx above — reads the Spec from this Registry.
-	return registry.Register(tasks.Spec{
+	if err := registry.Register(tasks.Spec{
 		Name: training.KindAssessmentEvaluate, Pool: "llm", MaxAttempts: 3,
 		Lease: 5 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 100,
-	})
+	}); err != nil {
+		return err
+	}
+	// PDF generation must not occupy short workers used by lesson.close.
+	if err := registry.Register(tasks.Spec{Name: reporting.KindBuild, Pool: "report", MaxAttempts: 3, Lease: 2 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 20}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func noopHandler(pool *pgxpool.Pool, store *tasks.Store) tasks.Handler {
@@ -178,6 +187,9 @@ func composePools(
 	if err := handlers.Register(training.KindAssessmentEvaluate, assessmentService); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
+	if err := handlers.Register(reporting.KindBuild, reporting.NewBuilderFromEnvironment(reportingpg.NewStore(pool), store)); err != nil {
+		return nil, errors.New("handler configuration is invalid")
+	}
 
 	var runners []tasks.Supervisor
 	for _, poolConfig := range []struct {
@@ -187,6 +199,7 @@ func composePools(
 		{"short", processConfig.ShortConcurrency},
 		{"llm", processConfig.LLMConcurrency},
 		{"stt", processConfig.STTConcurrency},
+		{"report", processConfig.ReportConcurrency},
 	} {
 		kinds := registry.Pool(poolConfig.name)
 		if len(kinds) == 0 {

@@ -39,6 +39,7 @@ import (
 	pgstore "emsim/internal/platform/postgres"
 	"emsim/internal/platform/realtime"
 	"emsim/internal/platform/tasks"
+	"emsim/internal/reporting"
 	reportinghttp "emsim/internal/reporting/http"
 	reportingpg "emsim/internal/reporting/postgres"
 	"emsim/internal/training"
@@ -211,7 +212,8 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.
 	traininghttp.NewHandlers(trainingService, authService, cfg.CookieSecure, hub).Register(apiMux)
 	assessmentService := newAssessmentService(pool, mustTaskEnqueuer(pool))
 	assessmenthttp.NewHandlers(assessmentService, trainingService, authService, cfg.CookieSecure).Register(apiMux)
-	reportinghttp.NewHandlers(reportingpg.NewStore(pool), trainingService, authService, cfg.CookieSecure).Register(apiMux)
+	reportingService := reporting.NewService(reportingpg.NewStore(pool), mustTaskEnqueuer(pool))
+	reportinghttp.NewHandlers(reportingService, trainingService, authService, cfg.CookieSecure).Register(apiMux)
 
 	root := http.NewServeMux()
 	root.Handle("/api/", apiMux)

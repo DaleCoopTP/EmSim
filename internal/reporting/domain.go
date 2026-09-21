@@ -13,6 +13,36 @@ import (
 
 var ErrNotFound = errors.New("reporting: not found")
 
+type ReportStatus string
+
+const (
+	ReportQueued   ReportStatus = "queued"
+	ReportBuilding ReportStatus = "building"
+	ReportReady    ReportStatus = "ready"
+	ReportFailed   ReportStatus = "failed"
+)
+
+type Blob struct {
+	ID     uuid.UUID
+	SHA256 [32]byte
+	MIME   string
+	Size   int64
+}
+
+type ReportFile struct {
+	ID          uuid.UUID       `json:"id"`
+	LessonID    uuid.UUID       `json:"lesson_id"`
+	TaskID      uuid.UUID       `json:"task_id"`
+	RequestedBy uuid.UUID       `json:"-"`
+	Basis       json.RawMessage `json:"-"`
+	BasisDigest [32]byte        `json:"-"`
+	Blob        *Blob           `json:"-"`
+	Status      ReportStatus    `json:"status"`
+	RequestedAt time.Time       `json:"requested_at"`
+	GeneratedAt *time.Time      `json:"generated_at"`
+	DownloadURL *string         `json:"download_url"`
+}
+
 type AssessmentStatus string
 
 const (

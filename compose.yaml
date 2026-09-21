@@ -112,6 +112,7 @@ services:
       SHORT_CONCURRENCY: 4
       LLM_CONCURRENCY: 1
       STT_CONCURRENCY: 1
+      REPORT_CONCURRENCY: 1
     ports:
       - "127.0.0.1:${WORKER_ADMIN_PORT:-8082}:8081"
     volumes:

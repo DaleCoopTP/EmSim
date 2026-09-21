@@ -14,16 +14,17 @@ import (
 var ErrInvalidWorkerConfiguration = errors.New("invalid worker configuration")
 
 type Worker struct {
-	DatabaseURL      string
-	Role             tasks.Role
-	WorkerID         string
-	PollInterval     time.Duration
-	DrainTimeout     time.Duration
-	AdminAddr        string
-	ShortConcurrency int
-	LLMConcurrency   int
-	STTConcurrency   int
-	LocalTestPolicy  string
+	DatabaseURL       string
+	Role              tasks.Role
+	WorkerID          string
+	PollInterval      time.Duration
+	DrainTimeout      time.Duration
+	AdminAddr         string
+	ShortConcurrency  int
+	LLMConcurrency    int
+	STTConcurrency    int
+	ReportConcurrency int
+	LocalTestPolicy   string
 }
 
 func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker, error) {
@@ -54,11 +55,15 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 	if err != nil {
 		return Worker{}, err
 	}
+	report, err := parsePoolSize(lookup("REPORT_CONCURRENCY"))
+	if err != nil {
+		return Worker{}, err
+	}
 	config := Worker{
 		DatabaseURL: strings.TrimSpace(lookup("DATABASE_URL")), Role: role,
 		WorkerID: strings.TrimSpace(lookup("WORKER_ID")), PollInterval: poll, DrainTimeout: drain,
 		AdminAddr:        strings.TrimSpace(lookup("WORKER_ADMIN_LISTEN_ADDR")),
-		ShortConcurrency: short, LLMConcurrency: llm, STTConcurrency: stt,
+		ShortConcurrency: short, LLMConcurrency: llm, STTConcurrency: stt, ReportConcurrency: report,
 		LocalTestPolicy: strings.TrimSpace(lookup("WORKER_LOCAL_TEST_POLICY")),
 	}
 	if err := config.Validate(); err != nil {
@@ -78,7 +83,7 @@ func parsePoolSize(value string) (int, error) {
 func (c Worker) Validate() error {
 	if c.DatabaseURL == "" || c.WorkerID == "" || c.WorkerID != strings.TrimSpace(c.WorkerID) ||
 		len(c.WorkerID) > 256 || !utf8.ValidString(c.WorkerID) || c.PollInterval <= 0 || c.DrainTimeout <= 0 ||
-		!validWorkerListenAddress(c.AdminAddr) || c.ShortConcurrency < 1 || c.LLMConcurrency < 1 || c.STTConcurrency < 1 {
+		!validWorkerListenAddress(c.AdminAddr) || c.ShortConcurrency < 1 || c.LLMConcurrency < 1 || c.STTConcurrency < 1 || c.ReportConcurrency < 1 {
 		return ErrInvalidWorkerConfiguration
 	}
 	if _, err := tasks.ParseRole(string(c.Role)); err != nil {
