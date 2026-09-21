@@ -772,3 +772,14 @@ all green. Chrome is available on this host; Edge and Яндекс Браузе�
 installed, so the documented three-browser manual matrix could not be run here.
 
 Next: slice 6.
+
+## 2026-09-21 — Slice 6 C6–C9
+
+Status: completed.
+
+- C6 completed the worker-side assessment pipeline: coordinator seals immutable inputs and promotes waiting evaluate tasks; the handler/finalizer creates exactly one `auto` revision, and expert revisions cancel outstanding evaluation atomically. The package includes deterministic DDS rules, PostgreSQL storage and recovery composition.
+- C7 adds instructor-only assessment API endpoints for one item, manual revisions, and the closed-card review queue. Foreign and unclosed resources remain indistinguishable as 404; stale revisions are 409 and request validation is 422.
+- C8 adds the instructor review queue and item-review UI with evidence, criterion explanations, call playback, revision history and an expert override form. Closed/stopped lesson pages and the monitor link to the queue.
+- C9 adds `TestAssessmentPipelineThroughAPIAndWorker`: a live API plus separate worker process produce auto rev=1 after a real trainee close; the instructor reads the queue and creates rev=2 through the public API.
+
+Validation: focused Go unit/handler tests, `go test -tags integration -run '^TestAssessmentPipelineThroughAPIAndWorker$' ./test/integration/...`, and `cd web && npm run check` passed during implementation. Full repository gates are the next verification step.

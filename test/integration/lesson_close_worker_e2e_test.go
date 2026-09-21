@@ -93,6 +93,16 @@ func TestWorkerProcessDrivesLessonCloseThroughRealQueue(t *testing.T) {
 	waitFor("item interrupted with evidence sealed by the real worker process",
 		`SELECT i.state='interrupted' AND i.close_reason='interrupted' AND EXISTS(SELECT 1 FROM evidence WHERE item_id=i.id) FROM items i WHERE i.id=$1`,
 		item.ID)
+	// Slice 6/9: lesson.close's interrupted evidence is itself a normal
+	// training close for assessment purposes.  The same real worker must
+	// therefore run the coordinator and create the auto review, while all
+	// timing criteria become not_applicable under the interruption marker.
+	waitFor("interrupted item auto-assessed by the real worker process",
+		`SELECT EXISTS (
+			SELECT FROM assessments a
+			WHERE a.item_id=$1 AND a.kind='auto' AND a.revision=1 AND a.status='needs_review'
+			  AND (a.criteria @> '[{"id":"T_OPEN","status":"not_applicable"}]'::jsonb)
+		)`, item.ID)
 
 	worker.stop(t, false)
 
