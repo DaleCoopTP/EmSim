@@ -38,7 +38,7 @@ export function Layout() {
           </nav>
         )}
         {me.user.role === "trainee" && (
-          <nav><NavLink to="/my">Рабочее место</NavLink></nav>
+          <nav><NavLink to="/my">Рабочее место</NavLink><NavLink to="/my/history">История</NavLink></nav>
         )}
         <span className="layout-user">
           {me.user.full_name} · {roleLabels[me.user.role]}

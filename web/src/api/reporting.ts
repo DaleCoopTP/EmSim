@@ -77,6 +77,23 @@ export interface ReportFile {
   download_url: string | null;
 }
 
+export interface Progress {
+  user_id: string;
+  level: string;
+  items_total: number;
+  completed_items: number;
+  pending_assessments: number;
+  avg_score: number | null;
+  by_lesson: Array<{
+    lesson_id: string;
+    title: string;
+    date: string;
+    items: number;
+    avg_score: number | null;
+  }>;
+  error_frequency: Array<{ criterion_id: string; count: number }>;
+}
+
 export const lessonReportQueryKey = (lessonId: string) => ["report", "lesson", lessonId] as const;
 export const reportFilesQueryKey = (lessonId: string) => ["report-files", lessonId] as const;
 
@@ -99,4 +116,15 @@ export function useReportFiles(lessonId: string) {
 
 export function requestLessonPDF(lessonId: string) {
   return api.post<ReportFile>(`/lessons/${encodeURIComponent(lessonId)}/report.pdf`);
+}
+
+export const myResultsQueryKey = ["my-results"] as const;
+export const myProgressQueryKey = ["my-progress"] as const;
+
+export function useMyResults() {
+  return useQuery({ queryKey: myResultsQueryKey, queryFn: () => api.get<ReportItem[]>("/my/results") });
+}
+
+export function useMyProgress() {
+  return useQuery({ queryKey: myProgressQueryKey, queryFn: () => api.get<Progress>("/my/progress") });
 }

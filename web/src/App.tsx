@@ -15,6 +15,7 @@ import { ItemReviewRoute } from "./routes/instructor/ItemReview";
 import { LessonReportRoute } from "./routes/instructor/LessonReport";
 import { LoginRoute } from "./routes/Login";
 import { WorkplaceRoute } from "./routes/trainee/Workplace";
+import { HistoryRoute } from "./routes/trainee/History";
 
 // A fresh QueryClient per app instance, not per render (App itself only
 // renders once in practice, but this keeps the client from being
@@ -57,6 +58,7 @@ export default function App() {
           <Route element={<RequireAuth roles={["trainee"]} />}>
             <Route element={<Layout />}>
               <Route path="/my" element={<WorkplaceRoute />} />
+              <Route path="/my/history" element={<HistoryRoute />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

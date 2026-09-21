@@ -1801,14 +1801,33 @@ components:
 
     Progress:
       type: object
+      required: [user_id, level, items_total, completed_items, pending_assessments, avg_score, by_lesson, error_frequency]
       properties:
-        user: { $ref: '#/components/schemas/User' }
+        user_id: { type: string, format: uuid }
+        level: { $ref: '#/components/schemas/Level' }
         items_total: { type: integer }
-        avg_score: { type: number, nullable: true }
-        by_lesson: { type: array, items: { type: object, properties: { lesson_id: { type: string, format: uuid }, title: { type: string }, date: { type: string, format: date-time }, avg_score: { type: number }, items: { type: integer } } } }
-        error_frequency: { type: array, items: { type: object, properties: { criterion_id: { type: string }, count: { type: integer }, guide_ref: { type: string } } } }
         completed_items: { type: integer }
         pending_assessments: { type: integer }
+        avg_score: { type: [number, 'null'] }
+        by_lesson:
+          type: array
+          items:
+            type: object
+            required: [lesson_id, title, date, avg_score, items]
+            properties:
+              lesson_id: { type: string, format: uuid }
+              title: { type: string }
+              date: { type: string, format: date-time }
+              avg_score: { type: [number, 'null'] }
+              items: { type: integer }
+        error_frequency:
+          type: array
+          items:
+            type: object
+            required: [criterion_id, count]
+            properties:
+              criterion_id: { type: string }
+              count: { type: integer }
     Recommendation:
       type: object
       required:
@@ -1849,7 +1868,7 @@ components:
       required: [lesson, items, participants, aggregates]
       properties:
         lesson:
-          $ref: '#/components/schemas/Lesson'
+          $ref: '#/components/schemas/ReportLesson'
         items:
           type: array
           items:
@@ -1884,6 +1903,15 @@ components:
                     type: string
                   count:
                     type: integer
+
+    ReportLesson:
+      type: object
+      required: [id, title, mode, finished_at]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        mode: { type: string, enum: [intro, training] }
+        finished_at: { type: string, format: date-time }
 
     PublicError:
       type: object
