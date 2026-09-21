@@ -143,6 +143,12 @@ func resetSchema(t *testing.T, ctx context.Context, databaseURL string) {
 	// the content/training migrations outlive DROP TABLE and must also be
 	// removed or a subsequent migration fails with "function already exists".
 	if _, err := pool.Exec(ctx, `
+		DROP VIEW IF EXISTS item_final_assessment;
+		DROP TABLE IF EXISTS training_examples;
+		DROP TABLE IF EXISTS assessments;
+		DROP FUNCTION IF EXISTS guard_assessment_revision();
+		DROP TABLE IF EXISTS assessment_inputs;
+		DROP TABLE IF EXISTS trainee_assessment_state;
 		DROP TABLE IF EXISTS control_reports;
 		DROP TABLE IF EXISTS item_events;
 		DROP TABLE IF EXISTS evidence;
@@ -261,10 +267,12 @@ func assertTableSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatalf("iterate application tables: %v", err)
 	}
 	want := []string{
-		"actions", "assignments", "audit_log", "blobs", "calls", "classifier_types", "control_reports", "evidence",
+		"actions", "assessment_inputs", "assessments", "assignments", "audit_log", "blobs", "calls",
+		"classifier_types", "control_reports", "evidence",
 		"item_events",
 		"items", "lessons", "runs", "scenario_versions", "scenarios",
-		"services", "sessions", "tasks", "tickets", "users", "voice_assets", "workstations",
+		"services", "sessions", "tasks", "tickets", "trainee_assessment_state", "training_examples", "users",
+		"voice_assets", "workstations",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("application tables = %v, want %v", got, want)
@@ -278,9 +286,11 @@ func assertApplicationTablesAbsent(t *testing.T, ctx context.Context, pool *pgxp
 		SELECT count(*)
 		FROM pg_catalog.pg_tables
 		WHERE schemaname = 'public' AND tablename IN (
-			'actions', 'assignments', 'audit_log', 'blobs', 'calls', 'classifier_types', 'control_reports', 'evidence', 'item_events',
+			'actions', 'assessment_inputs', 'assessments', 'assignments', 'audit_log', 'blobs', 'calls',
+			'classifier_types', 'control_reports', 'evidence', 'item_events',
 			'items', 'lessons', 'runs', 'scenario_versions', 'scenarios',
-			'services', 'sessions', 'tasks', 'tickets', 'users', 'voice_assets', 'workstations'
+			'services', 'sessions', 'tasks', 'tickets', 'trainee_assessment_state', 'training_examples', 'users',
+			'voice_assets', 'workstations'
 		)
 	`).Scan(&count); err != nil {
 		t.Fatalf("count application tables: %v", err)
