@@ -41,6 +41,34 @@ Next:
 
 ## Entries
 
+## 2026-09-22T00:33:59+03:00 — Codex — debt closure before ARM UI work
+
+Status: completed
+Slice: n/a
+
+Changed:
+- `Makefile`, `go.mod`, `cmd/emsim/api.go`: updated Staticcheck and isolated its cache; `make verify` once again checks real production packages under the pinned Go toolchain.
+- `design-docs/contracts/{sse-events.schema.json,check.py}` and `test/integration/training_realtime_e2e_test.go`: contract now describes the actual `stream.ready`, `resync`, and `invalidate` wire frames including cursor payloads.
+- `design-docs/contracts/scenario.schema.json`, ADR-018 and training/content validation: suspended unschedulable `spawn_card kind=duplicate`; legacy JSON stays decodable but new import and assignment reject it.
+- `web/{playwright.config.ts,e2e/,src/routes/trainee/Workplace.tsx}` and CI: Chromium acceptance coverage now uses a fake WAV microphone, proves track-level Mute, waits for `MediaRecorder.onstop`, retries a failed upload without replaying `call_end`, and closes the card.
+- `README.md`, `web/README.md`: documented the isolated browser e2e command and local Chromium installation.
+
+Decisions:
+- `duplicate` remains deferred until scenario authoring has a finite, explicit queue model; only stable prepared-scenario references are public today.
+
+Validation:
+- `GOCACHE=/private/tmp/emsim-gocache make verify` — passed.
+- `python3 design-docs/contracts/check.py` — passed.
+- `GOCACHE=/private/tmp/emsim-gocache go test -tags=integration -count=1 ./test/integration -run TestAPIProcessSSEStreamSnapshotReplayResyncAndFiltering` — passed.
+- `cd web && npm run check && npm run lint && npm run build` — passed.
+- `cd web && npm run test:e2e` — passed; full card → call → recording retry → close path in Chromium, temporary compose stack removed.
+
+Open issues / risks:
+- UI styling and real ARM/phone visual fidelity are the next product phase, not part of this debt pass.
+
+Next:
+- Start the ARM-aligned UI implementation after product references for the actual dispatcher workstation and phone are available.
+
 ## 2026-09-21T22:40:00+03:00 — Codex — slice 7 reporting acceptance
 
 Status: completed

@@ -81,6 +81,7 @@ make test-integration    # очередь/recovery + запуск и crash recov
 make compose-config      # проверить compose.yaml без сборки образов
 make seed                # перезапустить только одноразовый сервис seed поверх уже поднятого стека
 make verify-web          # web/: npm ci, регенерация типов из openapi.yaml, tsc, vite build
+cd web && npm run test:e2e # Chromium: карточка → звонок/запись → retry upload → close в изолированном compose
 python3 design-docs/contracts/check.py   # офлайн-проверка контрактов (openapi.yaml, *.schema.json, примеры)
 cd web && npm run lint   # oxlint
 ```
@@ -162,6 +163,10 @@ manifest/upload/replay, закрытие/evidence и доступ к запис�
 (звонок завершается с `recording=null`) и повтор загрузки после временного
 разрыва сети; незагруженные байты после перезагрузки вкладки восстановить
 нельзя, и после deadline состояние отображается как `missing`.
+Автоматический Chromium-e2e запускается через `cd web && npm run test:e2e`:
+он поднимает отдельный Docker Compose project на свободных localhost-портах,
+использует seed WAV как fake microphone и после завершения удаляет только свои
+контейнеры и volumes. В CI этому соответствует job `web-e2e`.
 
 Срез 6 добавляет разбор оценки преподавателем. При закрытии training-карточки
 worker сначала запечатывает `assessment_inputs`, затем создаёт одну

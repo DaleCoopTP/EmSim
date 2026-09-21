@@ -9,6 +9,7 @@ npm ci
 npm run dev     # http://localhost:5173, proxies /api to :8080 (start `go run ./cmd/emsim api` separately)
 npm run check   # regenerate API types from ../design-docs/contracts/openapi.yaml, then tsc -b
 npm run build   # -> dist/, embedded by web/embed.go's //go:embed
+npm run test:e2e # isolated Chromium + compose browser acceptance test
 ```
 
 `src/api/schema.d.ts` is generated (`npm run generate:api`, an
@@ -20,3 +21,12 @@ Dockerfile's Node stage) populates it.
 Visual styling follows ADR-009's ARM-112 pass, scheduled after slice 7
 (slice-planning.md §1) — this scaffold and slice 1's own screens are
 intentionally unstyled.
+
+`test:e2e` creates a uniquely named Compose project with its own volumes and
+free localhost ports, feeds Chromium `seed/voice-assets/crew_leader_greeting.wav`
+as a fake microphone, and removes that project after the test. Install the
+browser once locally with:
+
+```bash
+PLAYWRIGHT_BROWSERS_PATH="$PWD/.playwright-browsers" npx playwright install chromium
+```
