@@ -190,7 +190,7 @@ export function LessonDetailRoute() {
         </div>
       )}
       {current.state === "stopped" && <p className="notice">Занятие остановлено; оставшиеся карточки закрываются фоновой задачей. <Link to={`/instructor/lessons/${lessonId}/monitor`}>Монитор</Link> · <Link to={`/instructor/lessons/${lessonId}/assessments`}>Разбор</Link></p>}
-      {current.state === "finished" && <p className="notice">Занятие завершено. <Link to={`/instructor/lessons/${lessonId}/assessments`}>Открыть разбор</Link></p>}
+      {current.state === "finished" && <p className="notice">Занятие завершено. <Link to={`/instructor/lessons/${lessonId}/assessments`}>Открыть разбор</Link> · <Link to={`/instructor/lessons/${lessonId}/report`}>Открыть отчёт</Link></p>}
     </section>
   );
 }
