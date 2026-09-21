@@ -137,6 +137,9 @@ type Item struct {
 	// PilotGoal is the reference.pilot_goal snapshot (ADR-017); "" means
 	// the ordinary DDS completion rules in dds.decideClose apply.
 	PilotGoal        string
+	Contacts         []content.Contact
+	CallPolicy       content.Call
+	Calls            []Call
 	Mode             Mode
 	Seq              int64
 	LogSeq           int64
@@ -293,6 +296,9 @@ const (
 	// upstream validates a command's payload against the OpenAPI schema
 	// at runtime, so this check is the domain's own responsibility.
 	RejectInvalidPayload Rejection = "invalid_payload"
+	RejectCallRequired   Rejection = "call_required"
+	RejectCallInProgress Rejection = "call_in_progress"
+	RejectCallNotActive  Rejection = "call_not_active"
 )
 
 // HTTPStatus is the fixed status a new (non-replay) decision carries,

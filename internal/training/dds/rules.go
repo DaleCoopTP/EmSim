@@ -16,12 +16,15 @@
 package dds
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"time"
 
 	"emsim/internal/content"
 	"emsim/internal/training"
+
+	"github.com/google/uuid"
 )
 
 // pilotGoalAcceptCard is reference.pilot_goal's one defined value
@@ -55,6 +58,10 @@ func (exercise) Decide(item training.Item, cmd training.Command, now time.Time) 
 		return decideSetCardField(item, cmd), nil
 	case training.CommandClose:
 		return decideClose(item), nil
+	case training.CommandCallStart:
+		return decideCallStart(item, cmd, now), nil
+	case training.CommandCallEnd:
+		return decideCallEnd(item, cmd), nil
 	default:
 		return rejectDecision(item, training.RejectTransitionNotAllowed), nil
 	}
@@ -117,6 +124,9 @@ func decideSetStatus(item training.Item, cmd training.Command, now time.Time) tr
 	}
 	if !reactionListContains(item.Workflow.Transitions[item.Reaction], payload.Status) {
 		return rejectDecision(item, training.RejectTransitionNotAllowed)
+	}
+	if item.CallPolicy.Required && item.CallPolicy.BeforeStatus == payload.Status && !requiredCallFinished(item) {
+		return rejectDecision(item, training.RejectCallRequired)
 	}
 	if reactionListContains(item.Workflow.CommentRequired, payload.Status) && strings.TrimSpace(payload.Comment) == "" {
 		return rejectDecision(item, training.RejectCommentRequired)
@@ -215,6 +225,12 @@ func decideSetCardField(item training.Item, cmd training.Command) training.Decis
 // phone is slice 5), so that RFC-001 §7.4 precondition has nothing to
 // check yet either.
 func decideClose(item training.Item) training.Decision {
+	if activeCall(item) != nil {
+		return rejectDecision(item, training.RejectCallInProgress)
+	}
+	if item.CallPolicy.Required && !requiredCallFinished(item) {
+		return rejectDecision(item, training.RejectCallRequired)
+	}
 	var reason training.CloseReason
 	switch item.Reaction {
 	case content.ReactionNotAccepted, content.ReactionRefused:
@@ -236,6 +252,84 @@ func decideClose(item training.Item) training.Decision {
 		Card:     item.Card,
 		Close:    &reason,
 	}
+}
+
+type callStartPayload struct {
+	Contact string `json:"contact"`
+}
+
+func decideCallStart(item training.Item, cmd training.Command, now time.Time) training.Decision {
+	if item.State == training.ItemOffered {
+		return rejectDecision(item, training.RejectTransitionNotAllowed)
+	}
+	if activeCall(item) != nil {
+		return rejectDecision(item, training.RejectCallInProgress)
+	}
+	var payload callStartPayload
+	if err := json.Unmarshal(cmd.Payload, &payload); err != nil || strings.TrimSpace(payload.Contact) == "" {
+		return rejectDecision(item, training.RejectInvalidPayload)
+	}
+	found := false
+	for _, contact := range item.Contacts {
+		if contact.Key == payload.Contact {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return rejectDecision(item, training.RejectInvalidPayload)
+	}
+	return training.Decision{Accepted: true, Reaction: item.Reaction, State: item.State, Card: item.Card,
+		StartCall: &training.Call{ContactKey: payload.Contact, StartedAt: now, ReactionAtCall: item.Reaction, RecordingState: training.RecordingAbsent}}
+}
+
+type callEndPayload struct {
+	CallID     uuid.UUID `json:"call_id"`
+	AcceptedBy string    `json:"accepted_by"`
+	Summary    string    `json:"summary"`
+	Recording  *struct {
+		SHA256 string `json:"sha256"`
+		Size   int64  `json:"size"`
+		MIME   string `json:"mime"`
+	} `json:"recording"`
+}
+
+func decideCallEnd(item training.Item, cmd training.Command) training.Decision {
+	var payload callEndPayload
+	if err := json.Unmarshal(cmd.Payload, &payload); err != nil || payload.CallID == uuid.Nil || strings.TrimSpace(payload.AcceptedBy) == "" || strings.TrimSpace(payload.Summary) == "" {
+		return rejectDecision(item, training.RejectInvalidPayload)
+	}
+	active := activeCall(item)
+	if active == nil || active.ID != payload.CallID {
+		return rejectDecision(item, training.RejectCallNotActive)
+	}
+	var manifest *training.RecordingManifest
+	if payload.Recording != nil {
+		bytes, err := hex.DecodeString(payload.Recording.SHA256)
+		if err != nil || len(bytes) != 32 || payload.Recording.Size < 1 || payload.Recording.Size > 10<<20 || (payload.Recording.MIME != "audio/webm" && payload.Recording.MIME != "audio/ogg" && payload.Recording.MIME != "audio/wav") {
+			return rejectDecision(item, training.RejectInvalidPayload)
+		}
+		manifest = &training.RecordingManifest{Size: payload.Recording.Size, MIME: payload.Recording.MIME}
+		copy(manifest.SHA256[:], bytes)
+	}
+	return training.Decision{Accepted: true, Reaction: item.Reaction, State: item.State, Card: item.Card, EndCall: &training.CallEnd{CallID: payload.CallID, AcceptedBy: strings.TrimSpace(payload.AcceptedBy), Summary: strings.TrimSpace(payload.Summary), Recording: manifest}}
+}
+
+func activeCall(item training.Item) *training.Call {
+	for i := range item.Calls {
+		if item.Calls[i].EndedAt == nil {
+			return &item.Calls[i]
+		}
+	}
+	return nil
+}
+func requiredCallFinished(item training.Item) bool {
+	for _, c := range item.Calls {
+		if c.ContactKey == item.CallPolicy.To && c.EndedAt != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func reactionListContains(list []content.Reaction, target content.Reaction) bool {

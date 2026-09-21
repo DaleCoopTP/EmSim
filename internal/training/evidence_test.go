@@ -30,7 +30,7 @@ func sampleEvidenceBody() EvidenceBody {
 		FinalCard:         content.CardPreview{Number: "1"},
 		Actions:           []EvidenceAction{},
 		Events:            []EvidenceEvent{},
-		Calls:             []any{},
+		Calls:             []EvidenceCall{},
 		Derived:           EvidenceDerived{TotalSeconds: 90},
 		CutoffLogSeq:      1,
 		Deadlines:         EvidenceDeadlines{OpenAt: now.Add(30 * time.Second), PrimaryAt: now.Add(30 * time.Second)},

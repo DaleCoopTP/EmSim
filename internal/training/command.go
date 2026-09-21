@@ -62,7 +62,16 @@ type Decision struct {
 
 	// Close is non-nil when this decision closes the item; the caller
 	// sets items.closed_at to the same `now` it passed into Decide.
-	Close *CloseReason
+	Close     *CloseReason
+	StartCall *Call
+	EndCall   *CallEnd
+}
+
+type CallEnd struct {
+	CallID     uuid.UUID
+	AcceptedBy string
+	Summary    string
+	Recording  *RecordingManifest
 }
 
 // requestDigestFields is the canonical JSON RequestDigest hashes —

@@ -1,6 +1,7 @@
 package dds
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -54,7 +55,7 @@ func (exercise) Evidence(item training.Item, actions []training.Action, events [
 		FinalCard:     item.Card,
 		Actions:       buildEvidenceActions(actions, cutoffLogSeq),
 		Events:        buildEvidenceEvents(events),
-		Calls:         []any{},
+		Calls:         buildEvidenceCalls(item.Calls),
 		Comments:      comments,
 		Derived:       buildEvidenceDerived(item, actions, cutoffLogSeq, closedAt, len(comments)),
 		CutoffLogSeq:  cutoffLogSeq,
@@ -69,6 +70,23 @@ func (exercise) Evidence(item training.Item, actions []training.Action, events [
 		Interruptions: interruptions,
 	}
 	return training.SealEvidence(body)
+}
+
+func buildEvidenceCalls(calls []training.Call) []training.EvidenceCall {
+	out := make([]training.EvidenceCall, 0, len(calls))
+	for _, c := range calls {
+		e := training.EvidenceCall{CallID: c.ID, ContactKey: c.ContactKey, StartedAt: c.StartedAt, EndedAt: c.EndedAt, ReactionAtCall: c.ReactionAtCall, AcceptedBy: c.AcceptedBy, Summary: c.Summary, RecordingUploadDeadlineAt: c.RecordingUploadDeadlineAt}
+		if c.Recording != nil {
+			hash := hex.EncodeToString(c.Recording.SHA256[:])
+			size := c.Recording.Size
+			mime := c.Recording.MIME
+			e.RecordingSHA256 = &hash
+			e.RecordingSize = &size
+			e.RecordingMIME = &mime
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // buildEvidenceInterruption fills evidence.schema.json's singular
@@ -193,6 +211,7 @@ func buildEvidenceDerived(item training.Item, actions []training.Action, cutoffL
 	derived := training.EvidenceDerived{
 		TotalSeconds: closedAt.Sub(item.OfferedAt).Seconds(),
 		CommentCount: commentCount,
+		CallCount:    len(item.Calls),
 	}
 	if item.OpenedAt != nil {
 		seconds := item.OpenedAt.Sub(item.OfferedAt).Seconds()

@@ -40,7 +40,7 @@ type EvidenceBody struct {
 	FinalCard         content.CardPreview   `json:"final_card"`
 	Actions           []EvidenceAction      `json:"actions"`
 	Events            []EvidenceEvent       `json:"events"`
-	Calls             []any                 `json:"calls"`
+	Calls             []EvidenceCall        `json:"calls"`
 	Comments          []EvidenceComment     `json:"comments,omitempty"`
 	Derived           EvidenceDerived       `json:"derived"`
 	CutoffLogSeq      int64                 `json:"cutoff_log_seq"`
@@ -100,6 +100,23 @@ type EvidenceComment struct {
 	Seq        int64             `json:"seq"`
 	Text       string            `json:"text"`
 	WithStatus *content.Reaction `json:"with_status,omitempty"`
+}
+
+// EvidenceCall is the immutable close-time projection: it intentionally
+// excludes blob_id/received state because a post-close upload must not alter
+// evidence.
+type EvidenceCall struct {
+	CallID                    uuid.UUID        `json:"call_id"`
+	ContactKey                string           `json:"contact_key"`
+	StartedAt                 time.Time        `json:"started_at"`
+	EndedAt                   *time.Time       `json:"ended_at"`
+	ReactionAtCall            content.Reaction `json:"reaction_at_call"`
+	AcceptedBy                *string          `json:"accepted_by"`
+	Summary                   *string          `json:"summary"`
+	RecordingSHA256           *string          `json:"recording_sha256"`
+	RecordingSize             *int64           `json:"recording_size"`
+	RecordingMIME             *string          `json:"recording_mime"`
+	RecordingUploadDeadlineAt *time.Time       `json:"recording_upload_deadline_at"`
 }
 
 // EvidenceDerived is the item's actual server-measured intervals,
