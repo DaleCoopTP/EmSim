@@ -123,29 +123,28 @@ func validateEvents(events []Event, contactKeys map[string]bool, exerciseType Ex
 			if e.Spawn == nil {
 				return invalid(fmt.Sprintf("events[%d].spawn", i), "required")
 			}
-			if e.Spawn.Kind == "scenario" {
-				field := fmt.Sprintf("events[%d].spawn", i)
-				if e.Spawn.ScenarioKey == "" {
-					return invalid(field+".scenario_key", "required")
-				}
-				if e.Spawn.Version < 1 {
-					return invalid(field+".version", "required")
-				}
-				ref, known := catalog.ScenarioVersion(e.Spawn.ScenarioKey, e.Spawn.Version)
-				if !known {
-					return invalid(field, "unknown")
-				}
-				if !ref.Published || (ref.Status != "approved" && ref.Status != "superseded") {
-					return invalid(field, "not_approved")
-				}
-				if ref.ExerciseType != exerciseType {
-					return invalid(field, "exercise_type_mismatch")
-				}
-				if ref.TargetService != targetService {
-					return invalid(field, "target_service_mismatch")
-				}
-			} else if e.Spawn.Kind == "duplicate" && e.Spawn.Variation == "" {
-				return invalid(fmt.Sprintf("events[%d].spawn.variation", i), "required")
+			field := fmt.Sprintf("events[%d].spawn", i)
+			if e.Spawn.Kind != "scenario" {
+				return invalid(field+".kind", "unsupported")
+			}
+			if e.Spawn.ScenarioKey == "" {
+				return invalid(field+".scenario_key", "required")
+			}
+			if e.Spawn.Version < 1 {
+				return invalid(field+".version", "required")
+			}
+			ref, known := catalog.ScenarioVersion(e.Spawn.ScenarioKey, e.Spawn.Version)
+			if !known {
+				return invalid(field, "unknown")
+			}
+			if !ref.Published || (ref.Status != "approved" && ref.Status != "superseded") {
+				return invalid(field, "not_approved")
+			}
+			if ref.ExerciseType != exerciseType {
+				return invalid(field, "exercise_type_mismatch")
+			}
+			if ref.TargetService != targetService {
+				return invalid(field, "target_service_mismatch")
 			}
 		}
 	}

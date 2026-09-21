@@ -193,6 +193,12 @@ func TestValidateRejectsSpawnScenarioWithoutStableReference(t *testing.T) {
 	assertInvalidField(t, Validate(body, pilotCatalog()), "events[0].spawn.scenario_key")
 }
 
+func TestValidateRejectsLegacyDuplicateSpawn(t *testing.T) {
+	body := validPilotBody()
+	body.Events = []Event{{Key: "e1", Since: "accepted", Delivery: "spawn_card", Spawn: &EventSpawn{Kind: "duplicate", Variation: "legacy"}}}
+	assertInvalidField(t, Validate(body, pilotCatalog()), "events[0].spawn.kind")
+}
+
 func TestValidateRejectsSpawnScenarioWithUnknownStableReference(t *testing.T) {
 	body := validPilotBody()
 	body.Events = []Event{{Key: "e1", Since: "accepted", Delivery: "spawn_card", Spawn: &EventSpawn{Kind: "scenario", ScenarioKey: "missing", Version: 1}}}

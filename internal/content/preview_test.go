@@ -37,7 +37,7 @@ func fullSecretBody() Body {
 		Events: []Event{{
 			Key: "e1", AtS: 1, Since: "accepted", Delivery: "notice", From: "c1",
 			Text:  secretSentinel,
-			Spawn: &EventSpawn{Kind: "duplicate", Variation: secretSentinel},
+			Spawn: &EventSpawn{Kind: "scenario", ScenarioKey: secretSentinel, Version: 1},
 			Expects: &EventExpects{
 				Status: ReactionAccepted, WithinS: 30, Action: secretSentinel,
 			},

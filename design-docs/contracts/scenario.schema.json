@@ -426,17 +426,14 @@
         "spawn": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Для spawn_card: какую карточку создать. UUID версии намеренно не используется: seed должен переноситься между установками с разными внутренними UUID.",
+          "description": "Для spawn_card: какую заранее подготовленную карточку создать. UUID версии намеренно не используется: seed должен переноситься между установками с разными внутренними UUID.",
           "required": [
             "kind"
           ],
           "properties": {
             "kind": {
               "type": "string",
-              "enum": [
-                "duplicate",
-                "scenario"
-              ]
+              "const": "scenario"
             },
             "scenario_key": {
               "type": "string",
@@ -447,20 +444,11 @@
               "type": "integer",
               "minimum": 1,
               "description": "Номер версии scenario_key для kind=scenario"
-            },
-            "variation": {
-              "type": "string",
-              "description": "duplicate: чем отличается (другой заявитель, соседний дом)"
             }
           },
           "allOf": [
             {
-              "if": { "properties": { "kind": { "const": "scenario" } } },
-              "then": { "required": ["scenario_key", "version"] }
-            },
-            {
-              "if": { "properties": { "kind": { "const": "duplicate" } } },
-              "then": { "required": ["variation"] }
+              "required": ["scenario_key", "version"]
             }
           ]
         },

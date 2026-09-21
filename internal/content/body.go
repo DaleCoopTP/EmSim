@@ -163,9 +163,9 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// EventSpawn is event.spawn — for delivery="spawn_card", what card to
-// create (a duplicate of the same incident, or another prepared
-// scenario's approved version).
+// EventSpawn is event.spawn — for delivery="spawn_card", the approved
+// version of another prepared scenario to create. Variation remains only to
+// decode legacy persisted JSON; it is not accepted in the public contract.
 type EventSpawn struct {
 	Kind        string `json:"kind"`
 	ScenarioKey string `json:"scenario_key"`

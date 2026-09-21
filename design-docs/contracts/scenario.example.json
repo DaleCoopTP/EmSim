@@ -122,8 +122,9 @@
       "text": "Новая карточка",
       "voice": false,
       "spawn": {
-        "kind": "duplicate",
-        "variation": "Звонит сосед из кв. 116 по тому же адресу, вода в подъезде"
+        "kind": "scenario",
+        "scenario_key": "pilot-follow-up",
+        "version": 1
       },
       "expects": {
         "action": "refuse_duplicate",

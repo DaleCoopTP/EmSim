@@ -705,13 +705,11 @@ func (s *Service) startOneAssignment(ctx context.Context, tx pgx.Tx, lesson Less
 // offerQueueVersion snapshots the next approved scenario into an offered
 // item. The caller owns the run lock (or has just inserted the run), so the
 // ordinal and queue cursor cannot race another normal-close offer.
-// spawnOrigin carries where a spawn_card-created item came from
-// (ADR-018: "variation добавляется к описанию экземпляра новой
-// карточки") — nil for every ordinary queue offer (start, a normal
-// close, a hard-scheduler tick), non-nil only from spawnEventCard.
+// spawnOrigin carries where a spawn_card-created item came from — nil for
+// every ordinary queue offer (start, a normal close, a hard-scheduler tick),
+// non-nil only from spawnEventCard.
 type spawnOrigin struct {
-	itemID    uuid.UUID
-	variation string
+	itemID uuid.UUID
 }
 
 func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesson, run Run, assignment Assignment, queueIndex int, now time.Time, origin *spawnOrigin) error {
@@ -733,9 +731,6 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 	var spawnedFrom *uuid.UUID
 	if origin != nil {
 		spawnedFrom = &origin.itemID
-		if origin.variation != "" {
-			card.Incident.Description = appendVariation(card.Incident.Description, origin.variation)
-		}
 	}
 	item := Item{
 		ID: uuid.New(), RunID: run.ID, LessonID: lesson.ID, UserID: run.UserID,
@@ -787,10 +782,6 @@ func (s *Service) checkSpawnQueuePlan(ctx context.Context, tx pgx.Tx, queue []uu
 				return validationErr("scenario_version_ids", "spawn_card is missing its target")
 			}
 			switch event.Spawn.Kind {
-			case "duplicate":
-				if want != versionID {
-					return validationErr("scenario_version_ids", "duplicate spawn_card must consume the same next version")
-				}
 			case "scenario":
 				scenario, err := s.scenarios.ScenarioByKey(ctx, tx, event.Spawn.ScenarioKey)
 				if err != nil {
@@ -1334,19 +1325,6 @@ func (s *Service) recordControlReport(ctx context.Context, tx pgx.Tx, actor auth
 	return receipt, nil
 }
 
-// appendVariation adds a duplicate spawn_card's own "чем отличается"
-// text (scenario.schema.json's events[].spawn.variation) to the new
-// item's card description, per ADR-018: "'variation' добавляется к
-// описанию экземпляра новой карточки" — the scenario body itself is
-// immutable and shared with the original item, so the distinguishing
-// detail can only live on the spawned item's own mutable card copy.
-func appendVariation(description, variation string) string {
-	if description == "" {
-		return variation
-	}
-	return description + " " + variation
-}
-
 func assignmentForRun(assignments []Assignment, run Run) (Assignment, bool) {
 	for _, assignment := range assignments {
 		if assignment.WorkstationID == run.WorkstationID && assignment.UserID == run.UserID {
@@ -1753,10 +1731,6 @@ func (s *Service) spawnEventCard(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 		return validationErr("scenario_version_ids", "spawn_card is missing its target")
 	}
 	switch definition.Spawn.Kind {
-	case "duplicate":
-		if nextVersionID != item.ScenarioVersionID {
-			return validationErr("scenario_version_ids", "duplicate spawn_card does not match next queue version")
-		}
 	case "scenario":
 		scenario, err := s.scenarios.ScenarioByKey(ctx, tx, definition.Spawn.ScenarioKey)
 		if err != nil {
@@ -1773,9 +1747,6 @@ func (s *Service) spawnEventCard(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 		return validationErr("scenario_version_ids", "spawn_card kind is unsupported")
 	}
 	origin := &spawnOrigin{itemID: item.ID}
-	if definition.Spawn != nil {
-		origin.variation = definition.Spawn.Variation
-	}
 	if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, now, origin); err != nil {
 		return err
 	}

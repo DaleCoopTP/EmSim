@@ -2015,20 +2015,48 @@ func TestTrainingTickSurvivesSpawnPlanMismatchAndDeliversOtherEvents(t *testing.
 	}
 }
 
-// TestTrainingSpawnCardSetsSpawnedFromAndAppendsVariation covers
-// ADR-018's "variation добавляется к описанию экземпляра новой
-// карточки": a spawn_card event must both link the new item back to the
-// item that spawned it (items.spawned_from) and fold its variation text
-// into the new item's own card description, since the scenario body
-// itself is immutable and shared with the original item. Uses
-// kind=scenario (rather than kind=duplicate) purely to reach a queue
-// checkSpawnQueuePlan accepts: a duplicate spawn_card's own "next slot
-// must be the same version" rule means every occurrence of that version
-// in the queue carries the same spawn_card definition and demands yet
-// another occurrence after it, so no finite queue containing a
-// duplicate spawn_card can pass assignment-time validation today — a
-// separate, pre-existing gap this test does not attempt to fix.
-func TestTrainingSpawnCardSetsSpawnedFromAndAppendsVariation(t *testing.T) {
+// TestTrainingRejectsLegacyDuplicateSpawnCard makes the temporary contract
+// boundary explicit for JSON that was persisted before duplicate spawning was
+// suspended. The old body remains decodable, but it cannot form a new lesson
+// assignment that would otherwise be impossible to make finite.
+func TestTrainingRejectsLegacyDuplicateSpawnCard(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	service := newTrainingService(pool)
+
+	const svc = "training_legacy_duplicate_svc"
+	pilotWorkflowService(t, ctx, pool, svc)
+	instructor := insertInstructor(t, ctx, pool, "training-legacy-duplicate-instructor-"+uuid.NewString())
+	target := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "legacy-duplicate-target", nil)
+	source := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "legacy-duplicate-source", []content.Event{{
+		Key: "e1", AtS: 0, Since: "offered", Delivery: "spawn_card",
+		Spawn: &content.EventSpawn{Kind: "duplicate", Variation: "legacy variation"},
+	}})
+	trainee := insertActiveTrainee(t, ctx, pool, "training-legacy-duplicate-trainee-"+uuid.NewString(), svc)
+	insertWorkstation(t, ctx, pool, 354)
+	actor := principal(instructor, uuid.Nil)
+	lesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{
+		ExerciseType: content.ExerciseTypeDDSProcessing, Title: "legacy duplicate", Mode: training.ModeTraining, Level: auth.LevelEasy,
+	}, "req-legacy-duplicate-create")
+	if err != nil {
+		t.Fatalf("CreateLesson: %v", err)
+	}
+
+	_, err = service.ReplaceAssignments(ctx, actor, lesson.ID, []training.AssignmentInput{{
+		WorkstationNo: 354, UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{source, target},
+	}}, "req-legacy-duplicate-assign")
+	if err == nil || !strings.Contains(err.Error(), "spawn_card kind is unsupported") {
+		t.Fatalf("ReplaceAssignments legacy duplicate = %v, want unsupported spawn_card error", err)
+	}
+}
+
+// TestTrainingSpawnCardSetsSpawnedFrom ensures an event-created card keeps
+// its immutable ancestry in both the item and close-time evidence.
+func TestTrainingSpawnCardSetsSpawnedFrom(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := openTestDatabase(t, ctx)
 	if err := pgstore.Up(ctx, databaseURL); err != nil {
@@ -2040,11 +2068,10 @@ func TestTrainingSpawnCardSetsSpawnedFromAndAppendsVariation(t *testing.T) {
 	const svc = "training_dup_spawn_svc"
 	pilotWorkflowService(t, ctx, pool, svc)
 	instructor := insertInstructor(t, ctx, pool, "training-dup-instructor-"+uuid.NewString())
-	const variation = "соседний дом, другой заявитель"
 	target := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "dup-target", nil)
 	source := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "dup-source", []content.Event{{
 		Key: "e1", AtS: 0, Since: "offered", Delivery: "spawn_card",
-		Spawn: &content.EventSpawn{Kind: "scenario", ScenarioKey: "dup-target", Version: 1, Variation: variation},
+		Spawn: &content.EventSpawn{Kind: "scenario", ScenarioKey: "dup-target", Version: 1},
 	}})
 	trainee := insertActiveTrainee(t, ctx, pool, "training-dup-trainee-"+uuid.NewString(), svc)
 	ws := insertWorkstation(t, ctx, pool, 353)
@@ -2089,10 +2116,6 @@ func TestTrainingSpawnCardSetsSpawnedFromAndAppendsVariation(t *testing.T) {
 	if spawned.SpawnedFrom == nil || *spawned.SpawnedFrom != sourceItemID {
 		t.Fatalf("spawned item's SpawnedFrom = %v, want %s", spawned.SpawnedFrom, sourceItemID)
 	}
-	if !strings.Contains(spawned.Card.Incident.Description, variation) {
-		t.Fatalf("spawned item's card description = %q, want it to contain variation %q", spawned.Card.Incident.Description, variation)
-	}
-
 	// Close the spawned item and confirm evidence carries the same
 	// ancestry link (evidence.schema.json's spawned_from_item_id).
 	closePilotItem(t, ctx, service, traineeActor, spawned.ID)
