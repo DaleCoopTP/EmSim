@@ -140,6 +140,13 @@ type Store interface {
 	ActionsByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) ([]Action, error)
 
 	InsertEvidence(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, ev Evidence) error
+	// EvidenceByItem reads a closed item's sealed evidence back, decoded
+	// into its typed EvidenceBody, plus the digest stored alongside the
+	// canonical bytes — assessment's own EvidenceReader port (slice 6's
+	// C6) is satisfied structurally by this same method. ErrNotFound if
+	// the item never closed (evidence is only ever written once, at
+	// close, and never afterward).
+	EvidenceByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) (EvidenceBody, [32]byte, error)
 
 	InsertBlob(ctx context.Context, tx pgx.Tx, blob Blob) (Blob, bool, error)
 	BlobBySHA256(ctx context.Context, tx pgx.Tx, sha256 [32]byte) (Blob, error)

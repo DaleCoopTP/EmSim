@@ -218,7 +218,16 @@ func (r *Runner) Run(ctx context.Context) error {
 					if r.observer != nil {
 						r.observer.ObserveClaim(r.poolName, "failed")
 					}
-					operationalErr = ErrOperational
+					// ctx can be cancelled between this loop's own
+					// ctx.Err()==nil check and Claim actually reaching
+					// PostgreSQL (shutdown can land in that window,
+					// especially for a pool that polls frequently with
+					// nothing to claim) — a claim aborted by that
+					// cancellation is a graceful shutdown, not an
+					// operational failure to report.
+					if ctx.Err() == nil {
+						operationalErr = ErrOperational
+					}
 					beginStopping()
 					break
 				}

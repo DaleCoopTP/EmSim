@@ -141,3 +141,36 @@ type TraineeAssessmentState struct {
 	ExerciseType string
 	Version      int64
 }
+
+// Detail is the instructor-facing assessment projection.  Evidence and the
+// effective rubric intentionally travel with it: the review UI must be able
+// to explain a result without reassembling an immutable snapshot from mutable
+// training tables.
+type Detail struct {
+	AutomaticState  *string
+	Final           *Assessment
+	Revisions       []Assessment
+	RubricEffective Rubric
+	Evidence        any
+}
+
+// LessonAssessmentItem is the closed-card projection used by the instructor
+// queue.  It deliberately contains only the trainee fields the public User
+// projection needs, rather than exposing an auth-store implementation here.
+type LessonAssessmentItem struct {
+	ItemID         uuid.UUID
+	UserID         uuid.UUID
+	Login          string
+	FullName       string
+	ServiceCode    *string
+	Level          string
+	Active         bool
+	WorkstationNo  int
+	Ordinal        int
+	CardNumber     string
+	ItemState      string
+	CloseReason    *string
+	ClosedAt       time.Time
+	AutomaticState *string
+	Final          *Assessment
+}

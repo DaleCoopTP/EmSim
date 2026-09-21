@@ -925,6 +925,21 @@ func (s *Store) InsertEvidence(ctx context.Context, tx pgx.Tx, itemID uuid.UUID,
 	return nil
 }
 
+func (s *Store) EvidenceByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) (training.EvidenceBody, [32]byte, error) {
+	var raw []byte
+	var digest []byte
+	if err := tx.QueryRow(ctx, `SELECT body, digest FROM evidence WHERE item_id = $1`, itemID).Scan(&raw, &digest); err != nil {
+		return training.EvidenceBody{}, [32]byte{}, mapErr(err)
+	}
+	var body training.EvidenceBody
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return training.EvidenceBody{}, [32]byte{}, training.ErrStorage
+	}
+	var digestArray [32]byte
+	copy(digestArray[:], digest)
+	return body, digestArray, nil
+}
+
 // ------------------------------------------------------------ events and reports
 
 const itemEventColumns = `id, item_id, event_key, anchor_at, due_at, state, delivered_at, late, skip_reason`

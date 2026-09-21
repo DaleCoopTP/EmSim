@@ -292,6 +292,22 @@ func (s *Store) ByDedupKey(ctx context.Context, tx pgx.Tx, dedupKey string) (Tas
 	return summary, nil
 }
 
+// PeekPayload reads a task's scope_id and payload without any lock — for
+// a Finalizer to discover which domain rows it must lock, in order,
+// before it comes back for the task's own row (RFC-001 §8's domain-first
+// lock order forbids locking the task row first just to find this out;
+// finalizerCandidates above uses the same unlocked-read-first shape for
+// the reaper's own candidate list).
+func (s *Store) PeekPayload(ctx context.Context, taskID uuid.UUID) (scopeID *uuid.UUID, payload []byte, err error) {
+	if err := s.pool.QueryRow(ctx, `SELECT scope_id, payload FROM tasks WHERE id = $1`, taskID).Scan(&scopeID, &payload); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, ErrNotFound
+		}
+		return nil, nil, ErrStorage
+	}
+	return scopeID, payload, nil
+}
+
 func (s *Store) Claim(ctx context.Context, request ClaimRequest) (Lease, bool, error) {
 	if err := request.Validate(); err != nil {
 		return Lease{}, false, err
@@ -556,6 +572,43 @@ func (s *Store) Cancel(ctx context.Context, request CancelRequest) (bool, error)
 		return false, ErrStorage
 	}
 	return changed, nil
+}
+
+// FinalizeExpiredTx writes an exhausted or lease-expired task's terminal
+// status atomically with the caller's own domain effect — the same
+// fencing check (status='leased' AND leased_worker/lease_token match,
+// no lease_expires_at requirement since the caller only ever reaches
+// this once it already knows the lease is exhausted or expired) that
+// ResolveFailureTx and reapFinalizerCandidate use inline for a kind with
+// no registered Finalizer, exposed here for a kind that has one
+// (Finalizer's own doc comment: the caller acquires its domain locks
+// first, then this task row, in one transaction). Returns false, not an
+// error, when the lease no longer matches — already finalized by a
+// concurrent attempt, or superseded by an expert revision in the
+// meantime — exactly like Finalizer.FinalizeExpired's own ErrLeaseLost
+// contract; the caller is expected to treat that as a benign lost race.
+func (s *Store) FinalizeExpiredTx(ctx context.Context, tx pgx.Tx, taskID uuid.UUID, workerID string, token uint64, status TaskStatus, code ErrorCode) (bool, error) {
+	if tx == nil || !validWorker(workerID) || token == 0 || (status != TaskFailed && status != TaskDeadLetter) || !code.Valid() {
+		return false, ErrInvalidRequest
+	}
+	now, err := lockTaskTime(ctx, tx, taskID)
+	if errors.Is(err, ErrLeaseLost) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	command, err := tx.Exec(ctx, `
+		UPDATE tasks
+		SET status = $4, leased_worker = NULL, lease_started_at = NULL,
+			lease_expires_at = NULL, terminal_worker = $2, next_attempt_at = NULL,
+			last_error_code = $5, terminal_at = $3, updated_at = $3
+		WHERE id = $1 AND status = 'leased' AND leased_worker = $2 AND lease_token = $6
+	`, taskID, workerID, now, string(status), string(code), int64(token))
+	if err != nil {
+		return false, ErrStorage
+	}
+	return command.RowsAffected() == 1, nil
 }
 
 // CancelTx cancels atomically with the caller's domain change.

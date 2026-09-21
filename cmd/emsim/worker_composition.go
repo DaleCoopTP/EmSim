@@ -14,6 +14,7 @@ import (
 	"errors"
 	"time"
 
+	"emsim/internal/assessment"
 	"emsim/internal/platform/config"
 	"emsim/internal/platform/observability"
 	"emsim/internal/platform/tasks"
@@ -140,9 +141,14 @@ func compose(processConfig config.Worker, pool *pgxpool.Pool, metrics *observabi
 		return tasks.Components{}, errors.New("recovery configuration is invalid")
 	}
 
+	assessmentService := newAssessmentService(pool, store)
+	if err := recoveryStore.RegisterFinalizer(training.KindAssessmentEvaluate, assessmentService); err != nil {
+		return tasks.Components{}, errors.New("finalizer registration is invalid")
+	}
+
 	components := tasks.Components{}
 	if processConfig.Role == tasks.RoleWorker || processConfig.Role == tasks.RoleAll {
-		components.Worker, err = composePools(processConfig, policy, pool, store, recoveryStore, registry, metrics)
+		components.Worker, err = composePools(processConfig, policy, pool, store, recoveryStore, registry, metrics, assessmentService)
 		if err != nil {
 			return tasks.Components{}, err
 		}
@@ -159,6 +165,7 @@ func compose(processConfig config.Worker, pool *pgxpool.Pool, metrics *observabi
 func composePools(
 	processConfig config.Worker, policy tasks.Policy, pool *pgxpool.Pool,
 	store *tasks.Store, recoveryStore *tasks.Recovery, registry *tasks.Registry, metrics *observability.Metrics,
+	assessmentService *assessment.Service,
 ) (tasks.Supervisor, error) {
 	handlers := tasks.NewHandlerRegistry()
 	if err := handlers.Register(kindSystemNoop, noopHandler(pool, store)); err != nil {
@@ -166,6 +173,9 @@ func composePools(
 	}
 	trainingService := newTrainingService(pool, store)
 	if err := handlers.Register(training.KindLessonClose, lessonCloseHandler(pool, store, trainingService)); err != nil {
+		return nil, errors.New("handler configuration is invalid")
+	}
+	if err := handlers.Register(training.KindAssessmentEvaluate, assessmentService); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
 
@@ -191,6 +201,21 @@ func composePools(
 	if len(runners) == 0 {
 		return nil, errors.New("no task pools are registered")
 	}
+	// slice-6-plan.md's C6 coordinator (RFC-001 §7.4): a plain 2s ticking
+	// loop inside this same worker process, not a claimed task kind of
+	// its own — it never appears in registry.Pool(...) above. Shortened
+	// under the e2e-fast test policy exactly like e2eRecoveryPolicy
+	// shortens ReaperInterval, so integration tests do not wait multiple
+	// real seconds per tick.
+	coordinatorInterval := 2 * time.Second
+	if processConfig.LocalTestPolicy == "e2e-fast-v1" {
+		coordinatorInterval = 100 * time.Millisecond
+	}
+	coordinator, err := assessment.NewCoordinator(assessmentService, tasks.SystemTickerFactory{}, coordinatorInterval, processConfig.WorkerID, policy.ReaperBatch)
+	if err != nil {
+		return nil, errors.New("coordinator configuration is invalid")
+	}
+	runners = append(runners, coordinator)
 	return tasks.Composite(runners...)
 }
 
