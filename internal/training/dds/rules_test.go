@@ -456,6 +456,44 @@ func TestUnsupportedCommandTypesRejected(t *testing.T) {
 	}
 }
 
+func TestPhoneCallRulesRequireFinishedTargetCallAndAllowNullRecording(t *testing.T) {
+	item := baseItem(t, "ЮАО")
+	item.State, item.Reaction = training.ItemOpened, content.ReactionReceived
+	item.PilotGoal = "accept_card"
+	item.Contacts = []content.Contact{{Key: "crew_leader", Label: "Бригада", Number: "1234"}}
+	item.CallPolicy = content.Call{Required: true, To: "crew_leader", BeforeStatus: content.ReactionAccepted}
+
+	decision, err := Exercise.Decide(item, training.Command{Type: training.CommandSetStatus, Payload: mustJSON(t, map[string]string{"status": "accepted"})}, item.OfferedAt)
+	if err != nil || decision.Rejection != training.RejectCallRequired {
+		t.Fatalf("accept before required call = %+v, %v", decision, err)
+	}
+	decision, err = Exercise.Decide(item, training.Command{Type: training.CommandCallStart, Payload: mustJSON(t, map[string]string{"contact": "unknown"})}, item.OfferedAt)
+	if err != nil || decision.Rejection != training.RejectInvalidPayload {
+		t.Fatalf("unknown contact = %+v, %v", decision, err)
+	}
+	decision, err = Exercise.Decide(item, training.Command{Type: training.CommandCallStart, Payload: mustJSON(t, map[string]string{"contact": "crew_leader"})}, item.OfferedAt)
+	if err != nil || !decision.Accepted || decision.StartCall == nil {
+		t.Fatalf("call start = %+v, %v", decision, err)
+	}
+	call := *decision.StartCall
+	call.ID = uuid.New()
+	item.Calls = []training.Call{call}
+	decision, err = Exercise.Decide(item, training.Command{Type: training.CommandClose, Payload: []byte(`{}`)}, item.OfferedAt)
+	if err != nil || decision.Rejection != training.RejectCallInProgress {
+		t.Fatalf("close active call = %+v, %v", decision, err)
+	}
+	decision, err = Exercise.Decide(item, training.Command{Type: training.CommandCallEnd, Payload: mustJSON(t, map[string]any{"call_id": call.ID, "accepted_by": "Иванов", "summary": "Доклад", "recording": nil})}, item.OfferedAt)
+	if err != nil || !decision.Accepted || decision.EndCall == nil || decision.EndCall.Recording != nil {
+		t.Fatalf("call end null recording = %+v, %v", decision, err)
+	}
+	now := item.OfferedAt
+	item.Calls[0].EndedAt = &now
+	decision, err = Exercise.Decide(item, training.Command{Type: training.CommandSetStatus, Payload: mustJSON(t, map[string]string{"status": "accepted"})}, item.OfferedAt)
+	if err != nil || !decision.Accepted {
+		t.Fatalf("accept after required call = %+v, %v", decision, err)
+	}
+}
+
 func TestFormatPilotAddressText(t *testing.T) {
 	got := formatPilotAddressText(content.Address{
 		Country: "Россия", City: "Москва", Okrug: "ЮАО", District: "Чертаново Южное",
