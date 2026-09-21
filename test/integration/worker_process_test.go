@@ -48,8 +48,12 @@ func (p *workerProcess) stop(t *testing.T, crash bool) {
 	}
 }
 
-func startWorkerProcess(t *testing.T, binary, databaseURL, role, id string) *workerProcess {
+func startWorkerProcess(t *testing.T, binary, databaseURL, role, id string, blobRoots ...string) *workerProcess {
 	t.Helper()
+	blobRoot := t.TempDir()
+	if len(blobRoots) > 0 {
+		blobRoot = blobRoots[0]
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +71,8 @@ func startWorkerProcess(t *testing.T, binary, databaseURL, role, id string) *wor
 	cmd.Env = append(os.Environ(),
 		"DATABASE_URL="+databaseURL, "WORKER_ID="+id, "WORKER_ADMIN_LISTEN_ADDR="+addr,
 		"WORKER_POLL_INTERVAL=50ms", "WORKER_DRAIN_TIMEOUT=100ms",
-		"SHORT_CONCURRENCY=1", "LLM_CONCURRENCY=1", "STT_CONCURRENCY=1",
+		"SHORT_CONCURRENCY=1", "LLM_CONCURRENCY=1", "STT_CONCURRENCY=1", "REPORT_CONCURRENCY=1",
+		"BLOB_ROOT="+blobRoot,
 		"WORKER_LOCAL_TEST_POLICY=e2e-fast-v1",
 	)
 	cmd.Stdout, cmd.Stderr = log, log

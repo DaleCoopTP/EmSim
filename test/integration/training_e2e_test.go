@@ -27,6 +27,7 @@ type trainingE2EFixture struct {
 	ctx         context.Context
 	databaseURL string
 	baseURL     string
+	blobRoot    string
 }
 
 func setupTrainingE2E(t *testing.T) trainingE2EFixture {
@@ -52,7 +53,7 @@ func setupTrainingE2E(t *testing.T) trainingE2EFixture {
 	publicAddr, adminAddr := freeAddr(t), freeAddr(t)
 	api := startAPIProcess(t, binary, databaseURL, publicAddr, adminAddr, blobRoot)
 	t.Cleanup(func() { api.stop(t) })
-	return trainingE2EFixture{ctx: ctx, databaseURL: databaseURL, baseURL: "http://" + publicAddr}
+	return trainingE2EFixture{ctx: ctx, databaseURL: databaseURL, baseURL: "http://" + publicAddr, blobRoot: blobRoot}
 }
 
 func newCookieClient(t *testing.T) *http.Client {

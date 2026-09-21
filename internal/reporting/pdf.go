@@ -16,10 +16,14 @@ func RenderPDF(snapshot Snapshot, generatedAt time.Time) ([]byte, error) {
 	pdf := fpdf.New("L", "mm", "A4", "")
 	pdf.SetCreationDate(generatedAt.UTC())
 	pdf.SetCatalogSort(true)
-	pdf.SetMargins(10, 13, 10)
+	// FPDF restores Y to the top margin after invoking the header callback.
+	// Keep a dedicated 20 mm body clearance, and place the header itself at
+	// 10 mm, so the summary cannot overlap the document title.
+	pdf.SetMargins(10, 30, 10)
 	pdf.SetAutoPageBreak(true, 14)
 	pdf.AddUTF8FontFromBytes("Go", "", goregular.TTF)
 	pdf.SetHeaderFuncMode(func() {
+		pdf.SetY(10)
 		pdf.SetFont("Go", "", 13)
 		pdf.CellFormat(0, 7, "EmSim - отчёт занятия: "+snapshot.Report.Lesson.Title, "", 1, "L", false, 0, "")
 		pdf.SetFont("Go", "", 7)

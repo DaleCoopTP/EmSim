@@ -41,6 +41,30 @@ Next:
 
 ## Entries
 
+## 2026-09-21T22:40:00+03:00 — Codex — slice 7 reporting acceptance
+
+Status: completed
+Slice: 7
+
+Changed:
+- `internal/reporting/pdf.go`: reserved body space below the PDF header, fixing title/summary overlap found by rendered-page QA.
+- `test/integration/reporting_e2e_test.go`: added API → report worker → immutable PDF/blob and trainee-projection acceptance coverage.
+- `test/integration/{training_e2e_test.go,worker_process_test.go}`: shared the API blob root with worker tests and configured the required report pool.
+- `README.md`: documented instructor exports, immutable PDF snapshots, trainee history and the acceptance path.
+
+Decisions:
+- A PDF artifact is verified as a worker-produced blob, while JSON and CSV remain current projections.
+
+Validation:
+- `go test -tags=integration ./test/integration -run TestReportingThroughAPIAndWorker -count=1` — passed.
+- Temporary rendered A4 PDF inspected with `pdftoppm` after the layout fix — header, summary, body and footer no longer overlap.
+
+Open issues / risks:
+- none.
+
+Next:
+- Begin the next planned slice.
+
 ## 2026-09-19T13:23:00+03:00 — Codex — establish cross-model coordination
 
 Status: completed

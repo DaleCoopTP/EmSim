@@ -9,7 +9,7 @@ import (
 
 func Enrich(items []ReportItem) ([]Participant, Aggregates) {
 	participants := map[uuid.UUID]*Participant{}
-	var scores, opens, works, totals []float64
+	var scores []float64
 	errors := map[string]int{}
 	agg := Aggregates{ScoreHistogram: []HistogramBucket{{Bucket: "0-49"}, {Bucket: "50-69"}, {Bucket: "70-84"}, {Bucket: "85-100"}}, TopErrors: []ErrorFrequency{}}
 	for _, item := range items {
@@ -42,15 +42,6 @@ func Enrich(items []ReportItem) ([]Participant, Aggregates) {
 		} else if item.AssessmentStatus != AssessmentNotAssessed {
 			p.PendingAssessments++
 			agg.PendingAssessments++
-		}
-		if item.OpenSeconds != nil {
-			opens = append(opens, *item.OpenSeconds)
-		}
-		if item.WorkSeconds != nil {
-			works = append(works, *item.WorkSeconds)
-		}
-		if item.TotalSeconds != nil {
-			totals = append(totals, *item.TotalSeconds)
 		}
 	}
 	agg.AvgScore = Average(scores)
