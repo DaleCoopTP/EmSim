@@ -23,3 +23,4 @@
 | [017](017-slice3-pilot-close-and-field-correction.md) | Срез 3: пилотное `close` после `accepted` по `pilot_goal`, команда `set_card_field` для исправления округа | accepted |
 | [018](018-slice4-queues-events-stop.md) | Очереди, события, stop и монитор среза 4 | accepted |
 | [019](019-slice6-deterministic-assessment.md) | Срез 6: детерминированная авто-оценка, finalizer и экспертные ревизии | accepted |
+| [020](020-slice7-reporting-snapshots.md) | Срез 7: отчётные проекции, CSV и неизменяемые PDF-снимки | accepted |

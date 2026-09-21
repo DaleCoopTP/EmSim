@@ -547,7 +547,7 @@
     },
     {
       "title": "report.build",
-      "description": "Собрать PDF отчёта занятия в blobs. lease 2 мин.",
+      "description": "Собрать неизменяемый PDF-снимок отчёта занятия в blobs. lease 2 мин; worker читает только report_files.basis.",
       "properties": {
         "kind": {
           "const": "report.build"
@@ -559,23 +559,26 @@
           "type": "object",
           "required": [
             "lesson_id",
-            "format",
-            "requested_by"
+            "requested_by",
+            "report_file_id",
+            "basis_digest"
           ],
           "properties": {
             "lesson_id": {
               "type": "string",
               "format": "uuid"
             },
-            "format": {
-              "type": "string",
-              "enum": [
-                "pdf"
-              ]
-            },
             "requested_by": {
               "type": "string",
               "format": "uuid"
+            },
+            "report_file_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "basis_digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
             }
           }
         },
@@ -583,6 +586,10 @@
           "type": "object",
           "properties": {
             "blob_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "report_file_id": {
               "type": "string",
               "format": "uuid"
             }

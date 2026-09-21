@@ -489,6 +489,37 @@ paths:
       summary: То же в CSV (UTF-8 BOM, `;`)
       responses:
         '200': { description: OK, content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /lessons/{lessonId}/report.pdf:
+    parameters: [ { $ref: '#/components/parameters/LessonId' } ]
+    post:
+      tags: [reports]
+      summary: Заказать неизменяемый PDF-снимок завершённого занятия
+      responses:
+        '202': { description: Задача поставлена, content: { application/json: { schema: { $ref: '#/components/schemas/ReportFile' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /lessons/{lessonId}/report-files:
+    parameters: [ { $ref: '#/components/parameters/LessonId' } ]
+    get:
+      tags: [reports]
+      summary: PDF-артефакты и состояния их построения
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ReportFile' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /reports/{reportId}/download:
+    parameters: [ { name: reportId, in: path, required: true, schema: { type: string, format: uuid } } ]
+    get:
+      tags: [reports]
+      summary: Скачать готовый PDF отчёта
+      responses:
+        '200': { description: PDF stream, content: { application/pdf: { schema: { type: string, format: binary } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /users/{userId}/progress:
     parameters: [ { $ref: '#/components/parameters/UserId' } ]
     get:
@@ -1700,6 +1731,7 @@ components:
 
     ItemResult:
       type: object
+      required: [item_id, lesson_id, lesson_title, card_number, item_state, assessment_status, errors]
       properties:
         item_id:
           type: string
@@ -1730,6 +1762,17 @@ components:
             type: string
         assessment_status:
           type: string
+          enum: [ready, needs_review, unavailable, pending, not_assessed]
+        assessment_kind:
+          type: [string, 'null']
+          enum: [auto, expert, null]
+        item_state:
+          type: string
+          enum: [closed, interrupted]
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicError'
         work_seconds:
           type:
           - number
@@ -1764,7 +1807,8 @@ components:
         avg_score: { type: number, nullable: true }
         by_lesson: { type: array, items: { type: object, properties: { lesson_id: { type: string, format: uuid }, title: { type: string }, date: { type: string, format: date-time }, avg_score: { type: number }, items: { type: integer } } } }
         error_frequency: { type: array, items: { type: object, properties: { criterion_id: { type: string }, count: { type: integer }, guide_ref: { type: string } } } }
-        recommendation: { $ref: '#/components/schemas/Recommendation' }
+        completed_items: { type: integer }
+        pending_assessments: { type: integer }
     Recommendation:
       type: object
       required:
@@ -1802,52 +1846,26 @@ components:
 
     LessonReport:
       type: object
+      required: [lesson, items, participants, aggregates]
       properties:
         lesson:
           $ref: '#/components/schemas/Lesson'
-        rows:
+        items:
           type: array
           items:
-            type: object
-            properties:
-              full_name:
-                type: string
-              workstation_no:
-                type: integer
-              level:
-                $ref: '#/components/schemas/Level'
-              items:
-                type: integer
-              avg_score:
-                type: number
-                nullable: true
-              passed:
-                type: integer
-              avg_open_seconds:
-                type: number
-              avg_total_seconds:
-                type: number
-              timing_violations:
-                type: integer
-              grammar_errors:
-                type: integer
-              critical_errors:
-                type: array
-                items:
-                  type: string
-              pending_assessments:
-                type: integer
-              recommendation:
-                $ref: '#/components/schemas/Recommendation'
-              avg_work_seconds:
-                type:
-                - number
-                - 'null'
+            $ref: '#/components/schemas/ReportItem'
+        participants:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportParticipant'
         aggregates:
           type: object
           properties:
             avg_score:
-              type: number
+              type: [number, 'null']
+            ready_assessments: { type: integer }
+            pending_assessments: { type: integer }
+            interrupted_items: { type: integer }
             score_histogram:
               type: array
               items:
@@ -1866,6 +1884,58 @@ components:
                     type: string
                   count:
                     type: integer
+
+    PublicError:
+      type: object
+      required: [criterion_id, status, label]
+      properties:
+        criterion_id: { type: string }
+        status: { type: string, enum: [partial, not_met] }
+        label: { type: string }
+        guide_ref: { type: [string, 'null'] }
+
+    ReportItem:
+      allOf:
+      - $ref: '#/components/schemas/ItemResult'
+      - type: object
+        required: [full_name, workstation_no, scenario_title, ordinal, level]
+        properties:
+          full_name: { type: string }
+          workstation_no: { type: integer }
+          scenario_title: { type: string }
+          ordinal: { type: integer }
+          level: { $ref: '#/components/schemas/Level' }
+          assessment_id: { type: [string, 'null'], format: uuid }
+          assessment_revision: { type: [integer, 'null'] }
+
+    ReportParticipant:
+      type: object
+      required: [user_id, full_name, workstation_no, level, items, ready_assessments, pending_assessments, interrupted_items]
+      properties:
+        user_id: { type: string, format: uuid }
+        full_name: { type: string }
+        workstation_no: { type: integer }
+        level: { $ref: '#/components/schemas/Level' }
+        items: { type: integer }
+        ready_assessments: { type: integer }
+        pending_assessments: { type: integer }
+        interrupted_items: { type: integer }
+        avg_score: { type: [number, 'null'] }
+        avg_open_seconds: { type: [number, 'null'] }
+        avg_work_seconds: { type: [number, 'null'] }
+        avg_total_seconds: { type: [number, 'null'] }
+
+    ReportFile:
+      type: object
+      required: [id, lesson_id, task_id, status, requested_at]
+      properties:
+        id: { type: string, format: uuid }
+        lesson_id: { type: string, format: uuid }
+        task_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, building, ready, failed] }
+        requested_at: { type: string, format: date-time }
+        generated_at: { type: [string, 'null'], format: date-time }
+        download_url: { type: [string, 'null'] }
 
     GroupProgress:
       type: object
