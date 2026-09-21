@@ -447,7 +447,9 @@ func TestUnsupportedCommandTypesRejected(t *testing.T) {
 			t.Fatalf("Decide(%s): %v", ct, err)
 		}
 		want := training.RejectTransitionNotAllowed
-		if ct == training.CommandCallStart || ct == training.CommandCallEnd { want = training.RejectInvalidPayload }
+		if ct == training.CommandCallStart || ct == training.CommandCallEnd {
+			want = training.RejectInvalidPayload
+		}
 		if decision.Accepted || decision.Rejection != want {
 			t.Fatalf("Decide(%s) = %+v, want %s", ct, decision, want)
 		}
