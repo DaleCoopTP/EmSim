@@ -143,7 +143,10 @@ func resetSchema(t *testing.T, ctx context.Context, databaseURL string) {
 	// the content/training migrations outlive DROP TABLE and must also be
 	// removed or a subsequent migration fails with "function already exists".
 	if _, err := pool.Exec(ctx, `
+		DROP VIEW IF EXISTS lesson_report_rows;
 		DROP VIEW IF EXISTS item_final_assessment;
+		DROP TABLE IF EXISTS report_files;
+		DROP FUNCTION IF EXISTS guard_report_file_update();
 		DROP TABLE IF EXISTS training_examples;
 		DROP TABLE IF EXISTS assessments;
 		DROP FUNCTION IF EXISTS guard_assessment_revision();
@@ -270,7 +273,7 @@ func assertTableSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		"actions", "assessment_inputs", "assessments", "assignments", "audit_log", "blobs", "calls",
 		"classifier_types", "control_reports", "evidence",
 		"item_events",
-		"items", "lessons", "runs", "scenario_versions", "scenarios",
+		"items", "lessons", "report_files", "runs", "scenario_versions", "scenarios",
 		"services", "sessions", "tasks", "tickets", "trainee_assessment_state", "training_examples", "users",
 		"voice_assets", "workstations",
 	}
@@ -288,7 +291,7 @@ func assertApplicationTablesAbsent(t *testing.T, ctx context.Context, pool *pgxp
 		WHERE schemaname = 'public' AND tablename IN (
 			'actions', 'assessment_inputs', 'assessments', 'assignments', 'audit_log', 'blobs', 'calls',
 			'classifier_types', 'control_reports', 'evidence', 'item_events',
-			'items', 'lessons', 'runs', 'scenario_versions', 'scenarios',
+			'items', 'lessons', 'report_files', 'runs', 'scenario_versions', 'scenarios',
 			'services', 'sessions', 'tasks', 'tickets', 'trainee_assessment_state', 'training_examples', 'users',
 			'voice_assets', 'workstations'
 		)

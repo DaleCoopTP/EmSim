@@ -496,14 +496,17 @@ CREATE INDEX advice_user_idx ON advice (user_id, created_at DESC);
 CREATE TABLE report_files (
     id           uuid PRIMARY KEY,
     kind         text NOT NULL CHECK (kind IN ('lesson_pdf', 'lesson_csv', 'user_pdf', 'group_pdf')),
-    lesson_id    uuid REFERENCES lessons(id) ON DELETE CASCADE,
-    user_id      uuid REFERENCES users(id) ON DELETE CASCADE,
-    blob_id      uuid NOT NULL REFERENCES blobs(id),
+    lesson_id    uuid NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+    task_id      uuid NOT NULL UNIQUE,
     requested_by uuid NOT NULL REFERENCES users(id),
-    basis jsonb NOT NULL CHECK (jsonb_typeof(basis)='object'), -- использованные assessment_id/revision
-    created_at   timestamptz NOT NULL DEFAULT now()
+    basis jsonb NOT NULL CHECK (jsonb_typeof(basis)='object'), -- полный snapshot + assessment_id/revision
+    basis_digest bytea NOT NULL CHECK (octet_length(basis_digest)=32),
+    blob_id      uuid REFERENCES blobs(id),
+    requested_at timestamptz NOT NULL DEFAULT now(),
+    generated_at timestamptz,
+    CONSTRAINT report_files_ready_shape CHECK ((blob_id IS NULL AND generated_at IS NULL) OR (blob_id IS NOT NULL AND generated_at IS NOT NULL))
 );
-CREATE INDEX report_files_lesson_idx ON report_files (lesson_id, created_at DESC);
+CREATE INDEX report_files_lesson_idx ON report_files (lesson_id, requested_at DESC);
 
 -- ============================================================ reporting (представления)
 
@@ -515,22 +518,26 @@ ORDER BY item_id, (kind='expert') DESC, revision DESC;
 
 -- Строка отчёта по занятию: обучаемый × карточка.
 CREATE VIEW lesson_report_rows AS
-SELECT l.id AS lesson_id, r.user_id, u.full_name, w.number AS workstation_no, r.level_at_start AS level, r.exercise_type,
-       i.id AS item_id, i.ordinal, sv.scenario_id, sv.difficulty, i.state AS item_state, i.close_reason,
-       i.offered_at, i.opened_at, i.closed_at, i.interruptions,
+SELECT l.id AS lesson_id, l.title AS lesson_title, l.mode AS lesson_mode, l.state AS lesson_state,
+       r.user_id, u.full_name, w.number AS workstation_no, r.level_at_start AS level, r.exercise_type,
+       i.id AS item_id, i.ordinal, i.state AS item_state, i.close_reason, i.offered_at, i.opened_at, i.closed_at, i.interruptions,
+       i.card->>'number' AS card_number, sv.scenario_id, s.title AS scenario_title, sv.version AS scenario_version, sv.difficulty,
        (ev.body->'derived'->>'open_seconds')::numeric AS open_seconds,
        (ev.body->'derived'->>'primary_seconds')::numeric AS primary_seconds,
        (ev.body->'derived'->>'work_seconds')::numeric AS work_seconds,
        (ev.body->'derived'->>'total_seconds')::numeric AS total_seconds,
-       fa.score, fa.passed, fa.status AS assessment_status, fa.kind AS assessment_kind, fa.critical_errors
+       fa.assessment_id, fa.revision AS assessment_revision, fa.kind AS assessment_kind, fa.status AS assessment_status,
+       fa.score, fa.passed, fa.critical_errors, a.criteria, a.feedback
 FROM lessons l
 JOIN runs r ON r.lesson_id = l.id
 JOIN users u ON u.id = r.user_id
 JOIN workstations w ON w.id = r.workstation_id
 JOIN items i ON i.run_id = r.id
 JOIN scenario_versions sv ON sv.id = i.scenario_version_id
+JOIN scenarios s ON s.id = sv.scenario_id
 LEFT JOIN evidence ev ON ev.item_id = i.id
-LEFT JOIN item_final_assessment fa ON fa.item_id = i.id;
+LEFT JOIN item_final_assessment fa ON fa.item_id = i.id
+LEFT JOIN assessments a ON a.id = fa.assessment_id;
 
 -- Неизменяемость запечатанных артефактов защищена и от ошибочного UPDATE/DELETE.
 CREATE FUNCTION reject_immutable_change() RETURNS trigger LANGUAGE plpgsql AS $$
