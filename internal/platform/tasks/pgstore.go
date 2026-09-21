@@ -108,6 +108,190 @@ func (s *Store) EnqueueTx(ctx context.Context, tx pgx.Tx, request EnqueueRequest
 	return existingID, false, nil
 }
 
+// EnqueueWaitingTx inserts a new task directly in status='waiting' —
+// blocked from the start, not merely pending (RFC-001 §7.4: close puts
+// assessment.evaluate straight into waiting, before any coordinator has
+// looked at it). Same idempotent-insert-then-lookup pattern as EnqueueTx;
+// max_attempts still comes from the kind's registered Spec so a later
+// PromoteWaitingTx has a real budget to draw down.
+func (s *Store) EnqueueWaitingTx(ctx context.Context, tx pgx.Tx, request EnqueueWaitingRequest) (id uuid.UUID, created bool, err error) {
+	if tx == nil {
+		return uuid.Nil, false, ErrInvalidRequest
+	}
+	if err := request.Validate(); err != nil {
+		return uuid.Nil, false, err
+	}
+	spec, ok := s.registry.Lookup(request.Kind)
+	if !ok {
+		return uuid.Nil, false, ErrUnknownKind
+	}
+	payload := request.Payload
+	if payload == nil {
+		payload = []byte(`{}`)
+	}
+
+	var insertedID uuid.UUID
+	err = tx.QueryRow(ctx, `
+		INSERT INTO tasks (
+			id, priority, dependency_task_ids, kind, scope_type, scope_id,
+			dedup_key, payload, status, max_attempts, wait_until, wait_reason
+		) VALUES ($1, $2, '{}', $3, $4, $5, $6, $7, 'waiting', $8, $9, $10)
+		ON CONFLICT (dedup_key) DO NOTHING
+		RETURNING id
+	`, request.TaskID, spec.Priority, string(request.Kind), request.ScopeType, request.ScopeID,
+		request.DedupKey, payload, spec.MaxAttempts, request.WaitUntil, request.WaitReason,
+	).Scan(&insertedID)
+	if err == nil {
+		return insertedID, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, false, ErrStorage
+	}
+
+	var existingID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM tasks WHERE dedup_key = $1`, request.DedupKey).Scan(&existingID); err != nil {
+		return uuid.Nil, false, ErrStorage
+	}
+	return existingID, false, nil
+}
+
+// WaitingDue reads every waiting task of kind whose wait_until has
+// passed, without any lock (RFC-001 §7.4's coordinator: "polling каждые
+// 2 с, без LISTEN" over an unlocked read; the coordinator re-locks
+// whatever domain rows and this task row it actually needs, one task at
+// a time, in its own transaction — this is only the candidate list).
+func (s *Store) WaitingDue(ctx context.Context, kind Kind, now time.Time, limit int) ([]WaitingTask, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, scope_type, scope_id, dedup_key, payload
+		FROM tasks
+		WHERE status = 'waiting' AND kind = $1 AND wait_until <= $2
+		ORDER BY wait_until, id
+		LIMIT $3
+	`, string(kind), now, limit)
+	if err != nil {
+		return nil, ErrStorage
+	}
+	defer rows.Close()
+	var due []WaitingTask
+	for rows.Next() {
+		var t WaitingTask
+		t.Kind = kind
+		if err := rows.Scan(&t.TaskID, &t.ScopeType, &t.ScopeID, &t.DedupKey, &t.Payload); err != nil {
+			return nil, ErrStorage
+		}
+		due = append(due, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, ErrStorage
+	}
+	return due, nil
+}
+
+// PromoteWaitingTx moves a waiting task to pending, replacing its payload
+// (the coordinator merges in whatever it just sealed, e.g. input_id) and
+// setting next_attempt_at — attempts/lease fields stay at their
+// tasks_state_shape 'pending' defaults (RFC-001 §7.4: "waiting не
+// расходует attempts"). Already-promoted (status no longer 'waiting') is
+// a silent no-op, not an error — the coordinator's own retry after a
+// crash between sealing input and promoting must be idempotent.
+func (s *Store) PromoteWaitingTx(ctx context.Context, tx pgx.Tx, taskID uuid.UUID, payload []byte, nextAttemptAt time.Time) error {
+	if tx == nil {
+		return ErrInvalidRequest
+	}
+	if taskID == uuid.Nil || nextAttemptAt.IsZero() {
+		return ErrInvalidRequest
+	}
+	if payload == nil {
+		payload = []byte(`{}`)
+	}
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT status FROM tasks WHERE id = $1 FOR UPDATE`, taskID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrLeaseLost
+		}
+		return ErrStorage
+	}
+	if status != string(TaskWaiting) {
+		return nil
+	}
+	command, err := tx.Exec(ctx, `
+		UPDATE tasks
+		SET status = 'pending', payload = $2, next_attempt_at = $3,
+			wait_until = NULL, wait_reason = NULL, updated_at = clock_timestamp()
+		WHERE id = $1 AND status = 'waiting'
+	`, taskID, payload, nextAttemptAt)
+	if err != nil || command.RowsAffected() != 1 {
+		return ErrStorage
+	}
+	return nil
+}
+
+// FailWaitingTx terminates a waiting task as failed — input preparation
+// itself failed (RFC-001 §7.4: "ошибка подготовки → failed без auto"),
+// so there is nothing left to claim or retry. Already-terminal is a
+// silent no-op for the same idempotent-retry reason PromoteWaitingTx is.
+func (s *Store) FailWaitingTx(ctx context.Context, tx pgx.Tx, taskID uuid.UUID, workerID string, code ErrorCode) error {
+	if tx == nil {
+		return ErrInvalidRequest
+	}
+	if taskID == uuid.Nil || !validWorker(workerID) || !code.Valid() {
+		return ErrInvalidRequest
+	}
+	var status string
+	var now time.Time
+	if err := tx.QueryRow(ctx, `SELECT status, clock_timestamp() FROM tasks WHERE id = $1 FOR UPDATE`, taskID).Scan(&status, &now); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrLeaseLost
+		}
+		return ErrStorage
+	}
+	if status != string(TaskWaiting) {
+		return nil
+	}
+	command, err := tx.Exec(ctx, `
+		UPDATE tasks
+		SET status = 'failed', terminal_worker = $2, last_error_code = $3,
+			terminal_at = $4, wait_until = NULL, wait_reason = NULL, updated_at = $4
+		WHERE id = $1 AND status = 'waiting'
+	`, taskID, workerID, string(code), now)
+	if err != nil || command.RowsAffected() != 1 {
+		return ErrStorage
+	}
+	return nil
+}
+
+// TaskSummary is ByDedupKey's read-only projection — enough for an API
+// handler to report a background task's current state (e.g.
+// GET /items/{id}/assessment's automatic_state) without exposing the
+// full row.
+type TaskSummary struct {
+	TaskID uuid.UUID
+	Status TaskStatus
+	Result []byte
+}
+
+// ByDedupKey looks a task up by its deterministic dedup_key (RFC-001
+// §7.4's evaluate:<item_id>-style keys) — the read path a caller uses
+// when it knows how a task was enqueued but not (or no longer) its id.
+// ErrNotFound when no such task exists yet (e.g. an intro item, which
+// never gets one).
+func (s *Store) ByDedupKey(ctx context.Context, tx pgx.Tx, dedupKey string) (TaskSummary, error) {
+	var summary TaskSummary
+	var row pgx.Row
+	if tx != nil {
+		row = tx.QueryRow(ctx, `SELECT id, status, result FROM tasks WHERE dedup_key = $1`, dedupKey)
+	} else {
+		row = s.pool.QueryRow(ctx, `SELECT id, status, result FROM tasks WHERE dedup_key = $1`, dedupKey)
+	}
+	if err := row.Scan(&summary.TaskID, &summary.Status, &summary.Result); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return TaskSummary{}, ErrNotFound
+		}
+		return TaskSummary{}, ErrStorage
+	}
+	return summary, nil
+}
+
 func (s *Store) Claim(ctx context.Context, request ClaimRequest) (Lease, bool, error) {
 	if err := request.Validate(); err != nil {
 		return Lease{}, false, err

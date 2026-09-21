@@ -31,6 +31,7 @@ var (
 	ErrInvalidLeaseInterval = errors.New("invalid lease interval")
 	ErrTerminalConflict     = errors.New("terminal outcome conflict")
 	ErrStorage              = errors.New("task storage failure")
+	ErrNotFound             = errors.New("task not found")
 )
 
 // Kind is a dot-namespaced task kind name registered in a Registry, e.g.
@@ -197,6 +198,43 @@ func (r EnqueueRequest) Validate() error {
 		return ErrInvalidRequest
 	}
 	return nil
+}
+
+// EnqueueWaitingRequest is EnqueueRequest's counterpart for a task that
+// starts life already blocked on an external condition (RFC-001 §7.4's
+// "close ставит waiting без input_id"), rather than ready to claim. It
+// has no NextAttemptAt/DependencyTaskIDs — tasks_state_shape requires a
+// waiting row to have attempts=0, no lease/terminal fields, and both
+// WaitUntil/WaitReason set instead. New in this port (ADR-019): core's
+// original queue had no waiting status.
+type EnqueueWaitingRequest struct {
+	TaskID     uuid.UUID
+	Kind       Kind
+	ScopeType  string
+	ScopeID    *uuid.UUID
+	DedupKey   string
+	Payload    []byte
+	WaitUntil  time.Time
+	WaitReason string
+}
+
+func (r EnqueueWaitingRequest) Validate() error {
+	if r.TaskID == uuid.Nil || !r.Kind.Valid() || !validScopeType(r.ScopeType) ||
+		strings.TrimSpace(r.DedupKey) == "" || r.WaitUntil.IsZero() || strings.TrimSpace(r.WaitReason) == "" {
+		return ErrInvalidRequest
+	}
+	return nil
+}
+
+// WaitingTask is one row WaitingDue reads back — enough for a coordinator
+// to decide whether its dependency is ready and, if so, what to seal.
+type WaitingTask struct {
+	TaskID    uuid.UUID
+	Kind      Kind
+	ScopeType string
+	ScopeID   *uuid.UUID
+	DedupKey  string
+	Payload   []byte
 }
 
 func validScopeType(value string) bool {
