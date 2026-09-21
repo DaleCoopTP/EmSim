@@ -631,6 +631,10 @@ func (s *Store) BlobBySHA256(ctx context.Context, tx pgx.Tx, sha256 [32]byte) (t
 	return scanBlob(tx.QueryRow(ctx, `SELECT `+blobColumns+` FROM blobs WHERE sha256 = $1`, sha256[:]))
 }
 
+func (s *Store) BlobByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (training.Blob, error) {
+	return scanBlob(tx.QueryRow(ctx, `SELECT `+blobColumns+` FROM blobs WHERE id = $1`, id))
+}
+
 const voiceAssetColumns = `id, scenario_version_id, key, voice, blob_id`
 
 func scanVoiceAsset(row pgx.Row) (training.VoiceAsset, error) {

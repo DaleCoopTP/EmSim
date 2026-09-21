@@ -139,6 +139,7 @@ type Store interface {
 
 	InsertBlob(ctx context.Context, tx pgx.Tx, blob Blob) (Blob, bool, error)
 	BlobBySHA256(ctx context.Context, tx pgx.Tx, sha256 [32]byte) (Blob, error)
+	BlobByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Blob, error)
 	VoiceAssetByKey(ctx context.Context, tx pgx.Tx, scenarioVersionID uuid.UUID, key string) (VoiceAsset, error)
 	InsertVoiceAsset(ctx context.Context, tx pgx.Tx, asset VoiceAsset) (VoiceAsset, error)
 	InsertCall(ctx context.Context, tx pgx.Tx, call Call) (Call, error)

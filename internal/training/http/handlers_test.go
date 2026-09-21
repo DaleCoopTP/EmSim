@@ -110,6 +110,9 @@ func (f *fakeTraining) UploadRecording(context.Context, auth.Principal, uuid.UUI
 func (f *fakeTraining) RecordingForInstructor(context.Context, auth.Principal, uuid.UUID, uuid.UUID) (training.Blob, error) {
 	return training.Blob{}, f.readErr
 }
+func (f *fakeTraining) VoicePhraseForTrainee(context.Context, auth.Principal, uuid.UUID, string, string) (training.Blob, error) {
+	return training.Blob{}, f.readErr
+}
 
 func trainingPrincipal(role auth.Role) auth.Principal {
 	ws := uuid.New()

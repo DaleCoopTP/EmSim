@@ -59,6 +59,7 @@ type trainingService interface {
 	Now(ctx context.Context) (time.Time, error)
 	UploadRecording(ctx context.Context, actor auth.Principal, itemID, callID uuid.UUID, blob training.Blob) error
 	RecordingForInstructor(ctx context.Context, actor auth.Principal, itemID, callID uuid.UUID) (training.Blob, error)
+	VoicePhraseForTrainee(ctx context.Context, actor auth.Principal, itemID uuid.UUID, contactKey, phrase string) (training.Blob, error)
 }
 
 // authenticator is the session-verification port SessionMiddleware needs
@@ -115,6 +116,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/items/{itemId}/actions", trainee(h.execute))
 	mux.Handle("PUT /api/v1/items/{itemId}/calls/{callId}/recording", trainee(h.uploadRecording))
 	mux.Handle("GET /api/v1/items/{itemId}/calls/{callId}/recording", itemRead(h.downloadRecording))
+	mux.Handle("GET /api/v1/items/{itemId}/contacts/{contactKey}/phrases/{phrase}", trainee(h.voicePhrase))
 
 	mux.Handle("GET /api/v1/items/{itemId}", itemRead(h.getItem))
 }
@@ -218,6 +220,34 @@ func (h *Handlers) downloadRecording(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", blob.MIME)
 	w.Header().Set("Content-Length", strconv.FormatInt(blob.Size, 10))
 	http.ServeContent(w, r, "recording", blob.CreatedAt, f)
+}
+
+func (h *Handlers) voicePhrase(w http.ResponseWriter, r *http.Request) {
+	principal, _ := authhttp.PrincipalFromContext(r.Context())
+	itemID, err := uuid.Parse(r.PathValue("itemId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "invalid item id", nil)
+		return
+	}
+	blob, err := h.training.VoicePhraseForTrainee(r.Context(), principal, itemID, r.PathValue("contactKey"), r.PathValue("phrase"))
+	if err != nil {
+		writeTrainingError(w, r, err)
+		return
+	}
+	files, err := media.NewFileStore(os.Getenv("BLOB_ROOT"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "media storage unavailable", nil)
+		return
+	}
+	f, err := files.Open(blob.SHA256)
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "voice asset not found", nil)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", blob.MIME)
+	w.Header().Set("Content-Length", strconv.FormatInt(blob.Size, 10))
+	http.ServeContent(w, r, "voice", blob.CreatedAt, f)
 }
 
 // -------------------------------------------------------------- lessons

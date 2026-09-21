@@ -1936,6 +1936,47 @@ func (s *Service) RecordingForInstructor(ctx context.Context, actor auth.Princip
 	return result, err
 }
 
+func (s *Service) VoicePhraseForTrainee(ctx context.Context, actor auth.Principal, itemID uuid.UUID, contactKey, phrase string) (Blob, error) {
+	if phrase != "greeting" && phrase != "ack" {
+		return Blob{}, ErrNotFound
+	}
+	var result Blob
+	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		item, err := s.store.ItemByID(ctx, tx, itemID, LockNone)
+		if err != nil {
+			return err
+		}
+		run, err := s.store.RunByID(ctx, tx, item.RunID, LockNone)
+		if err != nil {
+			return err
+		}
+		if run.UserID != actor.UserID || actor.WorkstationID == nil || *actor.WorkstationID != run.WorkstationID {
+			return ErrNotFound
+		}
+		version, err := s.scenarios.VersionByID(ctx, tx, item.ScenarioVersionID)
+		if err != nil {
+			return err
+		}
+		exists := false
+		for _, c := range version.Body.Contacts {
+			if c.Key == contactKey {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		asset, err := s.store.VoiceAssetByKey(ctx, tx, item.ScenarioVersionID, "contact:"+contactKey+":"+phrase)
+		if err != nil {
+			return err
+		}
+		result, err = s.store.BlobByID(ctx, tx, asset.BlobID)
+		return err
+	})
+	return result, err
+}
+
 // RunActions is the instructor's action feed for one run (monitor/
 // review) — ownership checked through the run's lesson.
 func (s *Service) RunActions(ctx context.Context, actor auth.Principal, lessonID, runID uuid.UUID) ([]Action, error) {
