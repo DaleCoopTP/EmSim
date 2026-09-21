@@ -506,7 +506,7 @@ func (s *Service) CloseStoppedLesson(ctx context.Context, tx pgx.Tx, lessonID uu
 			if item.State == ItemClosed || item.State == ItemInterrupted {
 				continue
 			}
-			if err := s.closeInterruptedItem(ctx, tx, exercise, item, stoppedAt); err != nil {
+			if err := s.closeInterruptedItem(ctx, tx, exercise, item, stoppedAt, lesson.RecordingGraceS); err != nil {
 				return err
 			}
 		}
@@ -551,7 +551,7 @@ func (s *Service) CloseStoppedLesson(ctx context.Context, tx pgx.Tx, lessonID uu
 // an item Stop's own SetStopCutoffForOpenItems already touched), and no
 // new action row is written: this is a server-side interruption, not a
 // client command.
-func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise Exercise, item Item, stoppedAt time.Time) error {
+func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise Exercise, item Item, stoppedAt time.Time, recordingGraceS int) error {
 	cutoff := item.LogSeq
 	if item.StopCutoffLogSeq != nil {
 		cutoff = *item.StopCutoffLogSeq
@@ -565,6 +565,9 @@ func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise 
 		return err
 	}
 	if err := s.store.SkipRemainingItemEvents(ctx, tx, item.ID, SkipReasonLessonStopped); err != nil {
+		return err
+	}
+	if err := s.store.SetCallRecordingDeadline(ctx, tx, item.ID, stoppedAt.Add(time.Duration(recordingGraceS)*time.Second)); err != nil {
 		return err
 	}
 
@@ -581,6 +584,11 @@ func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise 
 	closedItem.State = ItemInterrupted
 	closedItem.ClosedAt = &stoppedAt
 	closedItem.CloseReason = &closeReason
+	calls, err := s.store.CallsByItem(ctx, tx, item.ID)
+	if err != nil {
+		return err
+	}
+	closedItem.Calls = calls
 
 	evidence, err := exercise.Evidence(closedItem, actions, events, cutoff, stoppedAt)
 	if err != nil {
@@ -844,6 +852,16 @@ func (s *Service) Execute(ctx context.Context, actor auth.Principal, itemID uuid
 		case cmd.ExpectedSeq != item.Seq:
 			decision = unchangedDecision(item, RejectStaleSeq)
 		default:
+			calls, err := s.store.CallsByItem(ctx, tx, item.ID)
+			if err != nil {
+				return err
+			}
+			item.Calls = calls
+			version, err := s.scenarios.VersionByID(ctx, tx, item.ScenarioVersionID)
+			if err != nil {
+				return err
+			}
+			item.Contacts, item.CallPolicy = version.Body.Contacts, version.Body.Reference.Call
 			decision, err = exercise.Decide(item, cmd, now)
 			if err != nil {
 				return err
@@ -943,10 +961,16 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 		newSeq++
 	}
 	actionID := uuid.New()
+	if decision.Accepted && decision.StartCall != nil {
+		decision.StartCall.ID, decision.StartCall.ItemID = uuid.New(), item.ID
+	}
 
 	receipt := Receipt{
 		CommandID: cmd.CommandID, Seq: newSeq, Reaction: decision.Reaction,
 		ItemState: decision.State, ServerAt: now, ActionID: actionID, LogSeq: newLogSeq,
+	}
+	if decision.Accepted && decision.StartCall != nil {
+		receipt.CallID = &decision.StartCall.ID
 	}
 	httpStatus := 200
 	if decision.Accepted {
@@ -976,6 +1000,29 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	}
 	if _, err := s.store.InsertAction(ctx, tx, action); err != nil {
 		return Receipt{}, err
+	}
+	if decision.Accepted && decision.StartCall != nil {
+		if _, err := s.store.InsertCall(ctx, tx, *decision.StartCall); err != nil {
+			return Receipt{}, err
+		}
+		item.Calls = append(item.Calls, *decision.StartCall)
+	}
+	if decision.Accepted && decision.EndCall != nil {
+		if err := s.store.EndCall(ctx, tx, decision.EndCall.CallID, now, decision.EndCall.AcceptedBy, decision.EndCall.Summary, decision.EndCall.Recording); err != nil {
+			return Receipt{}, err
+		}
+		for i := range item.Calls {
+			if item.Calls[i].ID == decision.EndCall.CallID {
+				item.Calls[i].EndedAt = &now
+				item.Calls[i].AcceptedBy = &decision.EndCall.AcceptedBy
+				item.Calls[i].Summary = &decision.EndCall.Summary
+				item.Calls[i].Recording = decision.EndCall.Recording
+				if decision.EndCall.Recording != nil {
+					item.Calls[i].RecordingState = RecordingAwaiting
+				}
+				break
+			}
+		}
 	}
 
 	auditOutcome := audit.OutcomeOK
@@ -1059,6 +1106,14 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	closedAt := now
 	closedItem.ClosedAt = &closedAt
 	closedItem.CloseReason = decision.Close
+	if err := s.store.SetCallRecordingDeadline(ctx, tx, item.ID, closedAt.Add(time.Duration(lesson.RecordingGraceS)*time.Second)); err != nil {
+		return Receipt{}, err
+	}
+	calls, err := s.store.CallsByItem(ctx, tx, item.ID)
+	if err != nil {
+		return Receipt{}, err
+	}
+	closedItem.Calls = calls
 
 	// RFC-001 §7.4's close pseudocode cancels any event still scheduled
 	// for this item before the evidence snapshot is taken, so a "will
@@ -1726,6 +1781,15 @@ func (s *Service) ItemForTrainee(ctx context.Context, actor auth.Principal, item
 		if err != nil {
 			return err
 		}
+		item.Calls, err = s.store.CallsByItem(ctx, tx, itemID)
+		if err != nil {
+			return err
+		}
+		version, err := s.scenarios.VersionByID(ctx, tx, item.ScenarioVersionID)
+		if err != nil {
+			return err
+		}
+		item.Contacts, item.CallPolicy = version.Body.Contacts, version.Body.Reference.Call
 		events, err = s.deliveredEventsForItem(ctx, tx, itemID, item.ScenarioVersionID)
 		return err
 	})
@@ -1763,7 +1827,12 @@ func (s *Service) ItemForInstructor(ctx context.Context, actor auth.Principal, i
 			return err
 		}
 		body = version.Body
+		item.Contacts, item.CallPolicy = body.Contacts, body.Reference.Call
 		actions, err = s.store.ActionsByItem(ctx, tx, itemID)
+		if err != nil {
+			return err
+		}
+		item.Calls, err = s.store.CallsByItem(ctx, tx, itemID)
 		if err != nil {
 			return err
 		}
