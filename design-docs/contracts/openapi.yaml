@@ -349,6 +349,16 @@ paths:
       summary: Лента действий обучаемого (для монитора и разбора)
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Action' } } } } }
+  /lessons/{lessonId}/assessments:
+    parameters: [ { $ref: '#/components/parameters/LessonId' } ]
+    get:
+      tags: [assessment]
+      summary: Закрытые/прерванные карточки занятия для разбора (срез 6)
+      description: Одна строка на закрытую или прерванную карточку занятия; automatic_state — состояние фоновой задачи по её dedup_key (null для intro). Полная детализация — GET /items/{itemId}/assessment.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LessonAssessmentRow' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ------------------------------------------------------------ trainee
   /my/run:
@@ -450,8 +460,9 @@ paths:
       tags: [assessment]
       summary: Правила, итоговая оценка и история; последняя expert, иначе единственная auto
       responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { automatic_state: { type: string, enum: [waiting, pending, leased, done, failed, dead_letter, cancelled], description: Состояние автоматической задачи; ручная оценка доступна независимо от него }, final: { oneOf: [{ $ref: '#/components/schemas/Assessment' }, { type: 'null' }] }, revisions: { type: array, items: { $ref: '#/components/schemas/Assessment' } } } } } } }
-        '404': { description: Карточка не найдена или ещё не закрыта, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '200': { description: OK, content: { application/json: { schema: { type: object, required: [rubric_effective, evidence, final, revisions], properties: { automatic_state: { type: [string, 'null'], enum: [waiting, pending, leased, done, failed, dead_letter, cancelled, null], description: Состояние автоматической задачи; null для intro-прохождения. Ручная оценка доступна независимо от него }, final: { oneOf: [{ $ref: '#/components/schemas/Assessment' }, { type: 'null' }] }, revisions: { type: array, items: { $ref: '#/components/schemas/Assessment' } }, rubric_effective: { type: object, additionalProperties: true, description: Слитая рубрика этой карточки (ADR-013) — нужна и когда auto ещё не посчитана, для первой ручной оценки. }, evidence: { type: object, additionalProperties: true, description: Тело evidence.schema.json — журнал, звонки, тайминги; преподаватель разбирает карточку без отдельного запроса. } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Карточка не найдена, не его занятия или ещё не закрыта, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /items/{itemId}/assessment/revisions:
     parameters: [ { $ref: '#/components/parameters/ItemId' } ]
     post:
@@ -1452,6 +1463,54 @@ components:
           - awaiting
           - ready
           - expired
+
+    LessonAssessmentRow:
+      type: object
+      required:
+      - item_id
+      - user
+      - workstation_no
+      - ordinal
+      - card_number
+      - item_state
+      - close_reason
+      - closed_at
+      - automatic_state
+      - final
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        user:
+          $ref: '#/components/schemas/User'
+        workstation_no:
+          type: integer
+        ordinal:
+          type: integer
+        card_number:
+          type: string
+        item_state:
+          type: string
+          enum: [closed, interrupted]
+        close_reason:
+          type: string
+          nullable: true
+        closed_at:
+          type: string
+          format: date-time
+        automatic_state:
+          type: [string, 'null']
+          enum: [waiting, pending, leased, done, failed, dead_letter, cancelled, null]
+        final:
+          type: object
+          nullable: true
+          description: Итоговая ревизия (последняя expert, иначе auto), если уже есть.
+          properties:
+            revision: { type: integer }
+            kind: { type: string, enum: [auto, expert] }
+            status: { type: string, enum: [ready, needs_review, unavailable] }
+            score: { type: [number, 'null'] }
+            passed: { type: [boolean, 'null'] }
 
     Assessment:
       type: object

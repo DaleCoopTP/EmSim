@@ -277,7 +277,7 @@
     },
     {
       "title": "assessment.evaluate",
-      "description": "Close ставит waiting без input_id; coordinator ждёт файл до upload deadline и терминальный STT, вычисляет правила и атомарно сохраняет единственный assessment_inputs + pending. wait_until — следующая проверка, не deadline STT; waiting не расходует attempts. Ошибка подготовки → failed без auto, ручная оценка доступна. Claim/inference только с sealed input. Исчерпание попыток handler/reaper → auto rev=1 needs_review с NULL score/passed + failed/dead_letter атомарно. Если expert уже создана — cancelled, auto не пишется. Retry после любой оценки запрещён; одна auto на item, priority=100.",
+      "description": "Close ставит waiting без input_id (wait_reason=awaiting_input); coordinator ждёт файл до upload deadline и терминальный STT (срез 9), вычисляет правила и атомарно сохраняет единственный assessment_inputs + pending. wait_until — следующая проверка, не deadline STT; waiting не расходует attempts. Ошибка подготовки → failed без auto, ручная оценка доступна. Claim/inference только с sealed input. Исчерпание попыток handler/reaper → auto rev=1 needs_review с NULL score/passed + failed/dead_letter атомарно. Если expert уже создана — cancelled, auto не пишется. Retry после любой оценки запрещён; одна auto на item, priority=100. Срез 6 не имеет STT-зависимостей: coordinator сразу считает детерминированные правила, llm-критерии — unavailable.",
       "properties": {
         "kind": {
           "const": "assessment.evaluate"

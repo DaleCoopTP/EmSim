@@ -55,6 +55,17 @@
       "params": {}
     },
     {
+      "id": "D_FIELD_CORRECTIONS",
+      "title": "Обязательные исправления карточки выполнены до нужного статуса",
+      "weight": 10,
+      "kind": "deterministic",
+      "critical": false,
+      "rule": "d_field_corrections",
+      "params": {
+        "applicable_when": "reference.field_corrections"
+      }
+    },
+    {
       "id": "D_COMMENT_REQUIRED",
       "title": "Комментарий есть там, где обязателен",
       "weight": 10,

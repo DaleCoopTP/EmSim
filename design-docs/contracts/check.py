@@ -39,7 +39,7 @@ def load_json(name: str):
 def main() -> int:
     print("JSON")
     schemas = {n: load_json(n) for n in ["scenario.schema.json", "scenario-file.schema.json", "evidence.schema.json", "assessment-inputs.schema.json", "rubric.schema.json", "sse-events.schema.json", "tasks.schema.json", "voice-assets-manifest.schema.json"]}
-    examples = {n: load_json(n) for n in ["scenario.example.json", "evidence.example.json", "rubric.default.json"]}
+    examples = {n: load_json(n) for n in ["scenario.example.json", "evidence.example.json", "rubric.default.json", "assessment-inputs.example.json"]}
     for n, v in {**schemas, **examples}.items():
         if v is not None:
             ok(n)
@@ -90,7 +90,7 @@ def main() -> int:
             if s is not None:
                 V.check_schema(s)
                 ok(f"{n} is a valid draft 2020-12 schema")
-        pairs = [("scenario.schema.json", "scenario.example.json"), ("evidence.schema.json", "evidence.example.json"), ("rubric.schema.json", "rubric.default.json")]
+        pairs = [("scenario.schema.json", "scenario.example.json"), ("evidence.schema.json", "evidence.example.json"), ("rubric.schema.json", "rubric.default.json"), ("assessment-inputs.schema.json", "assessment-inputs.example.json")]
         for sn, en in pairs:
             if schemas[sn] is None or examples[en] is None:
                 continue
@@ -182,6 +182,16 @@ def main() -> int:
             ok("evidence accepts pilot_completed close_reason")
         else:
             fail("evidence must accept pilot_completed close_reason (ADR-017)")
+
+        # Срез 6 / ADR-019: rubric.default.json must carry D_FIELD_CORRECTIONS
+        # (ADR-017's set_card_field is otherwise never scored).
+        if "D_FIELD_CORRECTIONS" in known:
+            ok("rubric.default.json scores ADR-017 field corrections")
+        else:
+            fail("rubric.default.json is missing D_FIELD_CORRECTIONS (ADR-019)")
+        bad_input = copy.deepcopy(examples["assessment-inputs.example.json"])
+        bad_input["transcripts"] = [{"call_id": "019230a4-6b1e-7c0a-9a1f-3f2a1b2c3d4e", "recording_sha256": "a" * 64, "state": "ready"}]
+        rejects("ready transcript without text/model/parameters", schemas["assessment-inputs.schema.json"], bad_input)
 
         # Resolve only the local refs used by these schemas; no remote network calls.
         def resolve(node):
