@@ -166,16 +166,16 @@ func TestAPIProcessSSEStreamSnapshotReplayResyncAndFiltering(t *testing.T) {
 	// -------------------------------------------------- stream-first snapshot ordering
 	instructorStream := openSSE(t, f.ctx, instructorSSE, f.baseURL, "/api/v1/lessons/"+lesson.ID+"/stream", "")
 	ready, ok := instructorStream.next(t, 5*time.Second)
-	if !ok || ready.event != "stream.ready" || ready.id == "" {
+	if !ok || ready.event != "stream.ready" || ready.id == "" || ready.data["cursor"] != ready.id {
 		t.Fatalf("instructor stream first frame = %+v, ok=%v, want stream.ready with a cursor", ready, ok)
 	}
 
 	traineeAStream := openSSE(t, f.ctx, traineeASSE, f.baseURL, "/api/v1/my/stream", "")
-	if readyA, ok := traineeAStream.next(t, 5*time.Second); !ok || readyA.event != "stream.ready" {
+	if readyA, ok := traineeAStream.next(t, 5*time.Second); !ok || readyA.event != "stream.ready" || readyA.data["cursor"] != readyA.id {
 		t.Fatalf("trainee A stream first frame = %+v, ok=%v, want stream.ready", readyA, ok)
 	}
 	traineeBStream := openSSE(t, f.ctx, traineeBSSE, f.baseURL, "/api/v1/my/stream", "")
-	if readyB, ok := traineeBStream.next(t, 5*time.Second); !ok || readyB.event != "stream.ready" {
+	if readyB, ok := traineeBStream.next(t, 5*time.Second); !ok || readyB.event != "stream.ready" || readyB.data["cursor"] != readyB.id {
 		t.Fatalf("trainee B stream first frame = %+v, ok=%v, want stream.ready", readyB, ok)
 	}
 
@@ -215,7 +215,7 @@ func TestAPIProcessSSEStreamSnapshotReplayResyncAndFiltering(t *testing.T) {
 
 	reconnected := openSSE(t, f.ctx, instructorSSE, f.baseURL, "/api/v1/lessons/"+lesson.ID+"/stream", lastEventID)
 	readyAfterReconnect, ok := reconnected.next(t, 5*time.Second)
-	if !ok || readyAfterReconnect.event != "stream.ready" {
+	if !ok || readyAfterReconnect.event != "stream.ready" || readyAfterReconnect.data["cursor"] != readyAfterReconnect.id {
 		t.Fatalf("reconnected stream first frame = %+v, ok=%v, want stream.ready", readyAfterReconnect, ok)
 	}
 	replay, ok := reconnected.next(t, 5*time.Second)
@@ -226,7 +226,7 @@ func TestAPIProcessSSEStreamSnapshotReplayResyncAndFiltering(t *testing.T) {
 
 	// -------------------------------------------------- the ?cursor query fallback (a brand-new EventSource cannot set headers)
 	byQuery := openSSE(t, f.ctx, instructorSSE, f.baseURL, "/api/v1/lessons/"+lesson.ID+"/stream?cursor="+lastEventID, "")
-	if readyQ, ok := byQuery.next(t, 5*time.Second); !ok || readyQ.event != "stream.ready" {
+	if readyQ, ok := byQuery.next(t, 5*time.Second); !ok || readyQ.event != "stream.ready" || readyQ.data["cursor"] != readyQ.id {
 		t.Fatalf("cursor-query stream first frame = %+v, ok=%v, want stream.ready", readyQ, ok)
 	}
 	replayQ, ok := byQuery.next(t, 5*time.Second)
@@ -237,11 +237,11 @@ func TestAPIProcessSSEStreamSnapshotReplayResyncAndFiltering(t *testing.T) {
 
 	// -------------------------------------------------- an unresolvable cursor forces resync, never a silent gap
 	stale := openSSE(t, f.ctx, instructorSSE, f.baseURL, "/api/v1/lessons/"+lesson.ID+"/stream", "999999999:1")
-	if readyStale, ok := stale.next(t, 5*time.Second); !ok || readyStale.event != "stream.ready" {
+	if readyStale, ok := stale.next(t, 5*time.Second); !ok || readyStale.event != "stream.ready" || readyStale.data["cursor"] != readyStale.id {
 		t.Fatalf("stale-cursor stream first frame = %+v, ok=%v, want stream.ready", readyStale, ok)
 	}
 	resync, ok := stale.next(t, 5*time.Second)
-	if !ok || resync.event != "resync" {
+	if !ok || resync.event != "resync" || resync.data["cursor"] != resync.id {
 		t.Fatalf("stale-cursor stream second frame = %+v, ok=%v, want resync", resync, ok)
 	}
 	stale.close()

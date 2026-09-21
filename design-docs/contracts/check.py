@@ -116,16 +116,14 @@ def main() -> int:
         # SSE: несколько инстансов
         sse = schemas["sse-events.schema.json"]
         sse_examples = [
-            {"type": "item.offered", "at": "2026-09-17T10:00:00Z", "lesson_id": "019230a3-0000-7c0a-9a1f-000000000001", "item_id": "019230a4-6b1e-7c0a-9a1f-3f2a1b2c3d4e", "run_id": "019230a4-0000-7c0a-9a1f-000000000001", "card_number": "2409170231", "deadlines": {"open_at": "2026-09-17T10:00:30Z"}},
-            {"type": "item.updated", "at": "2026-09-17T10:00:41Z", "item_id": "019230a4-6b1e-7c0a-9a1f-3f2a1b2c3d4e", "seq": 2, "state": "in_progress", "reaction": "accepted", "action_type": "set_status", "accepted": True},
-            {"type": "event.delivered", "at": "2026-09-17T10:01:21Z", "item_id": "019230a4-6b1e-7c0a-9a1f-3f2a1b2c3d4e", "key": "e1", "delivery": "phone_incoming", "from": "crew_leader", "text": "Бригада выехала"},
-            {"type": "assessment.ready", "at": "2026-09-17T10:05:00Z", "item_id": "019230a4-6b1e-7c0a-9a1f-3f2a1b2c3d4e", "revision": 1, "kind": "auto", "status": "ready", "score": 84.5},
-            {"type": "lesson.stopped", "at": "2026-09-17T10:40:00Z", "lesson_id": "019230a3-0000-7c0a-9a1f-000000000001", "epoch": 1},
-            {"type": "resync", "at": "2026-09-17T10:40:00Z"},
+            {"event": "stream.ready", "id": "1:0", "data": {"cursor": "1:0"}},
+            {"event": "invalidate", "id": "1:1", "data": {"lesson_id": "019230a3-0000-7c0a-9a1f-000000000001", "item_id": "019230a4-6b1e-7c0a-9a1f-3f2a1b2c3d4e"}},
+            {"event": "invalidate", "id": "1:2", "data": {"user_id": "0192309f-0000-7c0a-9a1f-000000000002"}},
+            {"event": "resync", "id": "2:0", "data": {"cursor": "2:0"}},
         ]
         if sse:
             v = V(sse)
-            bad = [ex["type"] for ex in sse_examples if not v.is_valid(ex)]
+            bad = [ex["event"] for ex in sse_examples if not v.is_valid(ex)]
             if bad:
                 fail(f"sse examples invalid: {bad}")
             else:
