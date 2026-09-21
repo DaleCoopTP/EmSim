@@ -35,6 +35,7 @@ export function MonitorRoute() {
   return (
     <section>
       <p><Link to={`/instructor/lessons/${lessonId}`}>← К занятию</Link></p>
+      <p><Link to={`/instructor/lessons/${lessonId}/assessments`}>Перейти к разбору карточек →</Link></p>
       <h1>Монитор: {data.lesson.title}</h1>
       <p>Сервер: {formatDateTime(data.server_time)}{data.lesson.state === "stopped" && " · занятие остановлено, карточки закрываются фоново"}</p>
       {data.rows.length === 0 ? (

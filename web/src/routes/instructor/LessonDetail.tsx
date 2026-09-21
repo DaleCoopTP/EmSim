@@ -189,8 +189,8 @@ export function LessonDetailRoute() {
           {stop.isError && <p role="alert" className="error">{errorMessage(stop.error)}</p>}
         </div>
       )}
-      {current.state === "stopped" && <p className="notice">Занятие остановлено; оставшиеся карточки закрываются фоновой задачей. <Link to={`/instructor/lessons/${lessonId}/monitor`}>Монитор</Link></p>}
-      {current.state === "finished" && <p className="notice">Занятие завершено.</p>}
+      {current.state === "stopped" && <p className="notice">Занятие остановлено; оставшиеся карточки закрываются фоновой задачей. <Link to={`/instructor/lessons/${lessonId}/monitor`}>Монитор</Link> · <Link to={`/instructor/lessons/${lessonId}/assessments`}>Разбор</Link></p>}
+      {current.state === "finished" && <p className="notice">Занятие завершено. <Link to={`/instructor/lessons/${lessonId}/assessments`}>Открыть разбор</Link></p>}
     </section>
   );
 }

@@ -10,6 +10,8 @@ import { ScenarioDetailRoute } from "./routes/instructor/ScenarioDetail";
 import { LessonsRoute } from "./routes/instructor/Lessons";
 import { LessonDetailRoute } from "./routes/instructor/LessonDetail";
 import { MonitorRoute } from "./routes/instructor/Monitor";
+import { LessonAssessmentsRoute } from "./routes/instructor/LessonAssessments";
+import { ItemReviewRoute } from "./routes/instructor/ItemReview";
 import { LoginRoute } from "./routes/Login";
 import { WorkplaceRoute } from "./routes/trainee/Workplace";
 
@@ -46,6 +48,8 @@ export default function App() {
               <Route path="/instructor/lessons" element={<LessonsRoute />} />
               <Route path="/instructor/lessons/:lessonId" element={<LessonDetailRoute />} />
               <Route path="/instructor/lessons/:lessonId/monitor" element={<MonitorRoute />} />
+              <Route path="/instructor/lessons/:lessonId/assessments" element={<LessonAssessmentsRoute />} />
+              <Route path="/instructor/items/:itemId/review" element={<ItemReviewRoute />} />
             </Route>
           </Route>
           <Route element={<RequireAuth roles={["trainee"]} />}>
