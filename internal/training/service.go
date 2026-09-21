@@ -1856,6 +1856,86 @@ func (s *Service) Now(ctx context.Context) (time.Time, error) {
 	return now, err
 }
 
+// UploadRecording attaches exactly the manifest announced by call_end. The
+// caller stages bytes before entering this short transaction; lock order is
+// lesson → run → item → calls, matching commands and close.
+func (s *Service) UploadRecording(ctx context.Context, actor auth.Principal, itemID, callID uuid.UUID, blob Blob) error {
+	return s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		lesson, run, item, err := s.lockForCommand(ctx, tx, itemID, CommandCallEnd)
+		if err != nil {
+			return err
+		}
+		_ = lesson
+		if run.UserID != actor.UserID || actor.WorkstationID == nil || *actor.WorkstationID != run.WorkstationID {
+			return ErrNotFound
+		}
+		call, err := s.store.CallByID(ctx, tx, callID, LockUpdate)
+		if err != nil || call.ItemID != itemID {
+			return ErrNotFound
+		}
+		if call.Recording == nil || call.Recording.SHA256 != blob.SHA256 || call.Recording.Size != blob.Size || call.Recording.MIME != blob.MIME {
+			return ErrConflict
+		}
+		if call.RecordingState == RecordingReady {
+			return nil
+		}
+		now, err := s.store.Now(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if item.ClosedAt != nil && call.RecordingUploadDeadlineAt != nil && now.After(*call.RecordingUploadDeadlineAt) {
+			return ErrConflict
+		}
+		stored, _, err := s.store.InsertBlob(ctx, tx, blob)
+		if err != nil {
+			return err
+		}
+		return s.store.SetCallRecordingReady(ctx, tx, callID, stored.ID, now)
+	})
+}
+
+// RecordingForInstructor protects audio at the service boundary rather than
+// trusting a handler's item lookup.
+func (s *Service) RecordingForInstructor(ctx context.Context, actor auth.Principal, itemID, callID uuid.UUID) (Blob, error) {
+	var result Blob
+	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		item, err := s.store.ItemByID(ctx, tx, itemID, LockNone)
+		if err != nil {
+			return err
+		}
+		run, err := s.store.RunByID(ctx, tx, item.RunID, LockNone)
+		if err != nil {
+			return err
+		}
+		lesson, err := s.store.LessonByID(ctx, tx, run.LessonID, LockNone)
+		if err != nil {
+			return err
+		}
+		if lesson.InstructorID != actor.UserID || (item.State != ItemClosed && item.State != ItemInterrupted) {
+			return ErrNotFound
+		}
+		call, err := s.store.CallByID(ctx, tx, callID, LockNone)
+		if err != nil || call.ItemID != itemID || call.BlobID == nil {
+			return ErrNotFound
+		}
+		rows, err := tx.Query(ctx, `SELECT id,sha256,mime,size,created_at FROM blobs WHERE id=$1`, *call.BlobID)
+		if err != nil {
+			return ErrStorage
+		}
+		defer rows.Close()
+		if !rows.Next() {
+			return ErrNotFound
+		}
+		var raw []byte
+		if err := rows.Scan(&result.ID, &raw, &result.MIME, &result.Size, &result.CreatedAt); err != nil {
+			return ErrStorage
+		}
+		copy(result.SHA256[:], raw)
+		return nil
+	})
+	return result, err
+}
+
 // RunActions is the instructor's action feed for one run (monitor/
 // review) — ownership checked through the run's lesson.
 func (s *Service) RunActions(ctx context.Context, actor auth.Principal, lessonID, runID uuid.UUID) ([]Action, error) {

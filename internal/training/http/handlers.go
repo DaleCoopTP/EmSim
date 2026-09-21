@@ -15,16 +15,22 @@
 package http
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"emsim/internal/auth"
 	authhttp "emsim/internal/auth/http"
 	"emsim/internal/content"
+	"emsim/internal/media"
 	"emsim/internal/platform/httpapi"
 	"emsim/internal/platform/realtime"
 	"emsim/internal/training"
@@ -51,6 +57,8 @@ type trainingService interface {
 	Lesson(ctx context.Context, actor auth.Principal, lessonID uuid.UUID) (training.Lesson, []training.Assignment, error)
 	LessonOptions(ctx context.Context) (training.LessonOptionsResult, error)
 	Now(ctx context.Context) (time.Time, error)
+	UploadRecording(ctx context.Context, actor auth.Principal, itemID, callID uuid.UUID, blob training.Blob) error
+	RecordingForInstructor(ctx context.Context, actor auth.Principal, itemID, callID uuid.UUID) (training.Blob, error)
 }
 
 // authenticator is the session-verification port SessionMiddleware needs
@@ -105,8 +113,111 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/my/items", trainee(h.myItems))
 	mux.Handle("GET /api/v1/my/stream", trainee(h.streamMy))
 	mux.Handle("POST /api/v1/items/{itemId}/actions", trainee(h.execute))
+	mux.Handle("PUT /api/v1/items/{itemId}/calls/{callId}/recording", trainee(h.uploadRecording))
+	mux.Handle("GET /api/v1/items/{itemId}/calls/{callId}/recording", itemRead(h.downloadRecording))
 
 	mux.Handle("GET /api/v1/items/{itemId}", itemRead(h.getItem))
+}
+
+const maxRecordingBytes int64 = 10 << 20
+
+func (h *Handlers) uploadRecording(w http.ResponseWriter, r *http.Request) {
+	principal, _ := authhttp.PrincipalFromContext(r.Context())
+	itemID, err := uuid.Parse(r.PathValue("itemId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "invalid item id", nil)
+		return
+	}
+	callID, err := uuid.Parse(r.PathValue("callId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "invalid call id", nil)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRecordingBytes+1024)
+	if err := r.ParseMultipartForm(maxRecordingBytes + 1024); err != nil {
+		httpapi.WriteError(w, r, httpapi.CodePayloadTooLarge, "recording is too large", nil)
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "file is required", nil)
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxRecordingBytes+1))
+	if err != nil || int64(len(data)) > maxRecordingBytes {
+		httpapi.WriteError(w, r, httpapi.CodePayloadTooLarge, "recording is too large", nil)
+		return
+	}
+	mime := header.Header.Get("Content-Type")
+	if mime != "audio/webm" && mime != "audio/ogg" && mime != "audio/wav" {
+		httpapi.WriteError(w, r, httpapi.CodeUnsupportedMediaType, "unsupported recording type", nil)
+		return
+	}
+	if !validAudioMagic(mime, data) {
+		httpapi.WriteError(w, r, httpapi.CodeUnsupportedMediaType, "invalid recording data", nil)
+		return
+	}
+	digest := sha256.Sum256(data)
+	root := os.Getenv("BLOB_ROOT")
+	files, err := media.NewFileStore(root)
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "media storage unavailable", nil)
+		return
+	}
+	if err = files.Put(r.Context(), bytes.NewReader(data), digest, int64(len(data)), maxRecordingBytes); err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "recording validation failed", nil)
+		return
+	}
+	err = h.training.UploadRecording(r.Context(), principal, itemID, callID, training.Blob{ID: uuid.New(), SHA256: digest, MIME: mime, Size: int64(len(data))})
+	if err != nil {
+		writeTrainingError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func validAudioMagic(mime string, data []byte) bool {
+	if mime == "audio/webm" {
+		return len(data) >= 4 && bytes.Equal(data[:4], []byte{0x1a, 0x45, 0xdf, 0xa3})
+	}
+	if mime == "audio/ogg" {
+		return len(data) >= 4 && bytes.Equal(data[:4], []byte("OggS"))
+	}
+	return len(data) >= 12 && bytes.Equal(data[:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WAVE"))
+}
+
+func (h *Handlers) downloadRecording(w http.ResponseWriter, r *http.Request) {
+	principal, _ := authhttp.PrincipalFromContext(r.Context())
+	itemID, err := uuid.Parse(r.PathValue("itemId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "invalid item id", nil)
+		return
+	}
+	callID, err := uuid.Parse(r.PathValue("callId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "invalid call id", nil)
+		return
+	}
+	blob, err := h.training.RecordingForInstructor(r.Context(), principal, itemID, callID)
+	if err != nil {
+		writeTrainingError(w, r, err)
+		return
+	}
+	files, err := media.NewFileStore(os.Getenv("BLOB_ROOT"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "media storage unavailable", nil)
+		return
+	}
+	f, err := files.Open(blob.SHA256)
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "recording not found", nil)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", blob.MIME)
+	w.Header().Set("Content-Length", strconv.FormatInt(blob.Size, 10))
+	http.ServeContent(w, r, "recording", blob.CreatedAt, f)
 }
 
 // -------------------------------------------------------------- lessons

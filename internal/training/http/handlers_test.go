@@ -104,6 +104,12 @@ func (f *fakeTraining) LessonOptions(context.Context) (training.LessonOptionsRes
 	return f.options, f.readErr
 }
 func (f *fakeTraining) Now(context.Context) (time.Time, error) { return f.now, f.nowErr }
+func (f *fakeTraining) UploadRecording(context.Context, auth.Principal, uuid.UUID, uuid.UUID, training.Blob) error {
+	return f.readErr
+}
+func (f *fakeTraining) RecordingForInstructor(context.Context, auth.Principal, uuid.UUID, uuid.UUID) (training.Blob, error) {
+	return training.Blob{}, f.readErr
+}
 
 func trainingPrincipal(role auth.Role) auth.Principal {
 	ws := uuid.New()
