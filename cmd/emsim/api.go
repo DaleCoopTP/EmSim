@@ -170,21 +170,6 @@ func runTrainingScheduler(ctx context.Context, svc *training.Service, logger obs
 
 var errAPITakesNoArgs = errors.New("api subcommand takes no arguments")
 
-// newPublicHandler composes every module's routes onto one API mux,
-// mounts that under "/api/" alongside the embedded SPA build under "/"
-// (static.go), and wraps the result in the shared public-API middleware
-// chain (httpapi.WrapPublic: request id, no-store, Origin check). Each
-// module follows the same shape — a pgx store, an application Service
-// built on it, HTTP Handlers built on that — composed here and nowhere
-// else, matching CLAUDE.md's "composition lives in cmd/emsim" (content
-// is the first to follow auth's lead). A future module (training/
-// assessment/reporting) adds its own three lines here and calls its own
-// Register on apiMux.
-func newPublicHandler(pool *pgxpool.Pool, cfg config.API) http.Handler {
-	handler, _, _ := newPublicHTTP(pool, cfg, realtime.NewHub())
-	return handler
-}
-
 // newPublicHTTP also returns the composed *training.Service so runAPI can
 // drive it outside the HTTP path: the C6 restart-recovery marker (before
 // readiness) and the C5/C6 scheduler tick loop (500 ms, RFC-001 §7.2)

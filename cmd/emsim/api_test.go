@@ -13,14 +13,16 @@ import (
 
 	"emsim/internal/platform/config"
 	"emsim/internal/platform/httpapi"
+	"emsim/internal/platform/realtime"
 )
 
-// testPublicHandler builds newPublicHandler with a nil pool and a
+// testPublicHandler builds newPublicHTTP with a nil pool and a
 // zero-value config: every test in this file only exercises routing/
 // middleware behavior (listen failures, shutdown, the 404 fallback),
 // never a handler that would actually query the database.
 func testPublicHandler() http.Handler {
-	return newPublicHandler(nil, config.API{})
+	handler, _, _ := newPublicHTTP(nil, config.API{}, realtime.NewHub())
+	return handler
 }
 
 func TestServeAPIReturnsErrorWhenAServerCannotListen(t *testing.T) {

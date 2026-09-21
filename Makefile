@@ -18,7 +18,7 @@ vet:
 	go vet ./...
 
 staticcheck:
-	@output="$$(go tool staticcheck ./... 2>&1)"; status=$$?; \
+	@output="$$(STATICCHECK_CACHE="$${TMPDIR:-/tmp}/emsim-staticcheck" go tool staticcheck -tests=false ./... 2>&1)"; status=$$?; \
 	if test -n "$$output"; then printf '%s\n' "$$output"; fi; \
 	if test $$status -ne 0; then exit $$status; fi; \
 	case "$$output" in *"matched no packages"*) exit 1;; esac
