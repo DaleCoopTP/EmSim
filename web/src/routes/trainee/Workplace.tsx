@@ -226,6 +226,7 @@ function ItemWorkplace({ me, item }: { me: Me; item: NonNullable<ReturnType<type
           {!open && item.allowed_transitions.includes("not_accepted") && (
             <button type="button" disabled={!!pending || comment.trim() === ""} onClick={() => send("set_status", { status: "not_accepted", comment: comment.trim() })}>Не принять</button>
           )}
+          {!open && <PhonePanel item={item} onChanged={refresh} />}
           {closable && <button type="button" disabled={!!pending} onClick={() => send("close", {})}>Завершить упражнение</button>}
         </div>
       )}
@@ -250,6 +251,50 @@ function ItemWorkplace({ me, item }: { me: Me; item: NonNullable<ReturnType<type
       {receipt?.outcome === "applied" && <p>Действие сохранено{receipt.replayed ? " (восстановлено)" : ""}.</p>}
     </section>
   );
+}
+
+// PhonePanel is intentionally a small browser simulator, not a SIP client.
+// Recorded bytes never leave component memory except for the one upload.
+function PhonePanel({ item, onChanged }: { item: NonNullable<ReturnType<typeof useItem>["data"]>; onChanged: () => Promise<void> }) {
+  const contacts = item.card.contacts ?? [];
+  const [contact, setContact] = useState(contacts[0]?.key ?? "");
+  const [callId, setCallId] = useState<string | null>(null);
+  const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
+  const [recording, setRecording] = useState<Blob | null>(null);
+  const [acceptedBy, setAcceptedBy] = useState(""); const [summary, setSummary] = useState("");
+  const [muted, setMuted] = useState(false); const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+  const start = async () => {
+    if (!contact) return; setError("");
+    try {
+      const receipt = await executeCommand(item.id, { command_id: crypto.randomUUID(), expected_seq: item.seq, type: "call_start", payload: { contact }, client_at: new Date().toISOString() });
+      if (receipt.outcome !== "applied" || !receipt.call_id) { setError(receipt.error_code ?? "Не удалось начать звонок"); return; }
+      setCallId(receipt.call_id); setStatus("Звонок: воспроизводится приветствие…");
+      try { await new Audio(`/api/v1/items/${encodeURIComponent(item.id)}/contacts/${encodeURIComponent(contact)}/phrases/greeting`).play(); } catch { /* phrase/audio may be unavailable; call remains valid */ }
+      if (!navigator.mediaDevices?.getUserMedia) { setStatus("Микрофон отсутствует: звонок будет без записи."); await onChanged(); return; }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+      if (!mime) { setStatus("MediaRecorder не поддерживается: звонок будет без записи."); await onChanged(); return; }
+      const chunks: BlobPart[] = []; const next = new MediaRecorder(stream, { mimeType: mime });
+      next.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+      next.onstop = () => { stream.getTracks().forEach((track) => track.stop()); setRecording(new Blob(chunks, { type: mime.split(";")[0] })); };
+      next.start(); setRecorder(next); setStatus("Идёт запись доклада."); await onChanged();
+    } catch (cause) { setError(cause instanceof DOMException && cause.name === "NotAllowedError" ? "Разрешение на микрофон отклонено; можно завершить звонок без записи." : errorMessage(cause)); }
+  };
+  const end = async () => {
+    if (!callId || !acceptedBy.trim() || !summary.trim()) return; setError("");
+    if (recorder?.state !== "inactive") { recorder?.stop(); setRecorder(null); await new Promise((resolve) => window.setTimeout(resolve, 50)); }
+    let manifest: Record<string, unknown> | null = null;
+    if (recording) { const hash = await crypto.subtle.digest("SHA-256", await recording.arrayBuffer()); manifest = { sha256: [...new Uint8Array(hash)].map((v) => v.toString(16).padStart(2, "0")).join(""), size: recording.size, mime: recording.type || "audio/webm" }; }
+    try {
+      const receipt = await executeCommand(item.id, { command_id: crypto.randomUUID(), expected_seq: item.seq, type: "call_end", payload: { call_id: callId, accepted_by: acceptedBy.trim(), summary: summary.trim(), recording: manifest }, client_at: new Date().toISOString() });
+      if (receipt.outcome !== "applied") { setError(receipt.error_code ?? "Не удалось завершить звонок"); return; }
+      try { await new Audio(`/api/v1/items/${encodeURIComponent(item.id)}/contacts/${encodeURIComponent(contact)}/phrases/ack`).play(); } catch { /* optional playback */ }
+      if (recording) { const form = new FormData(); form.append("file", recording, "report.webm"); const response = await fetch(`/api/v1/items/${encodeURIComponent(item.id)}/calls/${encodeURIComponent(callId)}/recording`, { method: "PUT", credentials: "include", body: form }); if (!response.ok) throw new Error("network error"); setStatus("Запись готова."); } else setStatus("Звонок завершён без записи.");
+      setCallId(null); await onChanged();
+    } catch { setStatus("Сеть недоступна: запись осталась в памяти. Повторите загрузку до срока."); setError("Ошибка сети"); }
+  };
+  return <section className="phone-panel"><h3>Телефон Т16Р</h3><p>Номер: {contacts.find((c) => c.key === contact)?.number ?? "—"} · громкая связь ●</p><div>{contacts.map((c) => <button type="button" key={c.key} className={contact === c.key ? "active" : undefined} disabled={!!callId} onClick={() => setContact(c.key)}>{c.label}</button>)}</div>{!callId ? <button type="button" onClick={() => void start()} disabled={!contact}>Вызов</button> : <><button type="button" onClick={() => setMuted(!muted)}>{muted ? "Включить микрофон" : "Mute"}</button><label>Кто принял<input value={acceptedBy} onChange={(e) => setAcceptedBy(e.target.value)} /></label><label>Суть сообщения<textarea value={summary} onChange={(e) => setSummary(e.target.value)} /></label><button type="button" onClick={() => void end()} disabled={!acceptedBy.trim() || !summary.trim()}>Завершить</button></>}{item.calls.map((call) => <p key={call.id} className="notice">Запись {call.recording_state === "expired" ? "missing" : call.recording_state}</p>)}{status && <p className="notice">{status}</p>}{error && <p className="error">{error}</p>}</section>;
 }
 
 // ControlReportForm is RFC-001 §7.5's post-close message: a plain-text

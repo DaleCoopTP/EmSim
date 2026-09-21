@@ -6,7 +6,7 @@ export type Receipt = components["schemas"]["Receipt"];
 export interface Command {
   command_id: string;
   expected_seq: number;
-  type: "open" | "close" | "set_status" | "add_comment" | "set_card_field" | "control_report";
+  type: "open" | "close" | "set_status" | "add_comment" | "set_card_field" | "call_start" | "call_end" | "control_report";
   payload: Record<string, unknown>;
   client_at?: string;
 }

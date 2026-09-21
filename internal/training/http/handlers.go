@@ -907,10 +907,43 @@ type itemJSON struct {
 	AllowedTransitions []string             `json:"allowed_transitions"`
 	Actions            []actionJSON         `json:"actions"`
 	Events             []deliveredEventJSON `json:"events"`
-	Calls              []any                `json:"calls"`
+	Calls              []callJSON           `json:"calls"`
 	Comments           []commentJSON        `json:"comments,omitempty"`
 	Reference          *content.Reference   `json:"reference,omitempty"`
 	ServerTime         string               `json:"server_time"`
+}
+
+type callJSON struct {
+	ID                        string  `json:"id"`
+	ContactKey                string  `json:"contact_key"`
+	StartedAt                 string  `json:"started_at"`
+	EndedAt                   *string `json:"ended_at"`
+	AcceptedBy                *string `json:"accepted_by"`
+	Summary                   *string `json:"summary"`
+	HasRecording              bool    `json:"has_recording"`
+	RecordingState            string  `json:"recording_state"`
+	RecordingUploadDeadlineAt *string `json:"recording_upload_deadline_at"`
+}
+
+func toCallsJSON(calls []training.Call, now time.Time) []callJSON {
+	out := make([]callJSON, 0, len(calls))
+	for _, c := range calls {
+		var ended, deadline *string
+		if c.EndedAt != nil {
+			v := formatTime(*c.EndedAt)
+			ended = &v
+		}
+		if c.RecordingUploadDeadlineAt != nil {
+			v := formatTime(*c.RecordingUploadDeadlineAt)
+			deadline = &v
+		}
+		state := c.RecordingState
+		if state == training.RecordingAwaiting && c.RecordingUploadDeadlineAt != nil && now.After(*c.RecordingUploadDeadlineAt) {
+			state = training.RecordingExpired
+		}
+		out = append(out, callJSON{ID: c.ID.String(), ContactKey: c.ContactKey, StartedAt: formatTime(c.StartedAt), EndedAt: ended, AcceptedBy: c.AcceptedBy, Summary: c.Summary, HasRecording: c.Recording != nil, RecordingState: string(state), RecordingUploadDeadlineAt: deadline})
+	}
+	return out
 }
 
 // deliveredEventJSON is openapi.yaml's DeliveredEvent.
@@ -955,7 +988,7 @@ func toItemJSON(item training.Item, actions []training.Action, events []training
 		AllowedTransitions: allowed,
 		Actions:            actionItems,
 		Events:             toDeliveredEventsJSON(events),
-		Calls:              []any{},
+		Calls:              toCallsJSON(item.Calls, now),
 		Comments:           buildComments(actions),
 		Reference:          reference,
 		ServerTime:         formatTime(now),

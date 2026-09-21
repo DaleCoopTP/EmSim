@@ -684,6 +684,17 @@ Status: C1 completed; C2 storage foundation completed.
 
 Next: C3 filesystem blob adapter and administrative voice-asset import.
 
+## 2026-09-21 — Slice 5 C3–C7
+
+Status: implemented.
+
+- Added content-addressed filesystem blobs and CLI import of immutable contact greeting/ack assets; Compose shares `blob-data` with seed, API and worker.
+- Added phone call rules, persistence, close/stop upload deadlines, call evidence and protected media upload/download paths.
+- Added the minimal browser phone panel: contact selection, microphone fallback, MediaRecorder, call report fields, in-memory recording upload/retry status and recording state display.
+- Validation run during work: focused Go training/API tests and `cd web && npm run check && npm run lint`.
+
+Next: run the complete repository verification sweep and address any integration regressions.
+
 
 
 ## 2026-09-20T21:50:43+03:00 — Claude Sonnet 5 — slice 4 review fixes (scheduler starvation, SSE staleness, late/spawn semantics)
