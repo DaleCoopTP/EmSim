@@ -33,6 +33,7 @@ export function WorkplaceRoute() {
   const workstationMatches = !run.data || run.data.workstation_no === me.workstation?.number;
   const items = useMyItems(!!run.data && workstationMatches);
   const [selectedItemId, setSelectedItemId] = useState("");
+  const [queueSearch, setQueueSearch] = useState("");
   // The run disappears from /my/run the instant its last item closes
   // (ActiveRunByUser only ever returns an active run) — but the trainee
   // must still be able to see that just-closed card and send a
@@ -42,14 +43,17 @@ export function WorkplaceRoute() {
   // this mount only — a reload starts over with nothing to show, which
   // is explicitly out of scope until a later slice's history screen.
   const [lastItemId, setLastItemId] = useState("");
-  const itemId = selectedItemId || run.data?.current_item_id || items.data?.find((candidate) => candidate.state !== "closed")?.id || items.data?.[0]?.id || lastItemId || "";
-  const item = useItem(itemId, (workstationMatches && !!run.data) || (!run.data && itemId === lastItemId));
+  // An assigned trainee lands on the queue, not directly inside a card.
+  // selectedItemId is therefore deliberately empty until they open a row.
+  // lastItemId only supports the post-close control report described below.
+  const itemId = selectedItemId || lastItemId;
+  const item = useItem(itemId, (workstationMatches && !!run.data && !!selectedItemId) || (!run.data && itemId === lastItemId));
 
   // Remember the most recent real item id across a render, without an
   // effect: React's documented pattern for deriving state from a
   // previous render — this call is a no-op once itemId === lastItemId.
-  if (itemId && itemId !== lastItemId) {
-    setLastItemId(itemId);
+  if (selectedItemId && selectedItemId !== lastItemId) {
+    setLastItemId(selectedItemId);
   }
 
   // RFC-001 §7.7: stream-first. A fresh stream.ready, or any resync,
@@ -76,9 +80,17 @@ export function WorkplaceRoute() {
   }
 
   return (
-    <section>
-      <h1>{run.data.lesson.title}</h1>
-      <p>Рабочее место занятия: РМ-{run.data.workstation_no}. В очереди: {run.data.queue_left}.</p>
+    <section className="trainee-workplace">
+      <header className="workplace-header">
+        <div>
+          <p className="workplace-kicker">Рабочее место ДДС · РМ-{run.data.workstation_no}</p>
+          <h1>{selectedItemId ? "Карточка происшествия" : run.data.lesson.title}</h1>
+        </div>
+        <dl className="workplace-facts">
+          <dt>В очереди</dt><dd>{run.data.queue_left}</dd>
+          <dt>Режим</dt><dd>{run.data.mode === "intro" ? "ознакомительный" : "тренировка"}</dd>
+        </dl>
+      </header>
       {run.data.lesson.state === "stopped" && (
         <p role="alert" className="notice">Занятие остановлено преподавателем{run.data.lesson.stop_reason ? `: ${run.data.lesson.stop_reason}` : ""}. Открытые карточки прерываются фоново.</p>
       )}
@@ -86,31 +98,110 @@ export function WorkplaceRoute() {
         <p role="alert" className="error">Занятие назначено на РМ-{run.data.workstation_no}. Войдите на этом рабочем месте.</p>
       )}
       {workstationMatches && items.isError && <p className="error">{errorMessage(items.error)}</p>}
-      {workstationMatches && items.data && items.data.length > 1 && (
-        <nav className="item-list" aria-label="Карточки">
-          {items.data.map((candidate) => (
-            <button type="button" key={candidate.id} className={candidate.id === itemId ? "active" : undefined} onClick={() => setSelectedItemId(candidate.id)}>
-              № {candidate.card_number} · {reactionLabel(candidate.reaction)}
-              {candidate.interruptions.length > 0 && " ⚠"}
-            </button>
-          ))}
-        </nav>
+      {workstationMatches && !selectedItemId && items.data && (
+        <IncidentQueue
+          items={items.data}
+          search={queueSearch}
+          onSearch={setQueueSearch}
+          onOpen={setSelectedItemId}
+        />
       )}
-      {workstationMatches && item.isPending && <p>Загрузка карточки…</p>}
-      {workstationMatches && item.isError && <p className="error">{errorMessage(item.error)}</p>}
-      {workstationMatches && item.data && <ItemWorkplace key={item.data.id} me={me} item={item.data} />}
+      {workstationMatches && selectedItemId && (
+        <>
+          <button type="button" className="back-to-queue" onClick={() => setSelectedItemId("")}>← К списку происшествий</button>
+          {item.isPending && <p>Загрузка карточки…</p>}
+          {item.isError && <p className="error">{errorMessage(item.error)}</p>}
+          {item.data && <ItemWorkplace key={item.data.id} me={me} item={item.data} />}
+        </>
+      )}
     </section>
   );
 }
 
 function Waiting({ me }: { me: Me }) {
   return (
-    <section>
-      <h1>{me.user.full_name}</h1>
-      <p>{me.workstation ? `Рабочее место: ${me.workstation.label} (№ ${me.workstation.number})` : "Рабочее место не выбрано."}</p>
-      <p className="notice">Ожидайте назначения занятия.</p>
+    <section className="waiting-workplace">
+      <div className="waiting-icon" aria-hidden="true">⌁</div>
+      <div>
+        <p className="workplace-kicker">Рабочее место ДДС</p>
+        <h1>{me.user.full_name}</h1>
+        <p>{me.workstation ? `${me.workstation.label} · РМ-${me.workstation.number}` : "Рабочее место не выбрано."}</p>
+        <p className="notice">Ожидайте назначения занятия.</p>
+      </div>
     </section>
   );
+}
+
+function IncidentQueue({
+  items,
+  search,
+  onSearch,
+  onOpen,
+}: {
+  items: NonNullable<ReturnType<typeof useMyItems>["data"]>;
+  search: string;
+  onSearch: (value: string) => void;
+  onOpen: (id: string) => void;
+}) {
+  const needle = search.trim().toLocaleLowerCase("ru-RU");
+  const visibleItems = needle === ""
+    ? items
+    : items.filter((candidate) => [candidate.card_number, candidate.incident_type, candidate.address_short]
+      .filter(Boolean)
+      .some((value) => value?.toLocaleLowerCase("ru-RU").includes(needle)));
+
+  return (
+    <section className="incident-queue" aria-labelledby="queue-title">
+      <header className="incident-queue-header">
+        <div>
+          <h2 id="queue-title">Список происшествий</h2>
+          <p>{items.length === 0 ? "Новых карточек пока нет." : `Показано: ${visibleItems.length} из ${items.length}`}</p>
+        </div>
+        <label className="queue-search">
+          <span>Поиск происшествий</span>
+          <input
+            type="search"
+            value={search}
+            placeholder="Номер, тип или адрес"
+            onChange={(event) => onSearch(event.target.value)}
+          />
+        </label>
+      </header>
+      <div className="incident-queue-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Номер</th>
+              <th>Время</th>
+              <th>Тип происшествия</th>
+              <th>Адрес</th>
+              <th>Статус службы</th>
+              <th aria-label="Открыть карточку" />
+            </tr>
+          </thead>
+          <tbody>
+            {visibleItems.map((candidate) => (
+              <tr key={candidate.id} className={candidate.state === "offered" ? "incident-queue-new" : undefined}>
+                <td><strong>№ {candidate.card_number}</strong>{candidate.state === "offered" && <span className="queue-new-mark">новая</span>}</td>
+                <td>{formatQueueTime(candidate.offered_at)}</td>
+                <td>{candidate.incident_type ?? "—"}</td>
+                <td>{candidate.address_short ?? "—"}</td>
+                <td>{reactionLabel(candidate.reaction)}{candidate.interruptions.length > 0 && " · ⚠"}</td>
+                <td><button type="button" className="queue-open" onClick={() => onOpen(candidate.id)}>Открыть карточку № {candidate.card_number}</button></td>
+              </tr>
+            ))}
+            {visibleItems.length === 0 && (
+              <tr><td colSpan={6} className="queue-empty">По этому запросу происшествий нет.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function formatQueueTime(value: string): string {
+  return new Date(value).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function ItemWorkplace({ me, item }: { me: Me; item: NonNullable<ReturnType<typeof useItem>["data"]> }) {

@@ -76,9 +76,10 @@ test("card → call → recording retry → close works in the real browser", as
 	await page.goto(`${baseURL}/login`);
   await page.getByLabel("Логин").fill("e2e-trainee");
   await page.getByLabel("Пароль").fill(password);
-  await page.getByLabel("Номер рабочего места (для обучаемого)").fill(String(workstationNo));
-  await page.getByRole("button", { name: "Войти" }).click();
+	await page.getByLabel("Номер рабочего места (для обучаемого)").fill(String(workstationNo));
+	await page.getByRole("button", { name: "Войти" }).click();
 	await expect(page.getByRole("heading", { name: "E2E phone smoke" })).toBeVisible();
+	await page.getByRole("button", { name: /Открыть карточку №/ }).click();
 	await page.getByRole("button", { name: "Открыть карточку" }).click();
 	await page.getByRole("button", { name: "Вызов" }).click();
 	await expect(page.getByText("Идёт запись доклада.")).toBeVisible();
