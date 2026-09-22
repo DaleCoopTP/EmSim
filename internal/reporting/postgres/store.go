@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"emsim/internal/content"
 	"emsim/internal/reporting"
 
 	"github.com/google/uuid"
@@ -142,6 +143,7 @@ func mapError(err error) error {
 }
 
 var criterionLabels = map[string]string{
+	"INTAKE_COMPLETENESS": "Полнота основной карточки", "INTAKE_ACCURACY": "Достоверность сведений", "INTAKE_DISPATCH": "Передача карточки службе",
 	"T_OPEN": "Скорость открытия карточки", "T_PRIMARY": "Время первичного решения", "T_COMPLETE": "Время обработки",
 	"D_PRIMARY": "Первичное решение", "D_COMMENT_REQUIRED": "Обязательный комментарий", "D_FIELD_CORRECTIONS": "Исправление данных",
 	"S_SEQUENCE": "Последовательность действий", "C_CALL_MADE": "Обязательный звонок", "C_CALL_LOG": "Оформление звонка",
@@ -183,13 +185,17 @@ func (s *Store) LessonReport(ctx context.Context, lessonID uuid.UUID) (reporting
 }
 
 func (s *Store) Results(ctx context.Context, userID uuid.UUID) ([]reporting.ItemResult, error) {
+	return s.ResultsFor(ctx, userID, content.ExerciseTypeDDSProcessing)
+}
+
+func (s *Store) ResultsFor(ctx context.Context, userID uuid.UUID, exerciseType content.ExerciseType) ([]reporting.ItemResult, error) {
 	items, err := s.items(ctx, `
 SELECT lesson_id, lesson_title, lesson_mode, user_id, full_name, workstation_no, level,
        item_id, ordinal, item_state, closed_at, card_number, scenario_title, difficulty,
        open_seconds, work_seconds, total_seconds, interruptions,
        assessment_id, assessment_revision, assessment_kind, assessment_status, score, passed,
        COALESCE(critical_errors, '{}'::text[]), COALESCE(criteria, '[]'::jsonb), COALESCE(feedback, '[]'::jsonb)
-FROM lesson_report_rows WHERE user_id=$1 AND item_state IN ('closed','interrupted') ORDER BY closed_at DESC, item_id`, userID)
+FROM lesson_report_rows WHERE user_id=$1 AND exercise_type=$2 AND item_state IN ('closed','interrupted') ORDER BY closed_at DESC, item_id`, userID, exerciseType)
 	if err != nil {
 		return nil, err
 	}
@@ -201,6 +207,10 @@ FROM lesson_report_rows WHERE user_id=$1 AND item_state IN ('closed','interrupte
 }
 
 func (s *Store) Progress(ctx context.Context, userID uuid.UUID) (reporting.Progress, error) {
+	return s.ProgressFor(ctx, userID, content.ExerciseTypeDDSProcessing)
+}
+
+func (s *Store) ProgressFor(ctx context.Context, userID uuid.UUID, exerciseType content.ExerciseType) (reporting.Progress, error) {
 	var progress reporting.Progress
 	progress.UserID = userID
 	if err := s.pool.QueryRow(ctx, `SELECT level FROM users WHERE id=$1`, userID).Scan(&progress.Level); err != nil {
@@ -209,7 +219,7 @@ func (s *Store) Progress(ctx context.Context, userID uuid.UUID) (reporting.Progr
 		}
 		return reporting.Progress{}, err
 	}
-	results, err := s.Results(ctx, userID)
+	results, err := s.ResultsFor(ctx, userID, exerciseType)
 	if err != nil {
 		return reporting.Progress{}, err
 	}
@@ -257,8 +267,8 @@ func (s *Store) Progress(ctx context.Context, userID uuid.UUID) (reporting.Progr
 	return progress, nil
 }
 
-func (s *Store) items(ctx context.Context, query string, id uuid.UUID) ([]reporting.ReportItem, error) {
-	rows, err := s.pool.Query(ctx, query, id)
+func (s *Store) items(ctx context.Context, query string, args ...any) ([]reporting.ReportItem, error) {
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reporting: rows: %w", err)
 	}
@@ -270,8 +280,12 @@ func (s *Store) items(ctx context.Context, query string, id uuid.UUID) ([]report
 		var criteriaRaw, feedbackRaw []byte
 		var critical []string
 		var interruptions []byte
-		if err := rows.Scan(&item.LessonID, &item.LessonTitle, &lessonMode, &item.UserID, &item.FullName, &item.WorkstationNo, &item.Level, &item.ItemID, &item.Ordinal, &item.ItemState, &item.ClosedAt, &item.CardNumber, &item.ScenarioTitle, &item.Difficulty, &item.OpenSeconds, &item.WorkSeconds, &item.TotalSeconds, &interruptions, &item.AssessmentID, &item.AssessmentRevision, &item.AssessmentKind, &item.AssessmentStatus, &item.Score, &item.Passed, &critical, &criteriaRaw, &feedbackRaw); err != nil {
+		var assessmentStatus *string
+		if err := rows.Scan(&item.LessonID, &item.LessonTitle, &lessonMode, &item.UserID, &item.FullName, &item.WorkstationNo, &item.Level, &item.ItemID, &item.Ordinal, &item.ItemState, &item.ClosedAt, &item.CardNumber, &item.ScenarioTitle, &item.Difficulty, &item.OpenSeconds, &item.WorkSeconds, &item.TotalSeconds, &interruptions, &item.AssessmentID, &item.AssessmentRevision, &item.AssessmentKind, &assessmentStatus, &item.Score, &item.Passed, &critical, &criteriaRaw, &feedbackRaw); err != nil {
 			return nil, fmt.Errorf("reporting: scan row: %w", err)
+		}
+		if assessmentStatus != nil {
+			item.AssessmentStatus = reporting.AssessmentStatus(*assessmentStatus)
 		}
 		item.LevelAtStart, item.CriticalErrors, item.Interruptions = item.Level, critical, json.RawMessage(interruptions)
 		if lessonMode == "intro" {

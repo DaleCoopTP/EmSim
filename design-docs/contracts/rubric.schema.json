@@ -24,7 +24,7 @@
       "pattern": "^[a-z0-9_-]+/rubric-v[1-9][0-9]*$"
     },
     "exercise_type": {
-      "const": "dds_processing"
+      "enum": ["dds_processing", "operator112_intake"]
     },
     "pass_threshold": {
       "type": "number",
@@ -61,7 +61,8 @@
           "kind": {
             "enum": [
               "deterministic",
-              "llm"
+              "llm",
+              "manual"
             ]
           },
           "weight": {

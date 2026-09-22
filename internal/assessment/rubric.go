@@ -64,6 +64,28 @@ var loadedDefault = sync.OnceValues(func() (Rubric, error) {
 	return rubric, nil
 })
 
+var loaded112 = sync.OnceValues(func() (Rubric, error) {
+	raw, err := contracts.Files.ReadFile("rubric.operator112.json")
+	if err != nil {
+		return Rubric{}, fmt.Errorf("assessment: read rubric.operator112.json: %w", err)
+	}
+	var rubric Rubric
+	if err := json.Unmarshal(raw, &rubric); err != nil {
+		return Rubric{}, fmt.Errorf("assessment: parse rubric.operator112.json: %w", err)
+	}
+	return rubric, nil
+})
+
+func LoadDefaultFor(exerciseType content.ExerciseType) (Rubric, error) {
+	if exerciseType == content.ExerciseTypeOperator112Intake {
+		return loaded112()
+	}
+	if exerciseType == content.ExerciseTypeDDSProcessing {
+		return loadedDefault()
+	}
+	return Rubric{}, fmt.Errorf("assessment: unsupported exercise_type %q", exerciseType)
+}
+
 // LoadDefault returns the embedded default DDS rubric (ADR-013's layer
 // 1). Callers must not mutate the returned value's slices — Merge always
 // returns a fresh copy, so this is safe to call repeatedly without

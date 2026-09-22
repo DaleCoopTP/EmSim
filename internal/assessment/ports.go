@@ -2,6 +2,7 @@ package assessment
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"emsim/internal/content"
@@ -29,6 +30,7 @@ type ItemReader interface {
 // reproducibility guarantee).
 type EvidenceReader interface {
 	EvidenceByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) (training.EvidenceBody, [32]byte, error)
+	EvidenceDocumentByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) (json.RawMessage, [32]byte, error)
 }
 
 // ScenarioReader is assessment's read of content's approved scenario

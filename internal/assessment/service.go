@@ -351,7 +351,7 @@ func (s *Service) CreateExpertRevision(ctx context.Context, itemID, createdBy uu
 		if err != nil {
 			return err
 		}
-		base, err := LoadDefault()
+		base, err := LoadDefaultFor(evidenceBody.ExerciseType)
 		if err != nil {
 			return fmt.Errorf("assessment: load default rubric: %w", err)
 		}
@@ -489,7 +489,7 @@ func (s *Service) Get(ctx context.Context, itemID uuid.UUID) (Detail, error) {
 		if err != nil {
 			return err
 		}
-		base, err := LoadDefault()
+		base, err := LoadDefaultFor(item.ExerciseType)
 		if err != nil {
 			return err
 		}
@@ -504,7 +504,16 @@ func (s *Service) Get(ctx context.Context, itemID uuid.UUID) (Detail, error) {
 		} else if !errors.Is(err, tasks.ErrNotFound) {
 			return err
 		}
-		result.Revisions, result.RubricEffective, result.Evidence = revisions, effective, evidence
+		if item.ExerciseType == "operator112_intake" {
+			document, _, err := s.evidence.EvidenceDocumentByItem(ctx, tx, itemID)
+			if err != nil {
+				return err
+			}
+			result.Evidence = document
+		} else {
+			result.Evidence = evidence
+		}
+		result.Revisions, result.RubricEffective = revisions, effective
 		return nil
 	})
 	if err != nil {

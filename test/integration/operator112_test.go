@@ -9,10 +9,12 @@ import (
 	"os"
 	"testing"
 
+	"emsim/internal/assessment"
 	"emsim/internal/auth"
 	authpg "emsim/internal/auth/postgres"
 	"emsim/internal/content"
 	pgstore "emsim/internal/platform/postgres"
+	reportingpg "emsim/internal/reporting/postgres"
 	"emsim/internal/training"
 
 	"github.com/google/uuid"
@@ -156,4 +158,50 @@ func TestOperator112IntakeTransaction(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM tasks WHERE kind = 'assessment.evaluate'`).Scan(&autoCount); err != nil || autoCount != 0 {
 		t.Fatalf("auto tasks %d: %v", autoCount, err)
 	}
+	preReviewHistory, err := reportingpg.NewStore(pool).ResultsFor(ctx, trainee.ID, content.ExerciseTypeOperator112Intake)
+	if err != nil || len(preReviewHistory) != 1 || preReviewHistory[0].AssessmentStatus != "pending" {
+		t.Fatalf("112 awaiting manual review: %+v, %v", preReviewHistory, err)
+	}
+	assessmentService := newAssessmentServiceForTest(pool, mustTaskEnqueuer(pool))
+	before, err := assessmentService.Get(ctx, item.ID)
+	if err != nil || before.Final != nil || before.RubricEffective.Version != "operator112/rubric-v1" {
+		t.Fatalf("review before manual rating: %+v, %v", before, err)
+	}
+	created, err := assessmentService.CreateExpertRevision(ctx, item.ID, actor.ID, assessment.RevisionInput{
+		BaseRevision: 0, Reason: "Разбор учебного вызова",
+		Criteria: []assessment.CriterionResult{
+			{ID: "INTAKE_COMPLETENESS", Status: assessment.CriterionPartial, Explanation: "Адрес заполнен не полностью"},
+			{ID: "INTAKE_ACCURACY", Status: assessment.CriterionMet, Explanation: "Внесённые сведения соответствуют разговору"},
+			{ID: "INTAKE_DISPATCH", Status: assessment.CriterionMet, Explanation: "Карточка направлена учебной скорой"},
+		},
+	}, "112-assess")
+	if err != nil || created.Revision != 2 || created.Score == nil || *created.Score != 80 {
+		t.Fatalf("manual rating: %+v, %v", created, err)
+	}
+	after, err := assessmentService.Get(ctx, item.ID)
+	if err != nil || after.Final == nil || after.Final.Kind != assessment.KindExpert {
+		t.Fatalf("review after manual rating: %+v, %v", after, err)
+	}
+	rawReview, ok := after.Evidence.(json.RawMessage)
+	if !ok || !json.Valid(rawReview) || !containsJSONKey(rawReview, "dispatch") {
+		t.Fatalf("112 evidence in review: %T %s", after.Evidence, rawReview)
+	}
+	reports := reportingpg.NewStore(pool)
+	ddsHistory, err := reports.Results(ctx, trainee.ID)
+	if err != nil || len(ddsHistory) != 0 {
+		t.Fatalf("DDS history mixed with 112: %+v, %v", ddsHistory, err)
+	}
+	intakeHistory, err := reports.ResultsFor(ctx, trainee.ID, content.ExerciseTypeOperator112Intake)
+	if err != nil || len(intakeHistory) != 1 || intakeHistory[0].Score == nil || *intakeHistory[0].Score != 80 {
+		t.Fatalf("112 history: %+v, %v", intakeHistory, err)
+	}
+	progress, err := reports.ProgressFor(ctx, trainee.ID, content.ExerciseTypeOperator112Intake)
+	if err != nil || progress.CompletedItems != 1 || progress.AvgScore == nil || *progress.AvgScore != 80 {
+		t.Fatalf("112 progress: %+v, %v", progress, err)
+	}
+}
+
+func containsJSONKey(raw []byte, key string) bool {
+	var value map[string]json.RawMessage
+	return json.Unmarshal(raw, &value) == nil && len(value[key]) > 0
 }

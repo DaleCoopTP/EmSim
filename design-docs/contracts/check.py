@@ -39,7 +39,7 @@ def load_json(name: str):
 def main() -> int:
     print("JSON")
     schemas = {n: load_json(n) for n in ["scenario.schema.json", "scenario-file.schema.json", "evidence.schema.json", "evidence.operator112.schema.json", "assessment-inputs.schema.json", "rubric.schema.json", "sse-events.schema.json", "tasks.schema.json", "voice-assets-manifest.schema.json"]}
-    examples = {n: load_json(n) for n in ["scenario.example.json", "evidence.example.json", "rubric.default.json", "assessment-inputs.example.json"]}
+    examples = {n: load_json(n) for n in ["scenario.example.json", "evidence.example.json", "rubric.default.json", "rubric.operator112.json", "assessment-inputs.example.json"]}
     for n, v in {**schemas, **examples}.items():
         if v is not None:
             ok(n)
@@ -90,7 +90,7 @@ def main() -> int:
             if s is not None:
                 V.check_schema(s)
                 ok(f"{n} is a valid draft 2020-12 schema")
-        pairs = [("scenario.schema.json", "scenario.example.json"), ("evidence.schema.json", "evidence.example.json"), ("rubric.schema.json", "rubric.default.json"), ("assessment-inputs.schema.json", "assessment-inputs.example.json")]
+        pairs = [("scenario.schema.json", "scenario.example.json"), ("evidence.schema.json", "evidence.example.json"), ("rubric.schema.json", "rubric.default.json"), ("rubric.schema.json", "rubric.operator112.json"), ("assessment-inputs.schema.json", "assessment-inputs.example.json")]
         for sn, en in pairs:
             if schemas[sn] is None or examples[en] is None:
                 continue

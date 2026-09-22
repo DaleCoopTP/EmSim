@@ -2,6 +2,7 @@ package reporting
 
 import (
 	"context"
+	"emsim/internal/content"
 	"encoding/hex"
 	"encoding/json"
 	"time"
@@ -41,6 +42,12 @@ func (s *Service) Results(ctx context.Context, userID uuid.UUID) ([]ItemResult, 
 }
 func (s *Service) Progress(ctx context.Context, userID uuid.UUID) (Progress, error) {
 	return s.store.Progress(ctx, userID)
+}
+func (s *Service) ResultsFor(ctx context.Context, userID uuid.UUID, exerciseType content.ExerciseType) ([]ItemResult, error) {
+	return s.store.ResultsFor(ctx, userID, exerciseType)
+}
+func (s *Service) ProgressFor(ctx context.Context, userID uuid.UUID, exerciseType content.ExerciseType) (Progress, error) {
+	return s.store.ProgressFor(ctx, userID, exerciseType)
 }
 
 type buildPayload struct {

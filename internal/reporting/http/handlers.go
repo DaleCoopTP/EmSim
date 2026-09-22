@@ -10,6 +10,7 @@ import (
 
 	"emsim/internal/auth"
 	authhttp "emsim/internal/auth/http"
+	"emsim/internal/content"
 	"emsim/internal/media"
 	"emsim/internal/platform/httpapi"
 	"emsim/internal/reporting"
@@ -22,6 +23,8 @@ type reportingService interface {
 	LessonReport(context.Context, uuid.UUID) (reporting.LessonReport, error)
 	Results(context.Context, uuid.UUID) ([]reporting.ItemResult, error)
 	Progress(context.Context, uuid.UUID) (reporting.Progress, error)
+	ResultsFor(context.Context, uuid.UUID, content.ExerciseType) ([]reporting.ItemResult, error)
+	ProgressFor(context.Context, uuid.UUID, content.ExerciseType) (reporting.Progress, error)
 	RequestPDF(context.Context, uuid.UUID, uuid.UUID) (reporting.ReportFile, error)
 	ListPDFs(context.Context, uuid.UUID) ([]reporting.ReportFile, error)
 	ReportFile(context.Context, uuid.UUID) (reporting.ReportFile, error)
@@ -72,6 +75,9 @@ func (h *Handlers) lessonCSV(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.exportAvailable(w, r, report.Lesson.ID) {
+		return
+	}
 	body, err := reporting.CSV(report)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.CodeInternalError, "report export failed", nil)
@@ -83,7 +89,11 @@ func (h *Handlers) lessonCSV(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handlers) results(w http.ResponseWriter, r *http.Request) {
 	principal, _ := authhttp.PrincipalFromContext(r.Context())
-	values, err := h.reporting.Results(r.Context(), principal.UserID)
+	exerciseType, ok := requestedExerciseType(w, r)
+	if !ok {
+		return
+	}
+	values, err := h.reporting.ResultsFor(r.Context(), principal.UserID, exerciseType)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -92,7 +102,11 @@ func (h *Handlers) results(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handlers) progress(w http.ResponseWriter, r *http.Request) {
 	principal, _ := authhttp.PrincipalFromContext(r.Context())
-	value, err := h.reporting.Progress(r.Context(), principal.UserID)
+	exerciseType, ok := requestedExerciseType(w, r)
+	if !ok {
+		return
+	}
+	value, err := h.reporting.ProgressFor(r.Context(), principal.UserID, exerciseType)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -105,6 +119,9 @@ func (h *Handlers) requestPDF(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.exportAvailable(w, r, id) {
+		return
+	}
 	principal, _ := authhttp.PrincipalFromContext(r.Context())
 	file, err := h.reporting.RequestPDF(r.Context(), id, principal.UserID)
 	if err != nil {
@@ -112,6 +129,33 @@ func (h *Handlers) requestPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, publicFile(file))
+}
+
+func requestedExerciseType(w http.ResponseWriter, r *http.Request) (content.ExerciseType, bool) {
+	value := r.URL.Query().Get("exercise_type")
+	if value == "" {
+		return content.ExerciseTypeDDSProcessing, true
+	}
+	exerciseType := content.ExerciseType(value)
+	if !exerciseType.Valid() {
+		httpapi.WriteError(w, r, httpapi.CodeInvalidRequest, "unsupported exercise_type", nil)
+		return "", false
+	}
+	return exerciseType, true
+}
+
+func (h *Handlers) exportAvailable(w http.ResponseWriter, r *http.Request, lessonID uuid.UUID) bool {
+	principal, _ := authhttp.PrincipalFromContext(r.Context())
+	lesson, _, err := h.training.Lesson(r.Context(), principal, lessonID)
+	if err != nil {
+		writeError(w, r, err)
+		return false
+	}
+	if lesson.ExerciseType == content.ExerciseTypeOperator112Intake {
+		httpapi.WriteError(w, r, httpapi.CodeConflict, "112 CSV/PDF export is available in slice 112-5", nil)
+		return false
+	}
+	return true
 }
 func (h *Handlers) listPDFs(w http.ResponseWriter, r *http.Request) {
 	id, ok := h.authorizedLesson(w, r)

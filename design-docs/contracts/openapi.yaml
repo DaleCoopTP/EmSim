@@ -389,12 +389,16 @@ paths:
     get:
       tags: [trainee]
       summary: Результаты обучаемого по занятиям
+      parameters:
+        - { name: exercise_type, in: query, schema: { $ref: '#/components/schemas/ExerciseType' }, description: По умолчанию dds_processing; история и критерии разных упражнений не смешиваются. }
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ItemResult' } } } } }
   /my/progress:
     get:
       tags: [trainee]
       summary: "Прогресс: уровень, средний балл, типичные ошибки, рекомендация"
+      parameters:
+        - { name: exercise_type, in: query, schema: { $ref: '#/components/schemas/ExerciseType' }, description: По умолчанию dds_processing; агрегат относится только к выбранному упражнению. }
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Progress' } } } }
   /items/{itemId}:

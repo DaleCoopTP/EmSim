@@ -985,18 +985,48 @@ func (s *Store) InsertEvidence(ctx context.Context, tx pgx.Tx, itemID uuid.UUID,
 }
 
 func (s *Store) EvidenceByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) (training.EvidenceBody, [32]byte, error) {
+	raw, digestArray, err := s.EvidenceDocumentByItem(ctx, tx, itemID)
+	if err != nil {
+		return training.EvidenceBody{}, [32]byte{}, err
+	}
+	var body training.EvidenceBody
+	var discriminator struct {
+		ExerciseType string `json:"exercise_type"`
+	}
+	if err := json.Unmarshal(raw, &discriminator); err != nil {
+		return training.EvidenceBody{}, [32]byte{}, training.ErrStorage
+	}
+	if discriminator.ExerciseType == "operator112_intake" {
+		// Assessment's manual path needs ancestry and the digest, while its
+		// review endpoint reads the complete variant through the raw port.
+		var identity struct {
+			ItemID            uuid.UUID `json:"item_id"`
+			RunID             uuid.UUID `json:"run_id"`
+			LessonID          uuid.UUID `json:"lesson_id"`
+			TraineeID         uuid.UUID `json:"trainee_id"`
+			ScenarioVersionID uuid.UUID `json:"scenario_version_id"`
+			ScenarioDigest    string    `json:"scenario_digest"`
+		}
+		if err := json.Unmarshal(raw, &identity); err != nil {
+			return training.EvidenceBody{}, [32]byte{}, training.ErrStorage
+		}
+		body.ItemID, body.RunID, body.LessonID, body.TraineeID = identity.ItemID, identity.RunID, identity.LessonID, identity.TraineeID
+		body.ScenarioVersionID, body.ScenarioDigest, body.ExerciseType = identity.ScenarioVersionID, identity.ScenarioDigest, "operator112_intake"
+	} else if err := json.Unmarshal(raw, &body); err != nil {
+		return training.EvidenceBody{}, [32]byte{}, training.ErrStorage
+	}
+	return body, digestArray, nil
+}
+
+func (s *Store) EvidenceDocumentByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) (json.RawMessage, [32]byte, error) {
 	var raw []byte
 	var digest []byte
 	if err := tx.QueryRow(ctx, `SELECT body, digest FROM evidence WHERE item_id = $1`, itemID).Scan(&raw, &digest); err != nil {
-		return training.EvidenceBody{}, [32]byte{}, mapErr(err)
-	}
-	var body training.EvidenceBody
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return training.EvidenceBody{}, [32]byte{}, training.ErrStorage
+		return nil, [32]byte{}, mapErr(err)
 	}
 	var digestArray [32]byte
 	copy(digestArray[:], digest)
-	return body, digestArray, nil
+	return json.RawMessage(raw), digestArray, nil
 }
 
 // ------------------------------------------------------------ events and reports
