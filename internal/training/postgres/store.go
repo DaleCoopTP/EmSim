@@ -426,9 +426,9 @@ func (s *Store) FinishLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, finis
 // ------------------------------------------------------------ items
 
 const itemSelectColumns = `i.id, i.run_id, r.lesson_id, r.user_id, w.number,
-	i.scenario_version_id, sv.digest, sv.body ->> 'target_service',
+	i.scenario_version_id, sv.digest, COALESCE(sv.body ->> 'target_service', ''), i.exercise_type,
 	r.mode, i.ordinal, i.spawned_from, i.state, i.reaction,
-	i.card, i.workflow, i.pilot_goal,
+	i.card, i.workflow, i.pilot_goal, i.intake_state,
 	i.seq, i.stop_cutoff_log_seq, i.interruptions, i.log_seq, i.timing_effective, i.deadlines,
 	i.offered_at, i.opened_at, i.primary_at, i.closed_at, i.close_reason`
 const itemFrom = `FROM items i
@@ -439,13 +439,13 @@ const itemFrom = `FROM items i
 func scanItem(row pgx.Row) (training.Item, error) {
 	var it training.Item
 	var digest []byte
-	var cardJSON, workflowJSON, interruptionsJSON, timingJSON, deadlinesJSON []byte
+	var cardJSON, workflowJSON, interruptionsJSON, timingJSON, deadlinesJSON, intakeJSON []byte
 	var pilotGoal *string
 	var closeReason *string
 	err := row.Scan(&it.ID, &it.RunID, &it.LessonID, &it.UserID, &it.WorkstationNo,
-		&it.ScenarioVersionID, &digest, &it.TargetService,
+		&it.ScenarioVersionID, &digest, &it.TargetService, &it.ExerciseType,
 		&it.Mode, &it.Ordinal, &it.SpawnedFrom, &it.State, &it.Reaction,
-		&cardJSON, &workflowJSON, &pilotGoal,
+		&cardJSON, &workflowJSON, &pilotGoal, &intakeJSON,
 		&it.Seq, &it.StopCutoffLogSeq, &interruptionsJSON, &it.LogSeq, &timingJSON, &deadlinesJSON,
 		&it.OfferedAt, &it.OpenedAt, &it.PrimaryAt, &it.ClosedAt, &closeReason)
 	if e := mapErr(err); e != nil {
@@ -459,7 +459,16 @@ func scanItem(row pgx.Row) (training.Item, error) {
 		cr := training.CloseReason(*closeReason)
 		it.CloseReason = &cr
 	}
-	if err := json.Unmarshal(cardJSON, &it.Card); err != nil {
+	if it.ExerciseType == "operator112_intake" {
+		it.IntakeCard = &training.IntakeCard{}
+		it.IntakeState = &training.IntakeState{}
+		if err := json.Unmarshal(cardJSON, it.IntakeCard); err != nil {
+			return training.Item{}, training.ErrStorage
+		}
+		if err := json.Unmarshal(intakeJSON, it.IntakeState); err != nil {
+			return training.Item{}, training.ErrStorage
+		}
+	} else if err := json.Unmarshal(cardJSON, &it.Card); err != nil {
 		return training.Item{}, training.ErrStorage
 	}
 	if err := json.Unmarshal(workflowJSON, &it.Workflow); err != nil {
@@ -478,7 +487,14 @@ func scanItem(row pgx.Row) (training.Item, error) {
 }
 
 func (s *Store) InsertItem(ctx context.Context, tx pgx.Tx, it training.Item) (training.Item, error) {
-	cardJSON, err := json.Marshal(it.Card)
+	if it.ExerciseType == "" {
+		it.ExerciseType = "dds_processing"
+	}
+	var cardValue any = it.Card
+	if it.IntakeCard != nil {
+		cardValue = it.IntakeCard
+	}
+	cardJSON, err := json.Marshal(cardValue)
 	if err != nil {
 		return training.Item{}, fmt.Errorf("training/postgres: marshal card: %w", err)
 	}
@@ -494,21 +510,52 @@ func (s *Store) InsertItem(ctx context.Context, tx pgx.Tx, it training.Item) (tr
 	if err != nil {
 		return training.Item{}, fmt.Errorf("training/postgres: marshal deadlines: %w", err)
 	}
+	var intakeJSON []byte
+	if it.IntakeState != nil {
+		intakeJSON, err = json.Marshal(it.IntakeState)
+		if err != nil {
+			return training.Item{}, fmt.Errorf("training/postgres: marshal intake state: %w", err)
+		}
+	}
 	var pilotGoal *string
 	if it.PilotGoal != "" {
 		pilotGoal = &it.PilotGoal
 	}
 	err = tx.QueryRow(ctx, `
-		INSERT INTO items (id, run_id, scenario_version_id, ordinal, spawned_from, state, reaction, card, workflow, pilot_goal, timing_effective, deadlines, offered_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		INSERT INTO items (id, run_id, scenario_version_id, ordinal, spawned_from, state, reaction, card, workflow, pilot_goal, timing_effective, deadlines, offered_at, exercise_type, intake_state)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING offered_at
 	`, it.ID, it.RunID, it.ScenarioVersionID, it.Ordinal, it.SpawnedFrom, it.State, it.Reaction,
-		cardJSON, workflowJSON, pilotGoal, timingJSON, deadlinesJSON, it.OfferedAt).
+		cardJSON, workflowJSON, pilotGoal, timingJSON, deadlinesJSON, it.OfferedAt, it.ExerciseType, intakeJSON).
 		Scan(&it.OfferedAt)
 	if err != nil {
 		return training.Item{}, mapErr(err)
 	}
 	return it, nil
+}
+
+func (s *Store) InsertIntakeDispatch(ctx context.Context, tx pgx.Tx, dispatch training.IntakeDispatch) error {
+	cardJSON, err := json.Marshal(dispatch.CardSnapshot)
+	if err != nil {
+		return fmt.Errorf("training/postgres: marshal dispatch card: %w", err)
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO intake_dispatches (item_id, action_id, service_code, card_snapshot, sent_at)
+		VALUES ($1, $2, $3, $4, $5)`, dispatch.ItemID, dispatch.ActionID, dispatch.ServiceCode, cardJSON, dispatch.SentAt)
+	return mapErr(err)
+}
+
+func (s *Store) IntakeDispatchByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) (training.IntakeDispatch, error) {
+	var d training.IntakeDispatch
+	var cardJSON []byte
+	err := tx.QueryRow(ctx, `SELECT item_id, action_id, service_code, card_snapshot, sent_at FROM intake_dispatches WHERE item_id = $1`, itemID).
+		Scan(&d.ItemID, &d.ActionID, &d.ServiceCode, &cardJSON, &d.SentAt)
+	if err != nil {
+		return training.IntakeDispatch{}, mapErr(err)
+	}
+	if err := json.Unmarshal(cardJSON, &d.CardSnapshot); err != nil {
+		return training.IntakeDispatch{}, training.ErrStorage
+	}
+	return d, nil
 }
 
 func (s *Store) ItemByID(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock training.Lock) (training.Item, error) {
@@ -549,9 +596,20 @@ func (s *Store) ItemsByRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID) ([]t
 // close_reason are COALESCEd too, though in practice each item is only
 // ever closed once.
 func (s *Store) ApplyItemDecision(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, patch training.ItemPatch) error {
-	cardJSON, err := json.Marshal(patch.Card)
+	var cardValue any = patch.Card
+	if patch.IntakeCard != nil {
+		cardValue = patch.IntakeCard
+	}
+	cardJSON, err := json.Marshal(cardValue)
 	if err != nil {
 		return fmt.Errorf("training/postgres: marshal card: %w", err)
+	}
+	var intakeJSON []byte
+	if patch.IntakeState != nil {
+		intakeJSON, err = json.Marshal(patch.IntakeState)
+		if err != nil {
+			return fmt.Errorf("training/postgres: marshal intake state: %w", err)
+		}
 	}
 	var closeReason *string
 	if patch.CloseReason != nil {
@@ -565,6 +623,7 @@ func (s *Store) ApplyItemDecision(ctx context.Context, tx pgx.Tx, itemID uuid.UU
 			reaction = $4,
 			state = $5,
 			card = $6,
+			intake_state = COALESCE($12::jsonb, intake_state),
 			opened_at = COALESCE(opened_at, $7),
 			primary_at = COALESCE(primary_at, $8),
 			deadlines = CASE
@@ -576,7 +635,7 @@ func (s *Store) ApplyItemDecision(ctx context.Context, tx pgx.Tx, itemID uuid.UU
 			close_reason = COALESCE(close_reason, $11)
 		WHERE id = $1
 	`, itemID, patch.LogSeq, patch.Seq, patch.Reaction, patch.State, cardJSON,
-		patch.OpenedAt, patch.PrimaryAt, patch.CompleteAt, patch.ClosedAt, closeReason)
+		patch.OpenedAt, patch.PrimaryAt, patch.CompleteAt, patch.ClosedAt, closeReason, intakeJSON)
 	if err != nil {
 		return mapErr(err)
 	}

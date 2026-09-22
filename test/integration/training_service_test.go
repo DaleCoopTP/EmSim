@@ -33,6 +33,7 @@ import (
 	"emsim/internal/platform/tasks"
 	"emsim/internal/training"
 	"emsim/internal/training/dds"
+	"emsim/internal/training/operator112"
 	trainingpg "emsim/internal/training/postgres"
 
 	"github.com/google/uuid"
@@ -83,7 +84,8 @@ func newTrainingService(pool *pgxpool.Pool) *training.Service {
 		authStore, authStore,
 		contentStore, contentStore,
 		mustTaskEnqueuer(pool),
-		map[content.ExerciseType]training.Exercise{content.ExerciseTypeDDSProcessing: dds.Exercise},
+		map[content.ExerciseType]training.Exercise{content.ExerciseTypeDDSProcessing: dds.Exercise,
+			content.ExerciseTypeOperator112Intake: operator112.New()},
 	)
 }
 

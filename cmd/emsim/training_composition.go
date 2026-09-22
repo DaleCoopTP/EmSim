@@ -14,6 +14,7 @@ import (
 	contentpg "emsim/internal/content/postgres"
 	"emsim/internal/training"
 	"emsim/internal/training/dds"
+	"emsim/internal/training/operator112"
 	trainingpg "emsim/internal/training/postgres"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,6 +25,7 @@ func newTrainingService(pool *pgxpool.Pool, taskEnqueuer training.TaskEnqueuer) 
 	contentStore := contentpg.NewStore(pool)
 	return training.NewService(
 		trainingpg.NewStore(pool), authStore, authStore, contentStore, contentStore, taskEnqueuer,
-		map[content.ExerciseType]training.Exercise{content.ExerciseTypeDDSProcessing: dds.Exercise},
+		map[content.ExerciseType]training.Exercise{content.ExerciseTypeDDSProcessing: dds.Exercise,
+			content.ExerciseTypeOperator112Intake: operator112.New()},
 	)
 }

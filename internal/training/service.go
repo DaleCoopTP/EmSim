@@ -603,6 +603,7 @@ func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise 
 	closeReason := CloseInterrupted
 	patch := ItemPatch{
 		LogSeq: item.LogSeq, Seq: item.Seq, Reaction: item.Reaction, State: ItemInterrupted, Card: item.Card,
+		IntakeCard: item.IntakeCard, IntakeState: item.IntakeState,
 		ClosedAt: &stoppedAt, CloseReason: &closeReason,
 	}
 	if err := s.store.ApplyItemDecision(ctx, tx, item.ID, patch); err != nil {
@@ -633,6 +634,13 @@ func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise 
 		return err
 	}
 	closedItem.Calls = calls
+	if item.ExerciseType == content.ExerciseTypeOperator112Intake && item.IntakeState != nil && item.IntakeState.Dispatched {
+		d, err := s.store.IntakeDispatchByItem(ctx, tx, item.ID)
+		if err != nil {
+			return err
+		}
+		closedItem.IntakeDispatch = &d
+	}
 
 	evidence, err := exercise.Evidence(closedItem, actions, events, cutoff, stoppedAt)
 	if err != nil {
@@ -658,7 +666,7 @@ func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise 
 // internal/assessment's composition, never by training — this package
 // only ever enqueues, per KindAssessmentEvaluate's own doc comment.
 func (s *Service) enqueueEvaluateWaiting(ctx context.Context, tx pgx.Tx, lesson Lesson, item Item, evidence Evidence, now time.Time) error {
-	if lesson.Mode != ModeTraining {
+	if lesson.Mode != ModeTraining || lesson.ExerciseType == content.ExerciseTypeOperator112Intake {
 		return nil
 	}
 	payload, err := json.Marshal(map[string]any{
@@ -753,6 +761,28 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 	if err != nil {
 		return err
 	}
+	if lesson.ExerciseType == content.ExerciseTypeOperator112Intake {
+		if version.Body.Intake112 == nil {
+			return fmt.Errorf("training: 112 scenario has no intake")
+		}
+		itemID := uuid.New()
+		call := version.Body.Intake112.Call
+		card := UnansweredIntakeCard("112-"+itemID.String(), call.AON, call.LocalTime, call.TimeZone)
+		item := Item{ID: itemID, ExerciseType: lesson.ExerciseType, RunID: run.ID, LessonID: lesson.ID,
+			UserID: run.UserID, WorkstationNo: run.WorkstationNo, ScenarioVersionID: versionID,
+			ScenarioDigest: fmt.Sprintf("%x", version.Digest), Ordinal: queueIndex + 1,
+			State: ItemOffered, Reaction: content.ReactionAdded, IntakeCard: &card,
+			IntakeState: &IntakeState{CallStatus: "ringing", Transcript: []IntakeLine{}},
+			Mode:        lesson.Mode, TimingEffective: lesson.Timing,
+			Deadlines: Deadlines{OpenAt: now, PrimaryAt: now}, OfferedAt: now}
+		if _, err := s.store.InsertItem(ctx, tx, item); err != nil {
+			return err
+		}
+		if err := s.store.SetRunQueueCursor(ctx, tx, run.ID, queueIndex+1); err != nil {
+			return err
+		}
+		return s.notify(ctx, tx, lesson.ID, run.UserID, item.ID)
+	}
 	svc, err := s.services.ServiceByCode(ctx, tx, version.Body.TargetService)
 	if err != nil {
 		return err
@@ -765,7 +795,7 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 		spawnedFrom = &origin.itemID
 	}
 	item := Item{
-		ID: uuid.New(), RunID: run.ID, LessonID: lesson.ID, UserID: run.UserID,
+		ID: uuid.New(), ExerciseType: lesson.ExerciseType, RunID: run.ID, LessonID: lesson.ID, UserID: run.UserID,
 		WorkstationNo: run.WorkstationNo, ScenarioVersionID: versionID,
 		ScenarioDigest: fmt.Sprintf("%x", version.Digest), TargetService: version.Body.TargetService,
 		Ordinal: queueIndex + 1, SpawnedFrom: spawnedFrom, State: ItemOffered, Reaction: content.ReactionAdded,
@@ -935,6 +965,10 @@ func (s *Service) Execute(ctx context.Context, actor auth.Principal, itemID uuid
 				return err
 			}
 			item.Contacts, item.CallPolicy = version.Body.Contacts, version.Body.Reference.Call
+			if version.Body.Intake112 != nil {
+				item.IntakeScript = version.Body.Intake112.Call.Script
+				item.IntakeRecipients = version.Body.Intake112.RecipientServices
+			}
 			decision, err = exercise.Decide(item, cmd, now)
 			if err != nil {
 				return err
@@ -955,7 +989,8 @@ func (s *Service) Execute(ctx context.Context, actor auth.Principal, itemID uuid
 // Exercise.Decide — lesson_stopped/item_closed/stale_seq apply to any
 // exercise type (ADR-015), so they are not this exercise's rule to make.
 func unchangedDecision(item Item, rejection Rejection) Decision {
-	return Decision{Accepted: false, Rejection: rejection, Reaction: item.Reaction, State: item.State, Card: item.Card}
+	return Decision{Accepted: false, Rejection: rejection, Reaction: item.Reaction, State: item.State, Card: item.Card,
+		IntakeCard: item.IntakeCard, IntakeState: item.IntakeState}
 }
 
 // lockForCommand acquires RFC-001 §8's lock order — lessons (FOR SHARE,
@@ -978,14 +1013,14 @@ func (s *Service) lockForCommand(ctx context.Context, tx pgx.Tx, itemID uuid.UUI
 
 	lessonLock := LockShare
 	run := peekRun
-	if cmdType == CommandClose {
+	if cmdType == CommandClose || cmdType == CommandCompleteIntake {
 		lessonLock = LockUpdate
 	}
 	lesson, err := s.store.LessonByID(ctx, tx, peekRun.LessonID, lessonLock)
 	if err != nil {
 		return Lesson{}, Run{}, Item{}, err
 	}
-	if cmdType == CommandClose {
+	if cmdType == CommandClose || cmdType == CommandCompleteIntake {
 		run, err = s.store.RunByID(ctx, tx, peekRun.ID, LockUpdate)
 		if err != nil {
 			return Lesson{}, Run{}, Item{}, err
@@ -1074,6 +1109,13 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	if _, err := s.store.InsertAction(ctx, tx, action); err != nil {
 		return Receipt{}, err
 	}
+	if decision.Accepted && decision.IntakeDispatch != nil {
+		decision.IntakeDispatch.ItemID = item.ID
+		decision.IntakeDispatch.ActionID = actionID
+		if err := s.store.InsertIntakeDispatch(ctx, tx, *decision.IntakeDispatch); err != nil {
+			return Receipt{}, err
+		}
+	}
 	if decision.Accepted && decision.StartCall != nil {
 		if _, err := s.store.InsertCall(ctx, tx, *decision.StartCall); err != nil {
 			return Receipt{}, err
@@ -1120,6 +1162,7 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	// (a no-op on reject, per Decision's own contract).
 	patch := ItemPatch{
 		LogSeq: newLogSeq, Seq: newSeq, Reaction: decision.Reaction, State: decision.State, Card: decision.Card,
+		IntakeCard: decision.IntakeCard, IntakeState: decision.IntakeState,
 		OpenedAt: decision.OpenedAt, PrimaryAt: decision.PrimaryAt, CompleteAt: decision.CompleteAt,
 	}
 	if decision.Accepted && decision.Close != nil {
@@ -1137,7 +1180,7 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	if err := s.notify(ctx, tx, item.LessonID, actor.UserID, item.ID); err != nil {
 		return Receipt{}, err
 	}
-	if decision.Accepted {
+	if decision.Accepted && lesson.ExerciseType == content.ExerciseTypeDDSProcessing {
 		version, err := s.scenarios.VersionByID(ctx, tx, item.ScenarioVersionID)
 		if err != nil {
 			return Receipt{}, err
@@ -1170,6 +1213,17 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	closedItem := item
 	closedItem.Seq, closedItem.LogSeq = newSeq, newLogSeq
 	closedItem.Reaction, closedItem.State, closedItem.Card = decision.Reaction, decision.State, decision.Card
+	closedItem.IntakeCard, closedItem.IntakeState = decision.IntakeCard, decision.IntakeState
+	if decision.IntakeDispatch != nil {
+		closedItem.IntakeDispatch = decision.IntakeDispatch
+	}
+	if lesson.ExerciseType == content.ExerciseTypeOperator112Intake && closedItem.IntakeState != nil && closedItem.IntakeState.Dispatched && closedItem.IntakeDispatch == nil {
+		d, err := s.store.IntakeDispatchByItem(ctx, tx, item.ID)
+		if err != nil {
+			return Receipt{}, err
+		}
+		closedItem.IntakeDispatch = &d
+	}
 	if decision.PrimaryAt != nil {
 		closedItem.PrimaryAt = decision.PrimaryAt
 	}
@@ -1846,6 +1900,16 @@ func (s *Service) ItemForTrainee(ctx context.Context, actor auth.Principal, item
 			return err
 		}
 		item.Contacts, item.CallPolicy = version.Body.Contacts, version.Body.Reference.Call
+		if version.Body.Intake112 != nil {
+			item.IntakeRecipients = version.Body.Intake112.RecipientServices
+		}
+		if item.ExerciseType == content.ExerciseTypeOperator112Intake && item.IntakeState != nil && item.IntakeState.Dispatched {
+			d, err := s.store.IntakeDispatchByItem(ctx, tx, itemID)
+			if err != nil {
+				return err
+			}
+			item.IntakeDispatch = &d
+		}
 		events, err = s.deliveredEventsForItem(ctx, tx, itemID, item.ScenarioVersionID)
 		return err
 	})
@@ -1884,6 +1948,16 @@ func (s *Service) ItemForInstructor(ctx context.Context, actor auth.Principal, i
 		}
 		body = version.Body
 		item.Contacts, item.CallPolicy = body.Contacts, body.Reference.Call
+		if body.Intake112 != nil {
+			item.IntakeRecipients = body.Intake112.RecipientServices
+		}
+		if item.ExerciseType == content.ExerciseTypeOperator112Intake && item.IntakeState != nil && item.IntakeState.Dispatched {
+			d, err := s.store.IntakeDispatchByItem(ctx, tx, itemID)
+			if err != nil {
+				return err
+			}
+			item.IntakeDispatch = &d
+		}
 		actions, err = s.store.ActionsByItem(ctx, tx, itemID)
 		if err != nil {
 			return err

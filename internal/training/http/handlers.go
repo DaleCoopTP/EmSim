@@ -536,14 +536,21 @@ func (h *Handlers) getItem(w http.ResponseWriter, r *http.Request) {
 			writeTrainingError(w, r, err)
 			return
 		}
-		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, nil, now))
+		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, nil, nil, now))
 	case auth.RoleInstructor:
 		item, actions, events, body, err := h.training.ItemForInstructor(r.Context(), principal, itemID)
 		if err != nil {
 			writeTrainingError(w, r, err)
 			return
 		}
-		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, &body.Reference, now))
+		var intakeReference *content.Intake112Reference
+		var ddsReference *content.Reference
+		if body.Intake112 != nil {
+			intakeReference = &body.Intake112.Reference
+		} else {
+			ddsReference = &body.Reference
+		}
+		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, ddsReference, intakeReference, now))
 	default:
 		httpapi.WriteError(w, r, httpapi.CodeForbidden, "insufficient role", nil)
 	}
@@ -779,6 +786,9 @@ func toDeadlinesJSON(d training.Deadlines) deadlinesJSON {
 // (itemJSON below), never here.
 type itemSummaryJSON struct {
 	ID            string             `json:"id"`
+	ExerciseType  string             `json:"exercise_type,omitempty"`
+	CallStatus    string             `json:"call_status,omitempty"`
+	Dispatched    bool               `json:"dispatched,omitempty"`
 	State         string             `json:"state"`
 	Reaction      string             `json:"reaction"`
 	Seq           int64              `json:"seq"`
@@ -820,9 +830,21 @@ func toItemSummaryJSON(item training.Item) itemSummaryJSON {
 		s := string(*item.CloseReason)
 		closeReason = &s
 	}
+	if item.IntakeCard != nil {
+		callStatus, dispatched := "", false
+		if item.IntakeState != nil {
+			callStatus, dispatched = item.IntakeState.CallStatus, item.IntakeState.Dispatched
+		}
+		return itemSummaryJSON{ID: item.ID.String(), ExerciseType: string(item.ExerciseType),
+			State: string(item.State), Seq: item.Seq, CardNumber: item.IntakeCard.Number,
+			CallStatus: callStatus, Dispatched: dispatched, OfferedAt: formatTime(item.OfferedAt),
+			OpenedAt: formatTimePtr(item.OpenedAt), ClosedAt: formatTimePtr(item.ClosedAt),
+			CloseReason: closeReason, Interruptions: toInterruptionsJSON(item.Interruptions)}
+	}
 	return itemSummaryJSON{
 		ID: item.ID.String(), State: string(item.State), Reaction: string(item.Reaction), Seq: item.Seq,
-		CardNumber: item.Card.Number, IncidentType: item.Card.Incident.TypeName, AddressShort: item.Card.Address.Text,
+		ExerciseType: string(item.ExerciseType),
+		CardNumber:   item.Card.Number, IncidentType: item.Card.Incident.TypeName, AddressShort: item.Card.Address.Text,
 		OfferedAt: formatTime(item.OfferedAt), OpenedAt: formatTimePtr(item.OpenedAt), ClosedAt: formatTimePtr(item.ClosedAt),
 		CloseReason: closeReason, Deadlines: toDeadlinesJSON(item.Deadlines), PrimaryAt: formatTimePtr(item.PrimaryAt),
 		Interruptions: toInterruptionsJSON(item.Interruptions),
@@ -936,15 +958,19 @@ func buildComments(actions []training.Action) []commentJSON {
 // place this package ever puts scenario reference data on the wire.
 type itemJSON struct {
 	itemSummaryJSON
-	Mode               string               `json:"mode"`
-	Card               cardViewJSON         `json:"card"`
-	AllowedTransitions []string             `json:"allowed_transitions"`
-	Actions            []actionJSON         `json:"actions"`
-	Events             []deliveredEventJSON `json:"events"`
-	Calls              []callJSON           `json:"calls"`
-	Comments           []commentJSON        `json:"comments,omitempty"`
-	Reference          *content.Reference   `json:"reference,omitempty"`
-	ServerTime         string               `json:"server_time"`
+	Mode               string                      `json:"mode"`
+	Card               any                         `json:"card"`
+	IntakeState        *training.IntakeState       `json:"intake_state,omitempty"`
+	Dispatch           *training.IntakeDispatch    `json:"dispatch,omitempty"`
+	RecipientServices  []string                    `json:"recipient_services,omitempty"`
+	IntakeReference    *content.Intake112Reference `json:"intake_reference,omitempty"`
+	AllowedTransitions []string                    `json:"allowed_transitions"`
+	Actions            []actionJSON                `json:"actions"`
+	Events             []deliveredEventJSON        `json:"events"`
+	Calls              []callJSON                  `json:"calls"`
+	Comments           []commentJSON               `json:"comments,omitempty"`
+	Reference          *content.Reference          `json:"reference,omitempty"`
+	ServerTime         string                      `json:"server_time"`
 }
 
 type callJSON struct {
@@ -1005,7 +1031,7 @@ func toDeliveredEventsJSON(events []training.DeliveredEvent) []deliveredEventJSO
 	return out
 }
 
-func toItemJSON(item training.Item, actions []training.Action, events []training.DeliveredEvent, reference *content.Reference, now time.Time) itemJSON {
+func toItemJSON(item training.Item, actions []training.Action, events []training.DeliveredEvent, reference *content.Reference, intakeReference *content.Intake112Reference, now time.Time) itemJSON {
 	actionItems := make([]actionJSON, len(actions))
 	for i, a := range actions {
 		actionItems[i] = toActionJSON(a)
@@ -1014,6 +1040,13 @@ func toItemJSON(item training.Item, actions []training.Action, events []training
 	allowed := make([]string, len(transitions))
 	for i, next := range transitions {
 		allowed[i] = string(next)
+	}
+	if item.IntakeCard != nil {
+		return itemJSON{itemSummaryJSON: toItemSummaryJSON(item), Mode: string(item.Mode),
+			Card: item.IntakeCard, IntakeState: item.IntakeState, Dispatch: item.IntakeDispatch,
+			RecipientServices: item.IntakeRecipients, IntakeReference: intakeReference,
+			AllowedTransitions: []string{}, Actions: actionItems, Events: []deliveredEventJSON{}, Calls: []callJSON{},
+			ServerTime: formatTime(now)}
 	}
 	return itemJSON{
 		itemSummaryJSON:    toItemSummaryJSON(item),

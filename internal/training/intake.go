@@ -1,6 +1,7 @@
 package training
 
 import (
+	"github.com/google/uuid"
 	"strings"
 	"time"
 )
@@ -94,8 +95,8 @@ type IntakeState struct {
 }
 
 type IntakeDispatch struct {
-	ItemID       string     `json:"item_id"`
-	ActionID     string     `json:"action_id"`
+	ItemID       uuid.UUID  `json:"item_id"`
+	ActionID     uuid.UUID  `json:"action_id"`
 	ServiceCode  string     `json:"service_code"`
 	CardSnapshot IntakeCard `json:"card_snapshot"`
 	SentAt       time.Time  `json:"sent_at"`

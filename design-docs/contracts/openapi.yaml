@@ -776,6 +776,67 @@ components:
                 incident_type: { type: string, const: medical_assistance_request }
                 complaint: { type: string }
                 victims_count: { type: integer }
+    Intake112Field:
+      type: object
+      required: [state]
+      properties:
+        state: { type: string, enum: [unanswered, known, unknown, negative] }
+        value: { type: string }
+      description: negative допускается только для victims_present; неизвестный ответ не равен отрицательному.
+    Intake112Address:
+      type: object
+      required: [city, street, house, building, flat, landmark]
+      properties:
+        city: { $ref: '#/components/schemas/Intake112Field' }
+        street: { $ref: '#/components/schemas/Intake112Field' }
+        house: { $ref: '#/components/schemas/Intake112Field' }
+        building: { $ref: '#/components/schemas/Intake112Field' }
+        flat: { $ref: '#/components/schemas/Intake112Field' }
+        landmark: { $ref: '#/components/schemas/Intake112Field' }
+    Intake112Card:
+      type: object
+      required: [number, aon, call_local_time, call_time_zone, applicant_name, applicant_status, age, address, incident_type, complaint, victims_present, victims_count, provided_phone]
+      properties:
+        number: { type: string, description: Серверный номер; неизменяем. }
+        aon: { type: string, description: АОН из сценария; неизменяем. }
+        call_local_time: { type: string, description: Сценарное время; неизменяем. }
+        call_time_zone: { type: string, description: Сценарная зона; неизменяема. }
+        applicant_name: { $ref: '#/components/schemas/Intake112Field' }
+        applicant_status: { $ref: '#/components/schemas/Intake112Field' }
+        age: { $ref: '#/components/schemas/Intake112Field' }
+        address: { $ref: '#/components/schemas/Intake112Address' }
+        incident_type: { $ref: '#/components/schemas/Intake112Field' }
+        complaint: { $ref: '#/components/schemas/Intake112Field' }
+        victims_present: { $ref: '#/components/schemas/Intake112Field' }
+        victims_count: { $ref: '#/components/schemas/Intake112Field' }
+        provided_phone: { $ref: '#/components/schemas/Intake112Field' }
+    Intake112State:
+      type: object
+      required: [call_status, transcript, has_saved_draft, dispatched]
+      properties:
+        call_status: { type: string, enum: [ringing, connected, ended] }
+        transcript:
+          type: array
+          items:
+            type: object
+            required: [text, server_at]
+            properties:
+              text: { type: string }
+              server_at: { type: string, format: date-time }
+        has_saved_draft: { type: boolean }
+        dispatched: { type: boolean }
+        selected_service: { type: string }
+        answered_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+    Intake112Dispatch:
+      type: object
+      required: [item_id, action_id, service_code, card_snapshot, sent_at]
+      properties:
+        item_id: { type: string, format: uuid }
+        action_id: { type: string, format: uuid }
+        service_code: { type: string }
+        card_snapshot: { $ref: '#/components/schemas/Intake112Card' }
+        sent_at: { type: string, format: date-time }
     ScenarioVersionSummary:
       type: object
       properties:
@@ -1088,6 +1149,7 @@ components:
         server_time: { type: string, format: date-time }
     ItemSummary:
       type: object
+      description: exercise_type определяет вариант. Для operator112_intake call_status и dispatched описывают входящий вызов; нормативы deadlines не применяются.
       required:
       - id
       - state
@@ -1098,6 +1160,9 @@ components:
       - deadlines
       - interruptions
       properties:
+        exercise_type: { $ref: '#/components/schemas/ExerciseType' }
+        call_status: { type: string, enum: [ringing, connected, ended] }
+        dispatched: { type: boolean }
         id:
           type: string
           format: uuid
@@ -1199,7 +1264,14 @@ components:
           required: [card, actions, events, calls, server_time, mode, allowed_transitions]
           properties:
             mode: { type: string, enum: [intro, training] }
-            card: { $ref: '#/components/schemas/CardView' }
+            card:
+              oneOf:
+                - { $ref: '#/components/schemas/CardView' }
+                - { $ref: '#/components/schemas/Intake112Card' }
+            intake_state: { $ref: '#/components/schemas/Intake112State' }
+            dispatch: { $ref: '#/components/schemas/Intake112Dispatch' }
+            recipient_services: { type: array, items: { type: string }, description: Разрешённые учебные адресаты; эталон не раскрывается. }
+            intake_reference: { type: object, description: Только преподавателю в режиме 112. }
             allowed_transitions:
               type: array
               items: { $ref: '#/components/schemas/ReactionStatus' }
@@ -1238,6 +1310,11 @@ components:
           - call_start
           - call_end
           - control_report
+          - answer_incoming
+          - end_incoming
+          - save_intake_draft
+          - dispatch_intake
+          - complete_intake
         payload:
           type: object
         client_at:
@@ -1371,6 +1448,32 @@ components:
               text:
                 type: string
                 minLength: 1
+
+      - properties:
+          type: { const: answer_incoming }
+          payload: { type: object, additionalProperties: false }
+      - properties:
+          type: { const: end_incoming }
+          payload: { type: object, additionalProperties: false }
+      - properties:
+          type: { const: save_intake_draft }
+          payload:
+            type: object
+            additionalProperties: false
+            required: [draft]
+            properties:
+              draft: { $ref: '#/components/schemas/Intake112Card' }
+      - properties:
+          type: { const: dispatch_intake }
+          payload:
+            type: object
+            additionalProperties: false
+            required: [service_code]
+            properties:
+              service_code: { type: string }
+      - properties:
+          type: { const: complete_intake }
+          payload: { type: object, additionalProperties: false }
 
     Receipt:
       type: object

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emsim.local/schemas/evidence/operator112/v1",
+  "title": "Operator112IntakeEvidence v1",
+  "type": "object",
+  "required": ["schema", "exercise_type", "item_id", "run_id", "lesson_id", "trainee_id", "workstation_no", "scenario_version_id", "scenario_digest", "offered_at", "opened_at", "closed_at", "close_reason", "mode", "final_card", "intake_state", "dispatch", "actions", "cutoff_log_seq", "interruptions"],
+  "properties": {
+    "schema": {"const": "operator112_intake/v1"},
+    "exercise_type": {"const": "operator112_intake"},
+    "item_id": {"type": "string", "format": "uuid"},
+    "run_id": {"type": "string", "format": "uuid"},
+    "lesson_id": {"type": "string", "format": "uuid"},
+    "trainee_id": {"type": "string", "format": "uuid"},
+    "workstation_no": {"type": "integer"},
+    "scenario_version_id": {"type": "string", "format": "uuid"},
+    "scenario_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "offered_at": {"type": "string", "format": "date-time"},
+    "opened_at": {"type": ["string", "null"], "format": "date-time"},
+    "closed_at": {"type": "string", "format": "date-time"},
+    "close_reason": {"enum": ["completed", "interrupted"]},
+    "mode": {"const": "training"},
+    "final_card": {"type": "object", "required": ["number", "aon", "call_local_time", "call_time_zone", "applicant_name", "applicant_status", "age", "address", "incident_type", "complaint", "victims_present", "victims_count", "provided_phone"]},
+    "intake_state": {"type": "object", "required": ["call_status", "transcript", "has_saved_draft", "dispatched"], "properties": {"call_status": {"enum": ["ringing", "connected", "ended"]}, "transcript": {"type": "array"}}},
+    "dispatch": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "object", "required": ["item_id", "action_id", "service_code", "card_snapshot", "sent_at"]}
+      ]
+    },
+    "actions": {"type": "array", "items": {"type": "object", "required": ["action_id", "log_seq", "seq", "type", "accepted", "server_at"]}},
+    "cutoff_log_seq": {"type": "integer", "minimum": 0},
+    "interruptions": {"type": "array"}
+  }
+}
