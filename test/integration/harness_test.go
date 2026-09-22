@@ -272,7 +272,7 @@ func assertTableSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	want := []string{
 		"actions", "assessment_inputs", "assessments", "assignments", "audit_log", "blobs", "calls",
 		"classifier_types", "control_reports", "evidence",
-		"item_events",
+		"intake_dispatches", "item_events",
 		"items", "lessons", "report_files", "runs", "scenario_versions", "scenarios",
 		"services", "sessions", "tasks", "tickets", "trainee_assessment_state", "training_examples", "users",
 		"voice_assets", "workstations",

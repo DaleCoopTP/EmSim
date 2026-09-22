@@ -78,7 +78,7 @@ CREATE TABLE tickets (
 CREATE TABLE scenarios (
     id             uuid PRIMARY KEY,
     title          text NOT NULL,
-    target_service text NOT NULL REFERENCES services(code),
+    target_service text REFERENCES services(code), -- только ДДС; для 112 NULL
     difficulty     smallint NOT NULL CHECK (difficulty BETWEEN 1 AND 10),
     origin         text NOT NULL CHECK (origin IN ('manual', 'ticket', 'generated')),
     ticket_id      uuid REFERENCES tickets(id),
@@ -92,7 +92,7 @@ CREATE INDEX scenarios_service_status_idx ON scenarios (target_service, status, 
 
 -- Неизменяемая версия: body по contracts/scenario.schema.json.
 CREATE TABLE scenario_versions (
-    exercise_type text NOT NULL DEFAULT 'dds_processing' CHECK (exercise_type = 'dds_processing'), -- ADR-015: первый этап; 112 добавится отдельной миграцией
+    exercise_type text NOT NULL DEFAULT 'dds_processing' CHECK (exercise_type IN ('dds_processing', 'operator112_intake')),
     id            uuid PRIMARY KEY,
     scenario_id   uuid NOT NULL REFERENCES scenarios(id) ON DELETE CASCADE,
     version       integer NOT NULL CHECK (version > 0),
@@ -211,7 +211,7 @@ CREATE INDEX audit_log_actor_idx ON audit_log (actor_id, at);
 -- ============================================================ training
 
 CREATE TABLE lessons (
-    exercise_type text NOT NULL DEFAULT 'dds_processing' CHECK (exercise_type = 'dds_processing'), -- ADR-015: первый этап; 112 добавится отдельной миграцией
+    exercise_type text NOT NULL DEFAULT 'dds_processing' CHECK (exercise_type IN ('dds_processing', 'operator112_intake')),
     id            uuid PRIMARY KEY,
     instructor_id uuid NOT NULL REFERENCES users(id),
     title         text NOT NULL,
@@ -249,7 +249,7 @@ CREATE TABLE assignments (
 
 -- Прогон одного обучаемого в занятии.
 CREATE TABLE runs (
-    exercise_type text NOT NULL DEFAULT 'dds_processing' CHECK (exercise_type = 'dds_processing'), -- ADR-015: первый этап; 112 добавится отдельной миграцией
+    exercise_type text NOT NULL DEFAULT 'dds_processing' CHECK (exercise_type IN ('dds_processing', 'operator112_intake')),
     id             uuid PRIMARY KEY,
     lesson_id      uuid NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
     user_id        uuid NOT NULL REFERENCES users(id),
@@ -272,6 +272,7 @@ CREATE UNIQUE INDEX runs_active_workstation_idx ON runs (workstation_id) WHERE s
 -- Карточка у обучаемого. Единственная изменяемая строка карточки.
 CREATE TABLE items (
     id                  uuid PRIMARY KEY,
+    exercise_type       text NOT NULL DEFAULT 'dds_processing' CHECK (exercise_type IN ('dds_processing', 'operator112_intake')),
     run_id              uuid NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
     scenario_version_id uuid NOT NULL REFERENCES scenario_versions(id),
     ordinal             integer NOT NULL,              -- порядок в run
@@ -279,6 +280,7 @@ CREATE TABLE items (
     state               text NOT NULL CHECK (state IN ('offered', 'opened', 'in_progress', 'closed', 'interrupted')),
     reaction            text NOT NULL DEFAULT 'added', -- статус реагирования службы обучаемого
     card                jsonb NOT NULL CHECK (jsonb_typeof(card) = 'object'), -- экземпляр публичной карточки (срез 3); меняется только set_card_field
+    intake_state        jsonb CHECK (intake_state IS NULL OR jsonb_typeof(intake_state) = 'object'), -- телефон/реплики 112
     workflow            jsonb NOT NULL CHECK (jsonb_typeof(workflow) = 'object'), -- снимок services.workflow целевой службы на момент выдачи
     pilot_goal          text, -- снимок reference.pilot_goal (ADR-017); NULL/'' = обычные правила завершения
     seq                 bigint NOT NULL DEFAULT 0,     -- номер последнего принятого действия
@@ -295,6 +297,7 @@ CREATE TABLE items (
     UNIQUE (run_id, ordinal),
     CONSTRAINT items_reaction_shape CHECK (reaction IN ('added','received','accepted','not_accepted','responding','arrived','working','completed','refused','completed_without_team')),
     CONSTRAINT items_deadlines_object CHECK (jsonb_typeof(deadlines) = 'object'),
+    CONSTRAINT items_intake_state_shape CHECK ((exercise_type='dds_processing' AND intake_state IS NULL) OR (exercise_type='operator112_intake' AND intake_state IS NOT NULL)),
     CONSTRAINT items_state_shape CHECK (
         (state = 'offered'     AND opened_at IS NULL AND closed_at IS NULL) OR
         (state IN ('opened','in_progress') AND opened_at IS NOT NULL AND closed_at IS NULL) OR
@@ -313,7 +316,7 @@ CREATE TABLE actions (
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     id         uuid NOT NULL UNIQUE,                   -- action_id для ссылок; порядок по log_seq
     command_id uuid NOT NULL UNIQUE,                   -- клиентский, идемпотентность
-    type       text NOT NULL CHECK (type IN ('open','set_status','add_comment','set_card_field','call_start','call_end','control_report','close')),
+    type       text NOT NULL CHECK (type IN ('open','set_status','add_comment','set_card_field','call_start','call_end','control_report','close','answer_incoming','end_incoming','save_intake_draft','dispatch_intake','complete_intake')),
     payload    jsonb NOT NULL DEFAULT '{}'::jsonb,
     effect     jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(effect) = 'object'), -- срез 3/ADR-017: серверный факт (например set_card_field {path,old,new}), не участвует в request_digest
     accepted   boolean NOT NULL,
@@ -328,6 +331,15 @@ CREATE TABLE actions (
     CONSTRAINT actions_rejection_shape CHECK ((accepted AND rejection IS NULL) OR (NOT accepted AND rejection IS NOT NULL))
 );
 CREATE UNIQUE INDEX actions_item_seq_accepted_idx ON actions (item_id, seq) WHERE accepted;
+
+CREATE TABLE intake_dispatches (
+    item_id       uuid PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+    action_id     uuid NOT NULL UNIQUE REFERENCES actions(id),
+    service_code  text NOT NULL REFERENCES services(code),
+    card_snapshot jsonb NOT NULL CHECK (jsonb_typeof(card_snapshot) = 'object'),
+    sent_at       timestamptz NOT NULL
+);
+CREATE TRIGGER intake_dispatches_immutable BEFORE UPDATE OR DELETE ON intake_dispatches FOR EACH ROW EXECUTE FUNCTION reject_immutable_change();
 
 -- Запланированные события сценария для конкретной карточки.
 CREATE TABLE item_events (
@@ -399,7 +411,7 @@ CREATE TABLE control_reports (
 -- Assessment владеет версиями основания; auth не хранит эти данные.
 CREATE TABLE trainee_assessment_state (
     user_id uuid NOT NULL REFERENCES users(id),
-    exercise_type text NOT NULL DEFAULT 'dds_processing' CHECK (exercise_type='dds_processing'),
+    exercise_type text NOT NULL DEFAULT 'dds_processing' CHECK (exercise_type IN ('dds_processing', 'operator112_intake')),
     version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
     advice_due_at timestamptz,
     PRIMARY KEY(user_id, exercise_type)
