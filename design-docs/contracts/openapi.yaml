@@ -90,7 +90,7 @@ paths:
     patch:
       tags: [admin]
       summary: Изменить пользователя (ФИО, роль, служба, активность, пароль)
-      description: Частичное обновление — поле, отсутствующее в теле, не меняется. service_code:null очищает поле (обязателен для trainee, запрещён для admin/instructor — иное сочетание роли и service_code даёт 422). Смена пароля или active:false отзывает все сессии пользователя.
+      description: Частичное обновление — поле, отсутствующее в теле, не меняется. service_code:null очищает поле; обучаемый 112 может быть без службы, а назначение ДДС требует совпадающий профиль. Для admin/instructor код службы запрещён. Смена пароля или active:false отзывает все сессии пользователя.
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UserPatch' } } } }
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
@@ -963,6 +963,7 @@ components:
 
     LessonCreate:
       type: object
+      description: Для operator112_intake в первом срезе разрешены только mode=training, level=easy, без timing; для ДДС сохраняются прежние режимы и нормативы.
       required: [title, mode, level, exercise_type]
       properties:
         exercise_type: { $ref: '#/components/schemas/ExerciseType' }
@@ -971,6 +972,7 @@ components:
         level: { $ref: '#/components/schemas/Level' }
         timing:
           type: object
+          description: Только ДДС. У 112-1 нет временных нормативов; сервер возвращает нулевую политику, но не использует её для оценки.
           properties:
             open_s: { type: integer, default: 30 }
             primary_s: { type: integer, default: 30 }

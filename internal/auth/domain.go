@@ -270,14 +270,15 @@ func ValidateFullName(fullName string) error {
 	return nil
 }
 
-// validateServiceCode enforces schema.sql's comment on users.service_code:
-// required for trainee, must be absent for admin/instructor.
+// A trainee may have no service profile for operator 112. DDS assignment
+// still requires a matching service_code and checks that at assignment/start.
+// Admins and instructors never carry a service profile.
 func validateServiceCode(role Role, serviceCode *string) error {
 	present := serviceCode != nil && strings.TrimSpace(*serviceCode) != ""
 	switch role {
 	case RoleTrainee:
-		if !present {
-			return invalid("service_code", "required")
+		if serviceCode != nil && !present {
+			return invalid("service_code", "blank")
 		}
 	case RoleAdmin, RoleInstructor:
 		if present {

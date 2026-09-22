@@ -123,11 +123,22 @@ func (s *Service) CreateLesson(ctx context.Context, actor auth.Principal, in Les
 	if !in.Level.Valid() {
 		return Lesson{}, validationErr("level", "must be easy, medium or hard")
 	}
-	if in.ExerciseType != content.ExerciseTypeDDSProcessing {
+	if !in.ExerciseType.Valid() {
 		return Lesson{}, validationErr("exercise_type", "unsupported")
+	}
+	if in.ExerciseType == content.ExerciseTypeOperator112Intake {
+		if in.Mode != ModeTraining || in.Level != auth.LevelEasy {
+			return Lesson{}, validationErr("mode", "operator112_intake supports training/easy in the first slice")
+		}
+		if in.Timing != nil {
+			return Lesson{}, validationErr("timing", "operator112_intake has no timing norm")
+		}
 	}
 
 	timing := defaultTiming()
+	if in.ExerciseType == content.ExerciseTypeOperator112Intake {
+		timing = Timing{}
+	}
 	if in.Timing != nil {
 		timing = *in.Timing
 		if timing.OpenS <= 0 || timing.PrimaryS <= 0 || timing.CompleteS <= 0 {
@@ -143,9 +154,13 @@ func (s *Service) CreateLesson(ctx context.Context, actor auth.Principal, in Les
 		}
 	}
 
-	rubricVersion, err := content.RubricVersion()
-	if err != nil {
-		return Lesson{}, fmt.Errorf("training: read rubric version: %w", err)
+	rubricVersion := "operator112/rubric-v1"
+	if in.ExerciseType == content.ExerciseTypeDDSProcessing {
+		var err error
+		rubricVersion, err = content.RubricVersion()
+		if err != nil {
+			return Lesson{}, fmt.Errorf("training: read rubric version: %w", err)
+		}
 	}
 
 	lesson := Lesson{
@@ -162,7 +177,7 @@ func (s *Service) CreateLesson(ctx context.Context, actor auth.Principal, in Les
 	}
 
 	var created Lesson
-	err = s.store.WithTx(ctx, func(tx pgx.Tx) error {
+	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
 		var err error
 		created, err = s.store.InsertLesson(ctx, tx, lesson)
 		if err != nil {
@@ -216,6 +231,9 @@ func (s *Service) ReplaceAssignments(ctx context.Context, actor auth.Principal, 
 			if len(in.ScenarioVersionIDs) == 0 {
 				return validationErr("scenario_version_ids", "at least one scenario version is required")
 			}
+			if lesson.ExerciseType == content.ExerciseTypeOperator112Intake && len(in.ScenarioVersionIDs) != 1 {
+				return validationErr("scenario_version_ids", "operator112_intake supports exactly one scenario in the first slice")
+			}
 			if lesson.Level == auth.LevelHard && len(in.ScenarioVersionIDs) > 1 &&
 				(lesson.Timing.SpawnEveryS == nil || *lesson.Timing.SpawnEveryS <= 0) {
 				return validationErr("timing.spawn_every_s", "is required for a hard queue with multiple scenarios")
@@ -242,8 +260,12 @@ func (s *Service) ReplaceAssignments(ctx context.Context, actor auth.Principal, 
 			if !trainee.Active {
 				return validationErr("user_id", "inactive")
 			}
-			if trainee.ServiceCode == nil {
+			if lesson.ExerciseType == content.ExerciseTypeDDSProcessing && trainee.ServiceCode == nil {
 				return validationErr("user_id", "trainee has no service_code")
+			}
+			traineeServiceCode := ""
+			if trainee.ServiceCode != nil {
+				traineeServiceCode = *trainee.ServiceCode
 			}
 			for _, versionID := range in.ScenarioVersionIDs {
 				version, err := s.scenarios.VersionByID(ctx, tx, versionID)
@@ -252,7 +274,7 @@ func (s *Service) ReplaceAssignments(ctx context.Context, actor auth.Principal, 
 				} else if err != nil {
 					return err
 				}
-				if err := s.checkAssignableVersion(version, lesson.ExerciseType, *trainee.ServiceCode); err != nil {
+				if err := s.checkAssignableVersion(version, lesson.ExerciseType, traineeServiceCode); err != nil {
 					return err
 				}
 			}
@@ -289,6 +311,12 @@ func (s *Service) checkAssignableVersion(version content.ScenarioVersionRecord, 
 	}
 	if version.Body.ExerciseType != lessonExerciseType {
 		return validationErr("scenario_version_ids", "exercise_type does not match the lesson")
+	}
+	if lessonExerciseType == content.ExerciseTypeOperator112Intake {
+		if version.Body.Intake112 == nil {
+			return validationErr("scenario_version_ids", "intake112 scenario is missing")
+		}
+		return nil
 	}
 	if version.Body.TargetService != traineeServiceCode {
 		return validationErr("user_id", "service_code does not match the scenario's target_service")
@@ -664,8 +692,12 @@ func (s *Service) startOneAssignment(ctx context.Context, tx pgx.Tx, lesson Less
 	if !ws.Active {
 		return validationErr("workstation_no", "inactive")
 	}
-	if trainee.ServiceCode == nil {
+	if lesson.ExerciseType == content.ExerciseTypeDDSProcessing && trainee.ServiceCode == nil {
 		return validationErr("user_id", "trainee has no service_code")
+	}
+	traineeServiceCode := ""
+	if trainee.ServiceCode != nil {
+		traineeServiceCode = *trainee.ServiceCode
 	}
 
 	for _, versionID := range a.ScenarioVersionIDs {
@@ -673,7 +705,7 @@ func (s *Service) startOneAssignment(ctx context.Context, tx pgx.Tx, lesson Less
 		if err != nil {
 			return err
 		}
-		if err := s.checkAssignableVersion(version, lesson.ExerciseType, *trainee.ServiceCode); err != nil {
+		if err := s.checkAssignableVersion(version, lesson.ExerciseType, traineeServiceCode); err != nil {
 			return err
 		}
 	}

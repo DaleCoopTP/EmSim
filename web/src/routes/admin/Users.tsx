@@ -95,7 +95,7 @@ function CreateUserForm({ onDone }: { onDone: () => void }) {
       password: form.password,
       full_name: form.full_name.trim(),
       role: form.role,
-      ...(form.role === "trainee" ? { service_code: form.service_code.trim() } : {}),
+      ...(form.role === "trainee" && form.service_code.trim() ? { service_code: form.service_code.trim() } : {}),
     };
     create.mutate(body, { onSuccess: onDone });
   };
@@ -160,7 +160,7 @@ function EditUserForm({ user, onDone }: { user: User; onDone: () => void }) {
     if (form.full_name.trim() !== user.full_name) patch.full_name = form.full_name.trim();
     if (form.role !== user.role) patch.role = form.role;
     if (form.active !== user.active) patch.active = form.active;
-    const wantService = form.role === "trainee" ? form.service_code.trim() : null;
+    const wantService = form.role === "trainee" ? (form.service_code.trim() || null) : null;
     if (wantService !== (user.service_code ?? null)) patch.service_code = wantService;
     update.mutate({ id: user.id, patch }, { onSuccess: onDone });
   };
@@ -235,13 +235,12 @@ function RoleServiceFields({
           Служба
           {services.isError && <p role="alert" className="error">{errorMessage(services.error)}</p>}
           <select
-            required
             value={serviceCode}
             disabled={services.isPending}
             onChange={(e) => onChange({ service_code: e.target.value })}
           >
-            <option value="" disabled>
-              {services.isPending ? "Загрузка…" : "Выберите службу"}
+            <option value="">
+              {services.isPending ? "Загрузка…" : "Без службы (оператор 112)"}
             </option>
             {serviceCode !== "" && !services.data?.some((s) => s.code === serviceCode) && (
               <option value={serviceCode}>{serviceCode} (неизвестна каталогу)</option>

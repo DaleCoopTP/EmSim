@@ -68,10 +68,10 @@ func baseNewUser(role Role) NewUser {
 	}
 }
 
-func TestValidateNewUserTraineeRequiresServiceCode(t *testing.T) {
+func TestValidateNewUserTraineeMayHaveNoServiceCodeFor112(t *testing.T) {
 	n := baseNewUser(RoleTrainee)
-	if err := ValidateNewUser(n); err == nil {
-		t.Fatal("trainee without service_code was accepted")
+	if err := ValidateNewUser(n); err != nil {
+		t.Fatalf("trainee without service_code rejected: %v", err)
 	}
 	var ve *ValidationError
 	n.ServiceCode = serviceCode("dds_district")
@@ -150,12 +150,12 @@ func TestValidateUserPatchRoleChangeRevalidatesServiceCode(t *testing.T) {
 	}
 }
 
-func TestValidateUserPatchClearingServiceCodeForTraineeIsRejected(t *testing.T) {
+func TestValidateUserPatchClearingServiceCodeForTraineeIsAllowed(t *testing.T) {
 	current := User{Role: RoleTrainee, ServiceCode: serviceCode("dds_district")}
 	clear := ""
 	patch := Patch{ServiceCode: &clear}
-	if err := ValidateUserPatch(current, patch); err == nil {
-		t.Fatal("clearing a trainee's service_code without changing role was accepted")
+	if err := ValidateUserPatch(current, patch); err != nil {
+		t.Fatalf("clearing a trainee's service_code rejected: %v", err)
 	}
 }
 

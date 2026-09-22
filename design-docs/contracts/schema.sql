@@ -12,7 +12,7 @@ CREATE TABLE users (
     password_hash text NOT NULL,                       -- argon2id
     full_name     text NOT NULL,
     role          text NOT NULL CHECK (role IN ('admin', 'instructor', 'trainee')),
-    service_code  text,                                -- профиль обучаемого (служба); NULL для admin/instructor
+    service_code  text,                                -- NULL для admin/instructor и обучаемого 112 без профиля ДДС
     level         text NOT NULL DEFAULT 'easy' CHECK (level IN ('easy', 'medium', 'hard')),
     active        boolean NOT NULL DEFAULT true,
     created_at    timestamptz NOT NULL DEFAULT now(),
