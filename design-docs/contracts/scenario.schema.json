@@ -5,19 +5,79 @@
   "description": "Тело версии сценария (scenario_versions.body). Неизменяемо после утверждения. Генерируется LLM по этой же схеме и валидируется до записи.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema",
-    "target_service",
-    "card",
-    "contacts",
-    "events",
-    "reference",
-    "difficulty",
-    "exercise_type"
+  "required": ["schema", "difficulty", "exercise_type"],
+  "allOf": [
+    {
+      "if": {"properties": {"exercise_type": {"const": "dds_processing"}}},
+      "then": {
+        "required": ["target_service", "card", "contacts", "events", "reference"],
+        "not": {"required": ["intake112"]}
+      }
+    },
+    {
+      "if": {"properties": {"exercise_type": {"const": "operator112_intake"}}},
+      "then": {
+        "required": ["intake112"],
+        "not": {"anyOf": [
+          {"required": ["target_service"]}, {"required": ["card"]},
+          {"required": ["contacts"]}, {"required": ["events"]},
+          {"required": ["reference"]}
+        ]}
+      }
+    }
   ],
   "properties": {
     "schema": {
       "const": "emsim/scenario/v1"
+    },
+    "intake112": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["call", "recipient_services", "reference"],
+      "properties": {
+        "call": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["aon", "local_time", "time_zone", "script"],
+          "properties": {
+            "aon": {"type": "string", "pattern": "^\\+7[0-9]{10}$"},
+            "local_time": {"type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"},
+            "time_zone": {"const": "Europe/Moscow"},
+            "script": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+          }
+        },
+        "recipient_services": {
+          "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "reference": {
+          "type": "object", "additionalProperties": false,
+          "required": ["expected_card", "recipient_service"],
+          "properties": {
+            "expected_card": {
+              "type": "object", "additionalProperties": false,
+              "required": ["applicant_status", "age", "address", "incident_type", "complaint", "victims_count"],
+              "properties": {
+                "applicant_status": {"const": "victim"},
+                "age": {"type": "integer", "minimum": 0, "maximum": 120},
+                "address": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["city", "street", "house", "building", "landmark"],
+                  "properties": {
+                    "city": {"type": "string"}, "street": {"type": "string"},
+                    "house": {"type": "string"}, "building": {"type": "string"},
+                    "landmark": {"type": "string"}
+                  }
+                },
+                "incident_type": {"const": "medical_assistance_request"},
+                "complaint": {"type": "string", "minLength": 1},
+                "victims_count": {"type": "integer", "minimum": 1}
+              }
+            },
+            "recipient_service": {"type": "string", "minLength": 1}
+          }
+        }
+      }
     },
     "target_service": {
       "type": "string",
@@ -92,8 +152,8 @@
     },
     "exercise_type": {
       "type": "string",
-      "const": "dds_processing",
-      "description": "Тип упражнения. В первой поставке поддерживается ДДС; operator112_intake получит отдельный контракт позднее."
+      "enum": ["dds_processing", "operator112_intake"],
+      "description": "Тип упражнения выбирает отдельный вариант сценария."
     }
   },
   "$defs": {

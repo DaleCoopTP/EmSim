@@ -17,9 +17,14 @@ import (
 // stage adds its own contract (slice-planning.md §1).
 type ExerciseType string
 
-const ExerciseTypeDDSProcessing ExerciseType = "dds_processing"
+const (
+	ExerciseTypeDDSProcessing     ExerciseType = "dds_processing"
+	ExerciseTypeOperator112Intake ExerciseType = "operator112_intake"
+)
 
-func (e ExerciseType) Valid() bool { return e == ExerciseTypeDDSProcessing }
+func (e ExerciseType) Valid() bool {
+	return e == ExerciseTypeDDSProcessing || e == ExerciseTypeOperator112Intake
+}
 
 // Reaction is scenario.schema.json's $defs.reaction — the card status
 // vocabulary shared by notification_list, events and reference. The

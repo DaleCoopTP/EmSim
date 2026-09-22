@@ -30,6 +30,9 @@ func Validate(body Body, catalog Catalog) error {
 	if !body.ExerciseType.Valid() {
 		return invalid("exercise_type", "invalid")
 	}
+	if body.ExerciseType == ExerciseTypeOperator112Intake {
+		return validateIntake112(body.Intake112, catalog)
+	}
 
 	target, ok := catalog.Service(body.TargetService)
 	if !ok {
@@ -63,6 +66,27 @@ func Validate(body Body, catalog Catalog) error {
 		return err
 	}
 	return validateScoring(body.Reference.Scoring)
+}
+
+func validateIntake112(intake *Intake112, catalog Catalog) error {
+	if intake == nil {
+		return invalid("intake112", "required")
+	}
+	if len(intake.RecipientServices) != 1 {
+		return invalid("intake112.recipient_services", "exactly_one_required")
+	}
+	code := intake.RecipientServices[0]
+	service, ok := catalog.Service(code)
+	if !ok {
+		return invalid("intake112.recipient_services[0]", "unknown")
+	}
+	if !service.Active {
+		return invalid("intake112.recipient_services[0]", "inactive")
+	}
+	if intake.Reference.RecipientService != code {
+		return invalid("intake112.reference.recipient_service", "not_available")
+	}
+	return nil
 }
 
 func validateNotificationList(list []NotificationEntry, targetService string, catalog Catalog) error {

@@ -145,7 +145,7 @@ func (s *Store) InsertClassifierType(ctx context.Context, tx pgx.Tx, c content.C
 
 // ------------------------------------------------------------ scenarios
 
-const scenarioColumns = `id, title, target_service, difficulty, origin, ticket_id, status, source_key, created_by, created_at, updated_at`
+const scenarioColumns = `id, title, COALESCE(target_service, ''), difficulty, origin, ticket_id, status, source_key, created_by, created_at, updated_at`
 
 func scanScenario(row pgx.Row) (content.ScenarioRecord, error) {
 	var rec content.ScenarioRecord
@@ -174,7 +174,7 @@ func (s *Store) InsertScenario(ctx context.Context, tx pgx.Tx, rec content.Scena
 	_, err := tx.Exec(ctx, `
 		INSERT INTO scenarios (id, title, target_service, difficulty, origin, ticket_id, status, source_key, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, rec.ID, rec.Title, rec.TargetService, rec.Difficulty, rec.Origin, rec.TicketID, rec.Status, rec.SourceKey, rec.CreatedBy)
+	`, rec.ID, rec.Title, nullableString(rec.TargetService), rec.Difficulty, rec.Origin, rec.TicketID, rec.Status, rec.SourceKey, rec.CreatedBy)
 	if err != nil {
 		return content.ErrStorage
 	}
@@ -204,6 +204,7 @@ func (s *Store) ListScenarios(ctx context.Context, tx pgx.Tx, filter content.Sce
 		pageSize = 50
 	}
 	targetService := nullableString(filter.TargetService)
+	exerciseType := nullableString(string(filter.ExerciseType))
 	status := nullableString(filter.Status)
 	difficultyMin := nullableInt(filter.DifficultyMin)
 	difficultyMax := nullableInt(filter.DifficultyMax)
@@ -215,21 +216,22 @@ func (s *Store) ListScenarios(ctx context.Context, tx pgx.Tx, filter content.Sce
 		  AND ($2::text IS NULL OR s.status = $2)
 		  AND ($3::int IS NULL OR s.difficulty >= $3)
 		  AND ($4::int IS NULL OR s.difficulty <= $4)
+		  AND ($5::text IS NULL OR sv.exercise_type = $5)
 	`
 
 	var total int
-	if err := tx.QueryRow(ctx, `SELECT count(*) `+where, targetService, status, difficultyMin, difficultyMax).Scan(&total); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT count(*) `+where, targetService, status, difficultyMin, difficultyMax, exerciseType).Scan(&total); err != nil {
 		return nil, 0, content.ErrStorage
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT s.id, s.title, s.target_service, s.difficulty, s.origin, s.ticket_id, s.status, s.source_key,
+		SELECT s.id, s.title, COALESCE(s.target_service, ''), s.difficulty, s.origin, s.ticket_id, s.status, s.source_key,
 		       s.created_by, s.created_at, s.updated_at,
-		       sv.version, jsonb_array_length(COALESCE(sv.body->'events', '[]'::jsonb)) > 0
+		       sv.exercise_type, sv.version, jsonb_array_length(COALESCE(sv.body->'events', '[]'::jsonb)) > 0
 		`+where+`
 		ORDER BY s.updated_at DESC, s.id
-		LIMIT $5 OFFSET $6
-	`, targetService, status, difficultyMin, difficultyMax, pageSize, (page-1)*pageSize)
+		LIMIT $6 OFFSET $7
+	`, targetService, status, difficultyMin, difficultyMax, exerciseType, pageSize, (page-1)*pageSize)
 	if err != nil {
 		return nil, 0, content.ErrStorage
 	}
@@ -239,7 +241,7 @@ func (s *Store) ListScenarios(ctx context.Context, tx pgx.Tx, filter content.Sce
 	for rows.Next() {
 		var sum content.ScenarioSummary
 		if err := rows.Scan(&sum.ID, &sum.Title, &sum.TargetService, &sum.Difficulty, &sum.Origin, &sum.TicketID,
-			&sum.Status, &sum.SourceKey, &sum.CreatedBy, &sum.CreatedAt, &sum.UpdatedAt, &sum.Version, &sum.HasEvents); err != nil {
+			&sum.Status, &sum.SourceKey, &sum.CreatedBy, &sum.CreatedAt, &sum.UpdatedAt, &sum.ExerciseType, &sum.Version, &sum.HasEvents); err != nil {
 			return nil, 0, content.ErrStorage
 		}
 		summaries = append(summaries, sum)
@@ -304,7 +306,7 @@ func (s *Store) VersionReferenceByID(ctx context.Context, tx pgx.Tx, id uuid.UUI
 	err := tx.QueryRow(ctx, `
 		SELECT sv.status,
 		       sv.approved_by IS NOT NULL AND sv.approved_at IS NOT NULL AS published,
-		       sv.exercise_type, s.target_service
+		       sv.exercise_type, COALESCE(s.target_service, '')
 		FROM scenario_versions sv
 		JOIN scenarios s ON s.id = sv.scenario_id
 		WHERE sv.id = $1
@@ -323,7 +325,7 @@ func (s *Store) VersionReferenceBySourceKeyVersion(ctx context.Context, tx pgx.T
 	err := tx.QueryRow(ctx, `
 		SELECT sv.status,
 		       sv.approved_by IS NOT NULL AND sv.approved_at IS NOT NULL AS published,
-		       sv.exercise_type, s.target_service
+		       sv.exercise_type, COALESCE(s.target_service, '')
 		FROM scenario_versions sv
 		JOIN scenarios s ON s.id = sv.scenario_id
 		WHERE s.source_key = $1 AND sv.version = $2
@@ -401,12 +403,12 @@ func (s *Store) InsertScenarioVersion(ctx context.Context, tx pgx.Tx, v content.
 	// plain INSERT value and a CASE branch, even though both targets are
 	// uuid.
 	row := tx.QueryRow(ctx, `
-		INSERT INTO scenario_versions (id, scenario_id, version, status, body, digest, difficulty, source_task_id, prompt_ref, created_by, approved_by, approved_at)
+		INSERT INTO scenario_versions (id, scenario_id, version, status, body, digest, difficulty, source_task_id, prompt_ref, created_by, approved_by, approved_at, exercise_type)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
 		        CASE WHEN $4 = 'approved' THEN $11::uuid ELSE NULL END,
-		        CASE WHEN $4 = 'approved' THEN clock_timestamp() ELSE NULL END)
+		        CASE WHEN $4 = 'approved' THEN clock_timestamp() ELSE NULL END, $12)
 		RETURNING created_at, approved_by, approved_at
-	`, v.ID, v.ScenarioID, v.Version, v.Status, bodyJSON, v.Digest[:], v.Difficulty, v.SourceTaskID, v.PromptRef, v.CreatedBy, v.CreatedBy)
+	`, v.ID, v.ScenarioID, v.Version, v.Status, bodyJSON, v.Digest[:], v.Difficulty, v.SourceTaskID, v.PromptRef, v.CreatedBy, v.CreatedBy, v.Body.ExerciseType)
 	if err := row.Scan(&v.CreatedAt, &v.ApprovedBy, &v.ApprovedAt); err != nil {
 		return content.ScenarioVersionRecord{}, content.ErrStorage
 	}

@@ -13,6 +13,7 @@ import (
 // field before Validate or the http/preview layers can see it.
 type Body struct {
 	Schema        string       `json:"schema"`
+	Intake112     *Intake112   `json:"intake112,omitempty"`
 	TargetService string       `json:"target_service"`
 	Card          Card         `json:"card"`
 	Contacts      []Contact    `json:"contacts"`
@@ -22,6 +23,44 @@ type Body struct {
 	Generation    *Generation  `json:"generation"`
 	Difficulty    int          `json:"difficulty"`
 	ExerciseType  ExerciseType `json:"exercise_type"`
+}
+
+// Intake112 is the immutable prepared content for the first operator 112
+// exercise. Reference is instructor-only; the trainee learns Script only
+// after answering the incoming call.
+type Intake112 struct {
+	Call              Intake112Call      `json:"call"`
+	RecipientServices []string           `json:"recipient_services"`
+	Reference         Intake112Reference `json:"reference"`
+}
+
+type Intake112Call struct {
+	AON       string   `json:"aon"`
+	LocalTime string   `json:"local_time"`
+	TimeZone  string   `json:"time_zone"`
+	Script    []string `json:"script"`
+}
+
+type Intake112Reference struct {
+	ExpectedCard     Intake112ExpectedCard `json:"expected_card"`
+	RecipientService string                `json:"recipient_service"`
+}
+
+type Intake112ExpectedCard struct {
+	ApplicantStatus string           `json:"applicant_status"`
+	Age             int              `json:"age"`
+	Address         Intake112Address `json:"address"`
+	IncidentType    string           `json:"incident_type"`
+	Complaint       string           `json:"complaint"`
+	VictimsCount    int              `json:"victims_count"`
+}
+
+type Intake112Address struct {
+	City     string `json:"city"`
+	Street   string `json:"street"`
+	House    string `json:"house"`
+	Building string `json:"building"`
+	Landmark string `json:"landmark"`
 }
 
 // Card is scenario.schema.json's $defs.card — the incoming card as the

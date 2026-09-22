@@ -109,15 +109,15 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportServices: %v", err)
 	}
-	if servicesResult.Created != 3 || servicesResult.Unchanged != 0 {
-		t.Fatalf("ImportServices = %+v, want Created=3 Unchanged=0", servicesResult)
+	if servicesResult.Created != 4 || servicesResult.Unchanged != 0 {
+		t.Fatalf("ImportServices = %+v, want Created=4 Unchanged=0", servicesResult)
 	}
 	servicesResult2, err := svc.ImportServices(ctx, openSeedFile(t, "../../seed/services.json"), actorID, actorRole, "req-2")
 	if err != nil {
 		t.Fatalf("ImportServices (replay): %v", err)
 	}
-	if servicesResult2.Created != 0 || servicesResult2.Unchanged != 3 {
-		t.Fatalf("ImportServices (replay) = %+v, want Created=0 Unchanged=3", servicesResult2)
+	if servicesResult2.Created != 0 || servicesResult2.Unchanged != 4 {
+		t.Fatalf("ImportServices (replay) = %+v, want Created=0 Unchanged=4", servicesResult2)
 	}
 
 	// --- classifier ---
@@ -141,15 +141,15 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportScenarios: %v", err)
 	}
-	if scenarioResult.NewScenarios != 4 || scenarioResult.NewVersions != 4 || scenarioResult.Unchanged != 0 {
-		t.Fatalf("ImportScenarios = %+v, want NewScenarios=4 NewVersions=4 Unchanged=0", scenarioResult)
+	if scenarioResult.NewScenarios != 5 || scenarioResult.NewVersions != 5 || scenarioResult.Unchanged != 0 {
+		t.Fatalf("ImportScenarios = %+v, want NewScenarios=5 NewVersions=5 Unchanged=0", scenarioResult)
 	}
 	scenarioResult2, err := svc.ImportScenarios(ctx, openScenarioDir(t, "../../seed/scenarios"), actorID, actorRole, "req-6")
 	if err != nil {
 		t.Fatalf("ImportScenarios (replay): %v", err)
 	}
-	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 4 {
-		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=4", scenarioResult2)
+	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 5 {
+		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=5", scenarioResult2)
 	}
 
 	// --- read side ---
@@ -157,18 +157,40 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListScenarios: %v", err)
 	}
-	if total != 4 || len(items) != 4 {
-		t.Fatalf("ListScenarios: total=%d len=%d, want 4 including pilot-phone-01", total, len(items))
+	if total != 5 || len(items) != 5 {
+		t.Fatalf("ListScenarios: total=%d len=%d, want 5 including pilot-112-medical-01", total, len(items))
 	}
 
 	var case02ID uuid.UUID
+	var intakeID uuid.UUID
 	for _, it := range items {
 		if it.SourceKey != nil && *it.SourceKey == "pilot-tree-02" {
 			case02ID = it.ID
 		}
+		if it.SourceKey != nil && *it.SourceKey == "pilot-112-medical-01" {
+			intakeID = it.ID
+			if it.ExerciseType != content.ExerciseTypeOperator112Intake || it.TargetService != "" {
+				t.Fatalf("112 catalogue entry has wrong type/target: %+v", it)
+			}
+		}
 	}
 	if case02ID == uuid.Nil {
 		t.Fatalf("pilot-tree-02 not found in ListScenarios: %+v", items)
+	}
+	if intakeID == uuid.Nil {
+		t.Fatalf("pilot-112-medical-01 not found in ListScenarios: %+v", items)
+	}
+	intakeItems, intakeTotal, err := svc.ListScenarios(ctx, content.ScenarioFilter{ExerciseType: content.ExerciseTypeOperator112Intake})
+	if err != nil || intakeTotal != 1 || len(intakeItems) != 1 || intakeItems[0].ID != intakeID {
+		t.Fatalf("112 catalogue filter: items=%+v total=%d err=%v", intakeItems, intakeTotal, err)
+	}
+	intakeDetail, err := svc.ScenarioDetail(ctx, intakeID)
+	if err != nil || intakeDetail.Body.Intake112 == nil || intakeDetail.Body.Intake112.Call.LocalTime != "02:03" {
+		t.Fatalf("112 scenario detail: detail=%+v err=%v", intakeDetail, err)
+	}
+	var storedExerciseType string
+	if err := pool.QueryRow(ctx, `SELECT exercise_type FROM scenario_versions WHERE id=$1`, intakeDetail.VersionID).Scan(&storedExerciseType); err != nil || storedExerciseType != "operator112_intake" {
+		t.Fatalf("stored 112 exercise_type = %q, err=%v", storedExerciseType, err)
 	}
 
 	detail, err := svc.ScenarioDetail(ctx, case02ID)

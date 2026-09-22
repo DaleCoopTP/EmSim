@@ -26,6 +26,15 @@
     }
   },
   {
+    "code": "pilot_ambulance",
+    "name": "Учебная служба скорой помощи",
+    "workflow": {
+      "transitions": {"added": ["received"], "received": ["accepted"]},
+      "comment_required": [],
+      "terminal": []
+    }
+  },
+  {
     "code": "pilot_nature_department",
     "name": "Департамент природопользования и охраны окружающей среды",
     "workflow": {

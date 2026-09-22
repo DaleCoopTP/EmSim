@@ -1,0 +1,42 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "pilot-112-medical-01",
+  "version": 1,
+  "title": "Первый вызов 112 — обращение за медицинской помощью",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "exercise_type": "operator112_intake",
+    "difficulty": 1,
+    "intake112": {
+      "call": {
+        "aon": "+79161313131",
+        "local_time": "02:03",
+        "time_zone": "Europe/Moscow",
+        "script": [
+          "Здравствуйте. Мне 19 лет. У меня сильная диарея и обильная рвота.",
+          "Я нахожусь в Москве, улица Космонавтов, дом 2, корпус 3, рядом с метро ВДНХ.",
+          "Помощь нужна мне самому."
+        ]
+      },
+      "recipient_services": ["pilot_ambulance"],
+      "reference": {
+        "expected_card": {
+          "applicant_status": "victim",
+          "age": 19,
+          "address": {
+            "city": "Москва",
+            "street": "улица Космонавтов",
+            "house": "2",
+            "building": "3",
+            "landmark": "метро ВДНХ"
+          },
+          "incident_type": "medical_assistance_request",
+          "complaint": "сильная диарея и обильная рвота",
+          "victims_count": 1
+        },
+        "recipient_service": "pilot_ambulance"
+      }
+    }
+  }
+}

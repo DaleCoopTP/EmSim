@@ -37,7 +37,7 @@ export function LessonDetailRoute() {
   const { lessonId = "" } = useParams();
   const lesson = useLesson(lessonId);
   const options = useLessonOptions();
-  const scenarios = useScenarios({ status: "approved", page: 1, pageSize: 200 });
+  const scenarios = useScenarios({ status: "approved", exerciseType: lesson.data?.exercise_type, page: 1, pageSize: 200 });
   const queryClient = useQueryClient();
   const isDraft = lesson.data?.state === "draft";
 
@@ -148,7 +148,7 @@ export function LessonDetailRoute() {
           {scenarios.isError && <p className="error">{errorMessage(scenarios.error)}</p>}
           {effectiveRows.map((row) => (
             <AssignmentRow
-              key={row.key} row={row} options={options.data} scenarios={scenarios.data?.items ?? []}
+              key={row.key} row={row} options={options.data} scenarios={scenarios.data?.items ?? []} exerciseType={current.exercise_type}
               usedWorkstations={usedWorkstations} usedUsers={usedUsers}
               onChange={(patch) => updateRow(row.key, patch)}
               onRemove={effectiveRows.length > 1 ? () => removeRow(row.key) : undefined}
@@ -199,11 +199,12 @@ export function LessonDetailRoute() {
 }
 
 function AssignmentRow({
-  row, options, scenarios, usedWorkstations, usedUsers, onChange, onRemove, onAddToQueue, onRemoveFromQueue, onMoveInQueue,
+  row, options, scenarios, exerciseType, usedWorkstations, usedUsers, onChange, onRemove, onAddToQueue, onRemoveFromQueue, onMoveInQueue,
 }: {
   row: RowState;
   options: ReturnType<typeof useLessonOptions>["data"];
-  scenarios: { id: string; title: string; target_service: string; version: number }[];
+  scenarios: { id: string; title: string; target_service?: string; version: number }[];
+  exerciseType: "dds_processing" | "operator112_intake";
   usedWorkstations: Set<string>;
   usedUsers: Set<string>;
   onChange: (patch: Partial<RowState>) => void;
@@ -214,7 +215,7 @@ function AssignmentRow({
 }) {
   const [scenarioToAdd, setScenarioToAdd] = useState("");
   const trainee = options?.trainees.find((t) => t.id === row.userId);
-  const compatible = scenarios.filter((s) => !trainee?.service_code || s.target_service === trainee.service_code);
+  const compatible = scenarios.filter((s) => exerciseType === "operator112_intake" || (!!trainee?.service_code && s.target_service === trainee.service_code));
   const scenarioTitle = (id: string) => scenarios.find((s) => s.id === id)?.title ?? id;
 
   return (

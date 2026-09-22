@@ -81,7 +81,7 @@ func (s *Service) ScenarioDetail(ctx context.Context, id uuid.UUID) (ScenarioDet
 			return err
 		}
 		detail = ScenarioDetail{
-			ScenarioSummary: ScenarioSummary{ScenarioRecord: sc, Version: v.Version, HasEvents: len(v.Body.Events) > 0},
+			ScenarioSummary: ScenarioSummary{ScenarioRecord: sc, ExerciseType: v.Body.ExerciseType, Version: v.Version, HasEvents: len(v.Body.Events) > 0},
 			VersionID:       v.ID,
 			Body:            v.Body,
 			BodyJSON:        v.BodyJSON,
@@ -118,9 +118,11 @@ func (s *Service) ScenarioVersions(ctx context.Context, id uuid.UUID) ([]Version
 // is the full эталон, unmodified, since this route is instructor-only
 // (authz.GroupContent).
 type ScenarioPreview struct {
-	Card      CardPreview
-	Contacts  []ContactPreview
-	Reference Reference
+	ExerciseType ExerciseType
+	Intake112    *Intake112
+	Card         CardPreview
+	Contacts     []ContactPreview
+	Reference    Reference
 }
 
 func (s *Service) ScenarioPreview(ctx context.Context, id uuid.UUID) (ScenarioPreview, error) {
@@ -130,10 +132,13 @@ func (s *Service) ScenarioPreview(ctx context.Context, id uuid.UUID) (ScenarioPr
 		if err != nil {
 			return err
 		}
-		preview = ScenarioPreview{
-			Card:      ProjectCard(v.Body.Card),
-			Contacts:  ProjectContacts(v.Body.Contacts),
-			Reference: v.Body.Reference,
+		preview.ExerciseType = v.Body.ExerciseType
+		if v.Body.ExerciseType == ExerciseTypeOperator112Intake {
+			preview.Intake112 = v.Body.Intake112
+		} else {
+			preview.Card = ProjectCard(v.Body.Card)
+			preview.Contacts = ProjectContacts(v.Body.Contacts)
+			preview.Reference = v.Body.Reference
 		}
 		return nil
 	})

@@ -37,6 +37,7 @@ export interface ScenarioList {
 // only needs to send what it has, not pre-validate.
 export interface ScenarioFilter {
   service?: string;
+  exerciseType?: ScenarioSummary["exercise_type"];
   status?: ScenarioStatus;
   difficultyMin?: number;
   difficultyMax?: number;
@@ -47,6 +48,7 @@ export interface ScenarioFilter {
 function scenarioQuery(filter: ScenarioFilter): string {
   const params = new URLSearchParams();
   if (filter.service) params.set("service", filter.service);
+  if (filter.exerciseType) params.set("exercise_type", filter.exerciseType);
   if (filter.status) params.set("status", filter.status);
   if (filter.difficultyMin) params.set("difficulty_min", String(filter.difficultyMin));
   if (filter.difficultyMax) params.set("difficulty_max", String(filter.difficultyMax));
@@ -84,10 +86,9 @@ export function useScenarioVersions(id: string) {
   });
 }
 
-export interface ScenarioPreview {
-  card: CardPreview;
-  reference: ScenarioReference;
-}
+export type ScenarioPreview =
+  | { card: CardPreview; reference: ScenarioReference }
+  | { exercise_type: "operator112_intake"; intake112: components["schemas"]["Intake112Scenario"] };
 
 export const scenarioPreviewQueryKey = (id: string) => ["content", "scenario", id, "preview"] as const;
 

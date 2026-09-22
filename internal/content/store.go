@@ -130,8 +130,9 @@ type ScenarioVersionReference struct {
 // GET /scenarios.
 type ScenarioSummary struct {
 	ScenarioRecord
-	Version   int
-	HasEvents bool
+	ExerciseType ExerciseType
+	Version      int
+	HasEvents    bool
 }
 
 // ScenarioDetail is GET /scenarios/{id} (openapi.yaml Scenario) — a
@@ -167,6 +168,7 @@ type VersionSummary struct {
 // resolves to a positive default before calling Service.
 type ScenarioFilter struct {
 	TargetService string
+	ExerciseType  ExerciseType
 	Status        string
 	DifficultyMin int
 	DifficultyMax int

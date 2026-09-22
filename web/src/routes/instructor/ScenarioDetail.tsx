@@ -35,6 +35,35 @@ export function ScenarioDetailRoute() {
   }
 
   const s = scenario.data;
+  if ("intake112" in preview.data) {
+    const intake = preview.data.intake112;
+    return (
+      <section className="instructor-page scenario-detail">
+        <p className="back-link"><Link to="/instructor/scenarios">← К сценариям</Link></p>
+        <header className="page-heading scenario-heading">
+          <div><h1>{s.title}</h1><p>Оператор 112 · версия {s.version}</p></div>
+          <span className={`status-badge status-${s.status}`}>{scenarioStatusLabel(s.status)}</span>
+        </header>
+        <div className="scenario-review-grid">
+          <section className="scenario-reference-pane">
+            <h2>Подготовленный вызов</h2>
+            <p>АОН: {intake.call.aon} · {intake.call.local_time} МСК</p>
+            <ol>{intake.call.script.map((line, index) => <li key={index}>{line}</li>)}</ol>
+          </section>
+          <section className="scenario-reference-pane">
+            <h2>Эталон для преподавателя</h2>
+            <dl>
+              <dt>Возраст</dt><dd>{intake.reference.expected_card.age}</dd>
+              <dt>Место</dt><dd>{Object.values(intake.reference.expected_card.address).join(", ")}</dd>
+              <dt>Жалобы</dt><dd>{intake.reference.expected_card.complaint}</dd>
+              <dt>Адресат</dt><dd>{intake.reference.recipient_service}</dd>
+            </dl>
+          </section>
+        </div>
+        <VersionsBlock scenarioId={scenarioId} />
+      </section>
+    );
+  }
   const { card, reference } = preview.data;
 
   return (

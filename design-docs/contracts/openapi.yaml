@@ -172,6 +172,7 @@ paths:
       description: Роль — instructor (authz.GroupContent).
       parameters:
         - { name: service, in: query, schema: { type: string } }
+        - { name: exercise_type, in: query, schema: { $ref: '#/components/schemas/ExerciseType' } }
         - { name: status, in: query, schema: { type: string, enum: [draft, approved, archived] } }
         - { name: difficulty_min, in: query, schema: { type: integer, minimum: 1, maximum: 10 } }
         - { name: difficulty_max, in: query, schema: { type: integer, minimum: 1, maximum: 10 } }
@@ -263,9 +264,9 @@ paths:
     get:
       tags: [content]
       summary: Как увидит карточку обучаемый (без эталона) + эталон отдельно
-      description: Роль — instructor. Не создаёт item/run — чистый просмотр. card — allowlist-проекция без закрытых полей (§CardPreview); reference — типизированный эталон для преподавателя. Время показывается относительно выдачи (registered_at_offset_s), не абсолютной датой — абсолютное время появится вместе с исполнением упражнения (срез 3).
+      description: Роль — instructor. Для ДДС возвращает card и reference; для 112 — intake112 с подготовленными репликами и эталоном. Обучаемый не имеет доступа к этому маршруту.
       responses:
-        '200': { description: OK, content: { application/json: { schema: { type: object, required: [card, reference], properties: { card: { $ref: '#/components/schemas/CardPreview' }, reference: { $ref: '#/components/schemas/ScenarioReference' } } } } } }
+        '200': { description: OK, content: { application/json: { schema: { oneOf: [ { type: object, required: [card, reference], properties: { card: { $ref: '#/components/schemas/CardPreview' }, reference: { $ref: '#/components/schemas/ScenarioReference' } } }, { type: object, required: [exercise_type, intake112], properties: { exercise_type: { type: string, const: operator112_intake }, intake112: { $ref: '#/components/schemas/Intake112Scenario' } } } ] } } } }
         '404': { $ref: '#/components/responses/NotFound' }
 
   # ------------------------------------------------------------ lessons (instructor)
@@ -697,11 +698,12 @@ components:
 
     ScenarioSummary:
       type: object
-      required: [id, title, target_service, difficulty, status, origin, version]
+      required: [id, title, exercise_type, difficulty, status, origin, version]
       properties:
         id: { type: string, format: uuid }
         title: { type: string }
-        target_service: { type: string }
+        exercise_type: { $ref: '#/components/schemas/ExerciseType' }
+        target_service: { type: string, description: Только ДДС; у 112 отсутствует. }
         difficulty: { type: integer, minimum: 1, maximum: 10 }
         status: { type: string, enum: [draft, approved, archived] }
         origin: { type: string, enum: [manual, ticket, generated] }
@@ -730,15 +732,50 @@ components:
         body: { $ref: '#/components/schemas/ScenarioBody' }
     ExerciseType:
       type: string
-      const: dds_processing
-      description: Первый этап — ДДС. operator112_intake добавляется отдельным контрактом после определения процесса 112.
+      enum: [dds_processing, operator112_intake]
     ScenarioBody:
       type: object
       required: [exercise_type]
       properties:
         exercise_type: { $ref: '#/components/schemas/ExerciseType' }
-      description: Полная схема — contracts/scenario.schema.json (exercise_type, card, events, reference, contacts)
+      description: Полная дискриминированная схема — contracts/scenario.schema.json. У 112 используется intake112 вместо входящей карточки ДДС.
       additionalProperties: true
+    Intake112Scenario:
+      type: object
+      required: [call, recipient_services, reference]
+      properties:
+        call:
+          type: object
+          required: [aon, local_time, time_zone, script]
+          properties:
+            aon: { type: string }
+            local_time: { type: string, description: HH:mm в сценарии; не серверное время. }
+            time_zone: { type: string, const: Europe/Moscow }
+            script: { type: array, items: { type: string } }
+        recipient_services: { type: array, items: { type: string }, minItems: 1, maxItems: 1 }
+        reference:
+          type: object
+          required: [expected_card, recipient_service]
+          properties:
+            recipient_service: { type: string }
+            expected_card:
+              type: object
+              required: [applicant_status, age, address, incident_type, complaint, victims_count]
+              properties:
+                applicant_status: { type: string, const: victim }
+                age: { type: integer }
+                address:
+                  type: object
+                  required: [city, street, house, building, landmark]
+                  properties:
+                    city: { type: string }
+                    street: { type: string }
+                    house: { type: string }
+                    building: { type: string }
+                    landmark: { type: string }
+                incident_type: { type: string, const: medical_assistance_request }
+                complaint: { type: string }
+                victims_count: { type: integer }
     ScenarioVersionSummary:
       type: object
       properties:

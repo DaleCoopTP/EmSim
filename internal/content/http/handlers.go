@@ -105,11 +105,16 @@ func (h *Handlers) listScenarios(w http.ResponseWriter, r *http.Request) {
 
 	filter := content.ScenarioFilter{
 		TargetService: query.Get("service"),
+		ExerciseType:  content.ExerciseType(query.Get("exercise_type")),
 		Status:        query.Get("status"),
 		DifficultyMin: difficultyMin,
 		DifficultyMax: difficultyMax,
 		Page:          queryIntOrDefault(query, "page", 1),
 		PageSize:      min(queryIntOrDefault(query, "page_size", 50), 200), // openapi.yaml PageSize: maximum 200
+	}
+	if filter.ExerciseType != "" && !filter.ExerciseType.Valid() {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "invalid exercise_type", map[string]any{"field": "exercise_type"})
+		return
 	}
 
 	items, total, err := h.content.ListScenarios(r.Context(), filter)
@@ -259,7 +264,8 @@ type scenarioListJSON struct {
 type scenarioSummaryJSON struct {
 	ID            string  `json:"id"`
 	Title         string  `json:"title"`
-	TargetService string  `json:"target_service"`
+	ExerciseType  string  `json:"exercise_type"`
+	TargetService string  `json:"target_service,omitempty"`
 	Difficulty    int     `json:"difficulty"`
 	Status        string  `json:"status"`
 	Origin        string  `json:"origin"`
@@ -274,7 +280,7 @@ type scenarioSummaryJSON struct {
 
 func toScenarioSummaryJSON(s content.ScenarioSummary) scenarioSummaryJSON {
 	return scenarioSummaryJSON{
-		ID: s.ID.String(), Title: s.Title, TargetService: s.TargetService, Difficulty: s.Difficulty,
+		ID: s.ID.String(), Title: s.Title, ExerciseType: string(s.ExerciseType), TargetService: s.TargetService, Difficulty: s.Difficulty,
 		Status: s.Status, Origin: s.Origin, Version: s.Version, SourceKey: s.SourceKey,
 		HasEvents: s.HasEvents, HasVoice: false, UpdatedAt: formatTime(s.UpdatedAt),
 	}
@@ -488,7 +494,10 @@ func toReferencePreviewJSON(r content.Reference) referencePreviewJSON {
 	}
 }
 
-func toPreviewJSON(p content.ScenarioPreview) previewJSON {
+func toPreviewJSON(p content.ScenarioPreview) any {
+	if p.ExerciseType == content.ExerciseTypeOperator112Intake {
+		return map[string]any{"exercise_type": p.ExerciseType, "intake112": p.Intake112}
+	}
 	return previewJSON{
 		Card:      toCardPreviewJSON(p.Card, p.Contacts),
 		Reference: toReferencePreviewJSON(p.Reference),
