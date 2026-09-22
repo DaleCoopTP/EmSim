@@ -28,6 +28,8 @@
 /coverage/
 /coverage.out
 *.test
+web/test-results/
+web/playwright-report/
 
 # Local dependency caches
 node_modules/

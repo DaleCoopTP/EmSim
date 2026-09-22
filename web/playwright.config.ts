@@ -11,6 +11,11 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? "github" : "list",
+  // Keep visual baselines independent from the host name. The acceptance
+  // suite deliberately exercises the two ARM desktop resolutions below,
+  // so a stable, reviewed PNG lives beside its spec rather than in a
+  // disposable Playwright output directory.
+  snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}{ext}",
   use: {
     baseURL: process.env.E2E_BASE_URL ?? "http://127.0.0.1:18080",
     permissions: ["microphone"],

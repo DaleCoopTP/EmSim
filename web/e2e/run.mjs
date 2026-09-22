@@ -45,7 +45,9 @@ const compose = ["compose", "-p", project];
 
 try {
   run("docker", [...compose, "up", "--build", "--wait", "--wait-timeout", "180"], environment);
-	run(resolve(import.meta.dirname, "../node_modules/.bin/playwright"), ["test", "--config", resolve(import.meta.dirname, "../playwright.config.ts")], environment);
+	const playwrightArgs = ["test", "--config", resolve(import.meta.dirname, "../playwright.config.ts")];
+	if (process.env.E2E_UPDATE_SNAPSHOTS === "1") playwrightArgs.push("--update-snapshots");
+	run(resolve(import.meta.dirname, "../node_modules/.bin/playwright"), playwrightArgs, environment);
 } finally {
   // Each run owns its compose project and named volumes. Cleanup therefore
   // cannot touch a developer's ordinary `docker compose up` stack.

@@ -1,8 +1,12 @@
-import { expect, request as apiRequest, test, type APIRequestContext, type APIResponse } from "@playwright/test";
+import { expect, request as apiRequest, test, type APIRequestContext, type APIResponse, type Locator, type Page } from "@playwright/test";
 
 const password = "e2e-password-123";
 const bootstrapPassword = "local-only-admin-password";
 const workstationNo = 901;
+const desktopViewports = [
+	{ width: 1366, height: 768 },
+	{ width: 1920, height: 1080 },
+] as const;
 
 async function expectOK(response: APIResponse) {
   expect(response.ok(), await response.text()).toBeTruthy();
@@ -13,7 +17,19 @@ async function login(request: APIRequestContext, loginName: string, loginPasswor
 	await expectOK(await request.post("/api/v1/auth/login", { data: { login: loginName, password: loginPassword } }));
 }
 
-test("card → call → recording retry → close works in the real browser", async ({ page }) => {
+async function expectDesktopScreenshots(page: Page, name: string, masks: Locator[] = []) {
+	for (const viewport of desktopViewports) {
+		await page.setViewportSize(viewport);
+		await expect(page).toHaveScreenshot(`${name}-${viewport.width}.png`, {
+			animations: "disabled",
+			mask: masks,
+			maxDiffPixelRatio: 0.002,
+		});
+	}
+}
+
+test("ARM-112 acceptance: login → queue → card → monitor → call → close", async ({ page }) => {
+	test.setTimeout(90_000);
 	const baseURL = process.env.E2E_BASE_URL;
 	if (!baseURL) throw new Error("E2E_BASE_URL must be set by e2e/run.mjs");
 	const admin = await apiRequest.newContext({ baseURL });
@@ -74,12 +90,42 @@ test("card → call → recording retry → close works in the real browser", as
 	});
 
 	await page.goto(`${baseURL}/login`);
-  await page.getByLabel("Логин").fill("e2e-trainee");
-  await page.getByLabel("Пароль").fill(password);
+	await expectDesktopScreenshots(page, "login");
+	await page.getByLabel("Логин").fill("wrong-login");
+	await page.getByLabel("Пароль").fill("wrong-password");
+	await page.getByRole("button", { name: "Войти" }).click();
+	await expect(page.getByRole("alert")).toBeVisible();
+	await page.getByLabel("Логин").fill("e2e-instructor");
+	await page.getByLabel("Пароль").fill(password);
+	await page.getByRole("button", { name: "Войти" }).click();
+	await expect(page.getByRole("heading", { name: "Занятия" })).toBeVisible();
+	await page.goto(`${baseURL}/instructor/lessons/${lesson.id}/monitor`);
+	await expect(page.getByRole("heading", { name: `Монитор: ${lesson.title}` })).toBeVisible();
+	await expectDesktopScreenshots(page, "live-monitor", [
+		page.locator(".layout-clock"),
+		page.locator(".monitor-heading p"),
+	]);
+	await page.getByRole("button", { name: "Выйти" }).click();
+	await expect(page.getByRole("heading", { name: "ВХОД В СИСТЕМУ" })).toBeVisible();
+
+	await page.getByLabel("Логин").fill("e2e-trainee");
+	await page.getByLabel("Логин").press("Tab");
+	await expect(page.getByLabel("Пароль")).toBeFocused();
+	await page.getByLabel("Пароль").fill(password);
 	await page.getByLabel("Номер рабочего места (для обучаемого)").fill(String(workstationNo));
 	await page.getByRole("button", { name: "Войти" }).click();
 	await expect(page.getByRole("heading", { name: "E2E phone smoke" })).toBeVisible();
+	await expectDesktopScreenshots(page, "incident-queue", [
+		page.locator(".layout-clock"),
+		page.locator(".incident-queue tbody td:nth-child(2)"),
+	]);
 	await page.getByRole("button", { name: /Открыть карточку №/ }).click();
+	await expectDesktopScreenshots(page, "dds-card", [
+		page.locator(".layout-clock"),
+		page.locator(".dds-card-registration"),
+		page.locator(".dds-item-status"),
+	]);
+
 	await page.getByRole("button", { name: "Открыть карточку" }).click();
 	await page.getByRole("button", { name: "Вызов" }).click();
 	await expect(page.getByText("Идёт запись доклада.")).toBeVisible();
@@ -88,6 +134,7 @@ test("card → call → recording retry → close works in the real browser", as
 	expect(await page.evaluate(() => (window as unknown as { __e2eTrackEnabled?: boolean[] }).__e2eTrackEnabled ?? [])).toContain(false);
 	await page.getByRole("button", { name: "Включить микрофон" }).click();
 	expect(await page.evaluate(() => (window as unknown as { __e2eTrackEnabled?: boolean[] }).__e2eTrackEnabled ?? [])).toContain(true);
+	await expect(page.getByRole("button", { name: "Завершить", exact: true })).toBeDisabled();
 	await page.getByLabel("Кто принял").fill("Руководитель бригады");
 	await page.getByLabel("Суть сообщения").fill("Дерево перекрыло дорожку, участок ограждён.");
 	await page.getByRole("button", { name: "Завершить" }).click();
