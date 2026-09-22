@@ -6,6 +6,7 @@ import {
   type AssessmentStatus, type ReportFile,
 } from "../../api/reporting";
 import { formatDateTime } from "../../format";
+import { useLesson } from "../../api/training";
 
 const assessmentLabels: Record<AssessmentStatus, string> = {
   ready: "Готова",
@@ -33,6 +34,7 @@ function seconds(value: number | null) {
 export function LessonReportRoute() {
   const { lessonId = "" } = useParams();
   const report = useLessonReport(lessonId);
+  const lesson = useLesson(lessonId);
   const files = useReportFiles(lessonId);
   const queryClient = useQueryClient();
   const requestPDF = useMutation({
@@ -40,9 +42,11 @@ export function LessonReportRoute() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: reportFilesQueryKey(lessonId) }),
   });
 
-  if (report.isPending) return <p>Загрузка отчёта…</p>;
+  if (report.isPending || lesson.isPending) return <p>Загрузка отчёта…</p>;
   if (report.isError) return <p className="error">{errorMessage(report.error)}</p>;
+  if (lesson.isError) return <p className="error">{errorMessage(lesson.error)}</p>;
   const value = report.data;
+  const intake = lesson.data.exercise_type === "operator112_intake";
 
   return (
     <section>
@@ -87,9 +91,10 @@ export function LessonReportRoute() {
         ))}</tbody>
       </table>
 
-      <h2>Экспорт</h2>
-      <p><a href={`/api/v1/lessons/${encodeURIComponent(lessonId)}/report.csv`}>Скачать CSV</a></p>
-      <p><button type="button" disabled={requestPDF.isPending} onClick={() => requestPDF.mutate()}>Сформировать PDF-снимок</button></p>
+	  <h2>Экспорт</h2>
+	  {intake ? <p>CSV и PDF для 112 появятся в срезе 112-5.</p> : <>
+	  <p><a href={`/api/v1/lessons/${encodeURIComponent(lessonId)}/report.csv`}>Скачать CSV</a></p>
+	  <p><button type="button" disabled={requestPDF.isPending} onClick={() => requestPDF.mutate()}>Сформировать PDF-снимок</button></p>
       {requestPDF.isError && <p role="alert" className="error">{errorMessage(requestPDF.error)}</p>}
       {files.isError && <p role="alert" className="error">{errorMessage(files.error)}</p>}
       {files.data && files.data.length > 0 && (
@@ -103,6 +108,7 @@ export function LessonReportRoute() {
           ))}</tbody>
         </table>
       )}
+	  </>}
     </section>
   );
 }

@@ -13,6 +13,11 @@ const commandLabels: Record<string, string> = {
   set_card_field: "Исправил поле",
   close: "Закрыл карточку",
   control_report: "Сообщение после закрытия",
+  answer_incoming: "Принял входящий вызов",
+  end_incoming: "Завершил разговор",
+  save_intake_draft: "Сохранил карточку",
+  dispatch_intake: "Направил карточку",
+  complete_intake: "Завершил обработку",
 };
 
 // RFC-001 §7.7's monitor: SSE (lessons/{id}/stream) is an invalidation
@@ -65,7 +70,7 @@ function MonitorRowView({ row }: { row: MonitorRow }) {
         {row.active_items.length === 0 && "—"}
         {row.active_items.map((item) => (
           <div key={item.id}>
-            № {item.card_number} · {reactionLabel(item.reaction)}
+			№ {item.card_number} · {item.exercise_type === "operator112_intake" ? `вызов ${item.call_status === "ringing" ? "ожидает" : item.call_status === "connected" ? "идёт разговор" : "разговор завершён"}${item.dispatched ? " · направлена" : ""}` : reactionLabel(item.reaction)}
             {item.interruptions.length > 0 && <span role="alert" className="error"> · прервана рестартом сервера</span>}
           </div>
         ))}

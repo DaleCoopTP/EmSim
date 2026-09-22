@@ -14,6 +14,7 @@ export function LessonsRoute() {
   const navigate = useNavigate();
   const [showCreate, setShowCreate] = useState(false);
   const [title, setTitle] = useState("");
+  const [exerciseType, setExerciseType] = useState<"dds_processing" | "operator112_intake">("operator112_intake");
   const [level, setLevel] = useState<Level>("easy");
   const [spawnEveryS, setSpawnEveryS] = useState("150");
   const create = useMutation({
@@ -30,14 +31,14 @@ export function LessonsRoute() {
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
     const body: LessonCreate = {
-      exercise_type: "dds_processing",
+	  exercise_type: exerciseType,
       title: title.trim(),
       mode: "training",
-      level,
-      timing: {
+	  level: exerciseType === "operator112_intake" ? "easy" : level,
+	  ...(exerciseType === "dds_processing" ? { timing: {
         open_s: 30, primary_s: 30, complete_s: 180,
         spawn_every_s: level === "hard" ? spawnValue : undefined,
-      },
+	  }} : {}),
     };
     create.mutate(body);
   };
@@ -52,6 +53,13 @@ export function LessonsRoute() {
         <form className="lesson-form arm-form-panel" onSubmit={onSubmit}>
           <h2>Новое занятие</h2>
           <label>Название<input required maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+		  <label>Упражнение
+			<select value={exerciseType} onChange={(event) => setExerciseType(event.target.value as "dds_processing" | "operator112_intake")}>
+			  <option value="operator112_intake">Оператор 112 · первый вызов</option>
+			  <option value="dds_processing">Оператор ДДС</option>
+			</select>
+		  </label>
+		  {exerciseType === "dds_processing" && <>
           <label>Уровень
             <select value={level} onChange={(event) => setLevel(event.target.value as Level)}>
               {(Object.keys(levelLabels) as Level[]).map((option) => <option key={option} value={option}>{levelLabels[option]}</option>)}
@@ -62,10 +70,11 @@ export function LessonsRoute() {
               <input type="number" min={1} required value={spawnEveryS} onChange={(event) => setSpawnEveryS(event.target.value)} />
             </label>
           )}
-          <p>Режим: обучение · таймеры: 30 / 30 / 180 с</p>
+		  </>}
+		  <p>{exerciseType === "operator112_intake" ? "Режим: обучение · лёгкий уровень · без норматива времени" : "Режим: обучение · таймеры: 30 / 30 / 180 с"}</p>
           {create.isError && <p role="alert" className="error">{errorMessage(create.error)}</p>}
           <p>
-            <button type="submit" disabled={create.isPending || title.trim() === "" || !spawnValid}>Создать</button>{" "}
+			<button type="submit" disabled={create.isPending || title.trim() === "" || (exerciseType === "dds_processing" && !spawnValid)}>Создать</button>{" "}
             <button type="button" onClick={() => setShowCreate(false)}>Отмена</button>
           </p>
         </form>
@@ -76,10 +85,11 @@ export function LessonsRoute() {
       {lessons.data && lessons.data.length > 0 && (
         <div className="arm-table-wrap">
         <table className="lessons-table">
-          <thead><tr><th>Название</th><th>Режим</th><th>Уровень</th><th>Состояние</th><th>Начато</th></tr></thead>
+          <thead><tr><th>Название</th><th>Упражнение</th><th>Режим</th><th>Уровень</th><th>Состояние</th><th>Начато</th></tr></thead>
           <tbody>{lessons.data.map((lesson) => (
             <tr key={lesson.id}>
               <td><Link to={`/instructor/lessons/${lesson.id}`}>{lesson.title}</Link></td>
+			  <td>{lesson.exercise_type === "operator112_intake" ? "112" : "ДДС"}</td>
               <td>{lesson.mode === "training" ? "обучение" : "вводное"}</td>
               <td>{levelLabels[lesson.level] ?? lesson.level}</td>
               <td>{stateLabels[lesson.state] ?? lesson.state}</td>

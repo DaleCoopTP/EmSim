@@ -116,6 +116,7 @@ export function LessonDetailRoute() {
 
   const rowsValid = effectiveRows.length > 0 && effectiveRows.every((r) =>
     r.workstationNo !== "" && r.userId !== "" && r.queue.length > 0 &&
+	(current.exercise_type !== "operator112_intake" || r.queue.length === 1) &&
     (current.level !== "hard" || r.queue.length === 1 || (current.timing?.spawn_every_s ?? 0) > 0));
   const canSave = isDraft && rowsValid && !versionsLoading;
   // Start reflects what the server actually has saved, not the editor's
@@ -133,9 +134,10 @@ export function LessonDetailRoute() {
       </header>
       <dl className="lesson-meta">
         <dt>Состояние</dt><dd>{stateLabels[current.state] ?? current.state}</dd>
+		<dt>Упражнение</dt><dd>{current.exercise_type === "operator112_intake" ? "Оператор 112 · первый вызов" : "Оператор ДДС"}</dd>
         <dt>Режим</dt><dd>{current.mode === "training" ? "Обучение" : "Вводное"}</dd>
         <dt>Уровень</dt><dd>{levelLabels[current.level] ?? current.level}</dd>
-        <dt>Таймеры</dt><dd>{current.timing?.open_s ?? 30} / {current.timing?.primary_s ?? 30} / {current.timing?.complete_s ?? 180} с{current.level === "hard" && current.timing?.spawn_every_s ? `; новая карточка каждые ${current.timing.spawn_every_s} с` : ""}</dd>
+		<dt>Таймеры</dt><dd>{current.exercise_type === "operator112_intake" ? "Без норматива времени" : `${current.timing?.open_s ?? 30} / ${current.timing?.primary_s ?? 30} / ${current.timing?.complete_s ?? 180} с${current.level === "hard" && current.timing?.spawn_every_s ? `; новая карточка каждые ${current.timing.spawn_every_s} с` : ""}`}</dd>
         <dt>Начато</dt><dd>{formatDateTime(current.started_at)}</dd>
         {current.state === "stopped" && <><dt>Остановлено</dt><dd>{formatDateTime(current.stopped_at)}{current.stop_reason ? ` — ${current.stop_reason}` : ""}</dd></>}
       </dl>
@@ -253,11 +255,11 @@ function AssignmentRow({
             </li>
           ))}
         </ol>
-        <select value={scenarioToAdd} disabled={!row.userId} onChange={(event) => setScenarioToAdd(event.target.value)}>
+		<select value={scenarioToAdd} disabled={!row.userId || (exerciseType === "operator112_intake" && row.queue.length >= 1)} onChange={(event) => setScenarioToAdd(event.target.value)}>
           <option value="">Добавить сценарий в очередь</option>
           {compatible.map((s) => <option key={s.id} value={s.id}>{s.title} · версия {s.version}</option>)}
         </select>
-        <button type="button" disabled={!scenarioToAdd} onClick={() => { onAddToQueue(scenarioToAdd); setScenarioToAdd(""); }}>+ В очередь</button>
+		<button type="button" disabled={!scenarioToAdd || (exerciseType === "operator112_intake" && row.queue.length >= 1)} onClick={() => { onAddToQueue(scenarioToAdd); setScenarioToAdd(""); }}>+ В очередь</button>
       </div>
       {onRemove && <p><button type="button" onClick={onRemove}>Удалить строку</button></p>}
     </fieldset>
