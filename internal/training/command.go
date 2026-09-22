@@ -41,9 +41,12 @@ type Decision struct {
 	// applies them unconditionally when Accepted; when not Accepted they
 	// equal the Item's own current values (Decide never reports a change
 	// alongside a rejection).
-	Reaction content.Reaction
-	State    ItemState
-	Card     content.CardPreview
+	Reaction       content.Reaction
+	State          ItemState
+	Card           content.CardPreview
+	IntakeCard     *IntakeCard
+	IntakeState    *IntakeState
+	IntakeDispatch *IntakeDispatch
 
 	// Effect is the server-side fact to record in actions.effect,
 	// distinct from the command's own payload (ADR-017) — e.g.

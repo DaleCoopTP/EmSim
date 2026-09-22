@@ -114,6 +114,8 @@ type ItemPatch struct {
 	Reaction    content.Reaction
 	State       ItemState
 	Card        content.CardPreview
+	IntakeCard  *IntakeCard
+	IntakeState *IntakeState
 	OpenedAt    *time.Time
 	PrimaryAt   *time.Time
 	CompleteAt  *time.Time

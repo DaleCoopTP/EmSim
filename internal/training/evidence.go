@@ -175,6 +175,16 @@ func SealEvidence(body EvidenceBody) (Evidence, error) {
 	return Evidence{Body: canonical, Digest: digest}, nil
 }
 
+// SealIntakeEvidence uses the same canonical encoding and digest as DDS,
+// while allowing the operator 112 evidence body to keep its own shape.
+func SealIntakeEvidence(body any) (Evidence, error) {
+	canonical, digest, err := canonicalDigest(body)
+	if err != nil {
+		return Evidence{}, err
+	}
+	return Evidence{Body: canonical, Digest: digest}, nil
+}
+
 // canonicalDigest marshals v (an ordinary Go value) to JSON and re-
 // decodes it with UseNumber before handing it to content.Canonical/
 // Digest, which require that json.Number-preserving tree shape and panic
