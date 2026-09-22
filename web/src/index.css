@@ -317,6 +317,46 @@ dd { margin: 0; }
 .back-to-queue { margin-bottom: 14px; color: var(--arm-ink); background: #e8ecee; border-color: #a9b5b9; }
 .back-to-queue:hover:not(:disabled) { color: #fff; background: var(--arm-panel); }
 
+/* C4: dispatcher card — fixed, information-dense desktop working field. */
+.dds-card { overflow: hidden; background: #cdd4d7; }
+.dds-card .incident-card-header { align-items: center; min-height: 54px; padding: 7px 13px; }
+.dds-card-overline { display: block; color: #ccd7db; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.dds-card-registration { color: #e8edef; font-size: 12px; text-align: right; }
+.dds-phone-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 7px; background: #b9c2c6; border-bottom: 1px solid #9ca9ae; }
+.dds-data-field { min-height: 48px; padding: 5px 8px; background: #edf0f1; border: 1px solid #d4dadc; }
+.dds-data-field span { display: block; margin-bottom: 4px; color: #627078; font-size: 10px; text-transform: uppercase; }
+.dds-data-field strong { overflow: hidden; display: block; color: #27353d; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.dds-card-grid { display: grid; grid-template-columns: minmax(42%, 1.05fr) minmax(38%, .95fr); gap: 7px; padding: 7px; }
+.dds-card-section { min-width: 0; background: #f2f4f4; border: 1px solid #c1cbcf; }
+.dds-card-section h3 { padding: 6px 9px; margin: 0; color: #edf3f5; background: #495962; font-size: 12px; font-weight: 600; text-transform: uppercase; }
+.dds-card-value,
+.dds-card-address,
+.dds-card-description,
+.dds-card-type,
+.dds-card-subvalue { padding: 8px 10px; margin: 0; border-bottom: 1px solid #d4dbde; }
+.dds-card-value { font-weight: 700; }
+.dds-card-address { min-height: 47px; font-weight: 600; }
+.dds-card-description { min-height: 72px; line-height: 1.4; }
+.dds-card-type { min-height: 47px; color: #202e36; font-weight: 700; }
+.dds-card-subvalue { color: #5b6870; font-size: 12px; }
+.dds-card-details { grid-template-columns: max-content minmax(0, 1fr); padding: 8px 10px; margin: 0; border-bottom: 1px solid #d4dbde; font-size: 12px; }
+.dds-card-details dt { color: #5d6b72; }
+.dds-contacts { display: grid; gap: 4px; padding: 7px 9px; margin: 0; list-style: none; }
+.dds-contacts li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 6px; background: #e2e7e9; font-size: 12px; }
+.dds-contacts span { color: #33464f; white-space: nowrap; }
+.dds-services { padding: 0 7px 7px; }
+.dds-services h3 { padding: 6px 9px; margin: 0; color: #e9eff1; background: #495962; font-size: 12px; text-transform: uppercase; }
+.dds-service-list { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px; background: #dce2e4; }
+.dds-service { min-width: 120px; padding: 6px 9px; color: #283740; background: #f0f3f4; border-left: 3px solid #8a999f; font-size: 12px; }
+.dds-service strong,
+.dds-service span { display: block; }
+.dds-service span { margin-top: 3px; color: #607078; font-size: 11px; }
+.dds-service-mine { border-left-color: var(--arm-accent); box-shadow: inset 0 -2px var(--arm-accent); }
+.dds-item-status { display: flex; flex-wrap: wrap; gap: 1px; margin-bottom: 7px; background: #aeb8bd; }
+.dds-item-status > div { flex: 1 1 160px; min-height: 48px; padding: 6px 10px; background: #edf0f1; }
+.dds-item-status span { display: block; color: #647279; font-size: 10px; text-transform: uppercase; }
+.dds-item-status strong { display: block; margin-top: 4px; color: #26353d; font-size: 12px; }
+
 @media (max-width: 1365px) {
   body::before {
     position: fixed; z-index: 10; inset: 0; display: grid; place-items: center;

@@ -278,20 +278,20 @@ function ItemWorkplace({ me, item }: { me: Me; item: NonNullable<ReturnType<type
   const finished = item.state === "closed" || item.state === "interrupted";
 
   return (
-    <section>
+    <section className="dds-workplace">
       {item.interruptions.length > 0 && (
         <p role="alert" className="notice">
           Карточка была прервана перезапуском сервера ({item.interruptions.length}×, последний раз {formatDateTime(item.interruptions[item.interruptions.length - 1].detected_at)}). Норматив времени по ней не учитывается.
         </p>
       )}
+      <section className="dds-item-status" aria-label="Статус обработки карточки">
+        <div><span>Статус службы</span><strong>{reactionLabel(item.reaction)}</strong></div>
+        <div><span>Выдана</span><strong>{formatDateTime(item.offered_at)}</strong></div>
+        <div><span>Открыть</span><strong>{remaining(item.deadlines.open_at, clockAnchor.server + clientNow - clockAnchor.client)}</strong></div>
+        <div><span>Первичное решение</span><strong>{remaining(item.deadlines.primary_at, clockAnchor.server + clientNow - clockAnchor.client)}</strong></div>
+        {item.deadlines.complete_at && <div><span>Завершить</span><strong>{remaining(item.deadlines.complete_at, clockAnchor.server + clientNow - clockAnchor.client)}</strong></div>}
+      </section>
       <IncidentCard card={item.card} />
-      <dl>
-        <dt>Состояние</dt><dd>{reactionLabel(item.reaction)}</dd>
-        <dt>Выдана</dt><dd>{formatDateTime(item.offered_at)}</dd>
-        <dt>Открыть</dt><dd>{remaining(item.deadlines.open_at, clockAnchor.server + clientNow - clockAnchor.client)}</dd>
-        <dt>Первичное решение</dt><dd>{remaining(item.deadlines.primary_at, clockAnchor.server + clientNow - clockAnchor.client)}</dd>
-        {item.deadlines.complete_at && <><dt>Завершить</dt><dd>{remaining(item.deadlines.complete_at, clockAnchor.server + clientNow - clockAnchor.client)}</dd></>}
-      </dl>
       {item.events.length > 0 && (
         <div className="item-events">
           <h3>Сообщения</h3>

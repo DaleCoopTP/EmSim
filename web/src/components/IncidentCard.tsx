@@ -12,93 +12,72 @@ import { applicantStatusLabel, reactionLabel } from "../labels";
 export function IncidentCard({ card }: { card: CardPreview | CardView }) {
   const applicantStatus = applicantStatusLabel(card.applicant?.status);
   return (
-    <section className="incident-card">
+    <article className="incident-card dds-card">
       <header className="incident-card-header">
-        <h2>Карточка № {card.number}</h2>
-        <span>{"registered_at" in card ? formatDateTime(card.registered_at) : formatOffset(card.registered_at_offset_s)}</span>
+        <div>
+          <span className="dds-card-overline">Происшествие</span>
+          <h2>№ {card.number}</h2>
+        </div>
+        <span className="dds-card-registration">Зарегистрировано: {"registered_at" in card ? formatDateTime(card.registered_at) : formatOffset(card.registered_at_offset_s)}</span>
       </header>
-      <dl>
-        <dt>Заявитель</dt>
-        <dd>
-          {card.applicant?.name ?? "—"}
-          {applicantStatus ? ` (${applicantStatus})` : ""}
-          {card.applicant?.phone ? `, ${card.applicant.phone}` : ""}
-        </dd>
-        <dt>Адрес</dt>
-        <dd>{formatAddress(card.address)}</dd>
-        <dt>Происшествие</dt>
-        <dd>
-          {card.incident.type_name ?? "—"}
-          {card.incident.type_code ? ` (${card.incident.type_code})` : ""}
-        </dd>
-        {card.incident.description && (
-          <>
-            <dt>Описание</dt>
-            <dd>{card.incident.description}</dd>
-          </>
-        )}
-        {card.incident.features && Object.keys(card.incident.features).length > 0 && (
-          <>
-            <dt>Признаки</dt>
-            <dd>
-              {Object.entries(card.incident.features)
-                .map(([key, value]) => `${key}: ${value}`)
-                .join("; ")}
-            </dd>
-          </>
-        )}
-        <dt>Пострадавшие</dt>
-        <dd>{card.incident.victims ?? 0}</dd>
-        {card.incident.danger && (
-          <>
-            <dt>Опасность</dt>
-            <dd>{card.incident.danger}</dd>
-          </>
-        )}
-        <dt>Телефоны</dt>
-        <dd>{formatPhones(card.phones)}</dd>
-        {card.channel && (
-          <>
-            <dt>Канал</dt>
-            <dd>{card.channel}</dd>
-          </>
-        )}
-      </dl>
-
-      <h3>Список оповещения</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>Служба</th>
-            <th>Статус</th>
-            <th>Моя</th>
-          </tr>
-        </thead>
-        <tbody>
+      <section className="dds-phone-strip" aria-label="Телефоны заявителя">
+        <DataField label="АОН" value={card.phones?.aon} />
+        <DataField label="Предоставленный" value={card.phones?.provided ?? card.applicant?.phone} />
+        <DataField label="Телефон на месте" value={card.phones?.on_site} />
+        <DataField label="Канал" value={card.channel} />
+      </section>
+      <div className="dds-card-grid">
+        <section className="dds-card-section dds-card-applicant">
+          <h3>Заявитель</h3>
+          <p className="dds-card-value">
+            {card.applicant?.name ?? "Не указан"}
+            {applicantStatus ? ` · ${applicantStatus}` : ""}
+          </p>
+          <h3>Адрес происшествия</h3>
+          <p className="dds-card-address">{formatAddress(card.address)}</p>
+          {card.address.okrug && <p className="dds-card-subvalue">Округ: {card.address.okrug}</p>}
+          <h3>Описание со слов заявителя</h3>
+          <p className="dds-card-description">{card.incident.description ?? "Описание не указано."}</p>
+        </section>
+        <section className="dds-card-section dds-card-incident">
+          <h3>Тип происшествия</h3>
+          <p className="dds-card-type">
+            {card.incident.type_name ?? "Не указан"}
+            {card.incident.type_code ? ` · ${card.incident.type_code}` : ""}
+          </p>
+          <dl className="dds-card-details">
+            <dt>Пострадавшие</dt><dd>{card.incident.victims ?? 0}</dd>
+            {card.incident.danger && <><dt>Опасность</dt><dd>{card.incident.danger}</dd></>}
+            {card.incident.features && Object.keys(card.incident.features).length > 0 && (
+              <><dt>Признаки</dt><dd>{Object.entries(card.incident.features).map(([key, value]) => `${key}: ${value}`).join("; ")}</dd></>
+            )}
+          </dl>
+          <h3>Контакты служб</h3>
+          {card.contacts && card.contacts.length > 0 ? (
+            <ul className="dds-contacts">
+              {card.contacts.map((c) => <li key={c.key}><strong>{c.label}</strong><span>{c.number}</span></li>)}
+            </ul>
+          ) : <p className="dds-card-subvalue">Контактов нет.</p>}
+        </section>
+      </div>
+      <section className="dds-services" aria-label="Список оповещения">
+        <h3>Службы</h3>
+        <div className="dds-service-list">
           {card.notification_list.map((n, i) => (
-            <tr key={i}>
-              <td>{n.service}</td>
-              <td>{reactionLabel(n.status)}</td>
-              <td>{n.mine ? "да" : ""}</td>
-            </tr>
+            <div key={i} className={`dds-service${n.mine ? " dds-service-mine" : ""}`}>
+              <strong>{n.service ?? "Служба"}</strong>
+              <span>{reactionLabel(n.status)}</span>
+            </div>
           ))}
-        </tbody>
-      </table>
-
-      <h3>Контакты</h3>
-      {card.contacts && card.contacts.length > 0 ? (
-        <ul>
-          {card.contacts.map((c) => (
-            <li key={c.key}>
-              {c.label}: {c.number}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p>Контактов нет.</p>
-      )}
-    </section>
+          {card.notification_list.length === 0 && <p className="dds-card-subvalue">Службы не назначены.</p>}
+        </div>
+      </section>
+    </article>
   );
+}
+
+function DataField({ label, value }: { label: string; value: string | undefined }) {
+  return <div className="dds-data-field"><span>{label}</span><strong>{value ?? "—"}</strong></div>;
 }
 
 function formatAddress(address: CardPreview["address"] | CardView["address"]): string {
@@ -106,14 +85,5 @@ function formatAddress(address: CardPreview["address"] | CardView["address"]): s
   const parts = [address.city, address.district, address.street, address.house, address.building, address.entrance].filter(
     Boolean,
   );
-  return parts.length > 0 ? parts.join(", ") : "—";
-}
-
-function formatPhones(phones: CardPreview["phones"] | CardView["phones"]): string {
-  if (!phones) return "—";
-  const parts: string[] = [];
-  if (phones.aon) parts.push(`АОН ${phones.aon}`);
-  if (phones.provided) parts.push(`указан ${phones.provided}`);
-  if (phones.on_site) parts.push(`на месте ${phones.on_site}`);
   return parts.length > 0 ? parts.join(", ") : "—";
 }
