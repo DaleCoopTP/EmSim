@@ -33,20 +33,23 @@ export function MonitorRoute() {
   const data = monitor.data;
 
   return (
-    <section>
-      <p><Link to={`/instructor/lessons/${lessonId}`}>← К занятию</Link></p>
-      <p><Link to={`/instructor/lessons/${lessonId}/assessments`}>Перейти к разбору карточек →</Link></p>
-      <h1>Монитор: {data.lesson.title}</h1>
-      <p>Сервер: {formatDateTime(data.server_time)}{data.lesson.state === "stopped" && " · занятие остановлено, карточки закрываются фоново"}</p>
+    <section className="instructor-page monitor-page">
+      <p className="back-link"><Link to={`/instructor/lessons/${lessonId}`}>← К занятию</Link></p>
+      <header className="page-heading monitor-heading">
+        <div><h1>Монитор: {data.lesson.title}</h1><p>Обновляется по событиям сервера · {formatDateTime(data.server_time)}</p></div>
+        <span className={`status-badge lesson-state-${data.lesson.state}`}>{data.lesson.state === "running" ? "идёт занятие" : data.lesson.state}</span>
+      </header>
+      {data.lesson.state === "stopped" && <p className="notice">Занятие остановлено, карточки закрываются фоновой задачей.</p>}
+      <p className="monitor-review-link"><Link to={`/instructor/lessons/${lessonId}/assessments`}>Перейти к разбору карточек →</Link></p>
       {data.rows.length === 0 ? (
         <p>Пока никто не начал.</p>
       ) : (
-        <table>
+        <div className="arm-table-wrap"><table className="monitor-table">
           <thead>
             <tr><th>РМ</th><th>Обучаемый</th><th>Онлайн</th><th>Открытые карточки</th><th>Осталось</th><th>Готово</th><th>Последнее действие</th></tr>
           </thead>
           <tbody>{data.rows.map((row) => <MonitorRowView key={row.run_id} row={row} />)}</tbody>
-        </table>
+        </table></div>
       )}
     </section>
   );
@@ -54,10 +57,10 @@ export function MonitorRoute() {
 
 function MonitorRowView({ row }: { row: MonitorRow }) {
   return (
-    <tr>
+    <tr className={row.online ? "monitor-online" : "monitor-offline"}>
       <td>№ {row.workstation_no}</td>
       <td>{row.user.full_name}</td>
-      <td>{row.online ? "да" : "нет"}</td>
+      <td><span className={`online-indicator ${row.online ? "online" : "offline"}`}>{row.online ? "онлайн" : "нет связи"}</span></td>
       <td>
         {row.active_items.length === 0 && "—"}
         {row.active_items.map((item) => (

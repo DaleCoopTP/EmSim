@@ -125,10 +125,13 @@ export function LessonDetailRoute() {
   const hasSavedAssignments = (current.assignments?.length ?? 0) > 0;
 
   return (
-    <section>
-      <p><Link to="/instructor/lessons">← К занятиям</Link></p>
-      <h1>{current.title}</h1>
-      <dl>
+    <section className="instructor-page lesson-detail-page">
+      <p className="back-link"><Link to="/instructor/lessons">← К занятиям</Link></p>
+      <header className="page-heading lesson-heading">
+        <div><h1>{current.title}</h1><p>Управление занятиями и назначениями на РМ.</p></div>
+        <span className={`status-badge lesson-state-${current.state}`}>{stateLabels[current.state] ?? current.state}</span>
+      </header>
+      <dl className="lesson-meta">
         <dt>Состояние</dt><dd>{stateLabels[current.state] ?? current.state}</dd>
         <dt>Режим</dt><dd>{current.mode === "training" ? "Обучение" : "Вводное"}</dd>
         <dt>Уровень</dt><dd>{levelLabels[current.level] ?? current.level}</dd>
@@ -138,7 +141,7 @@ export function LessonDetailRoute() {
       </dl>
 
       {isDraft ? (
-        <form className="lesson-form" onSubmit={onSave}>
+        <form className="lesson-form assignment-editor" onSubmit={onSave}>
           <h2>Назначения</h2>
           {(options.isPending || scenarios.isPending) && <p>Загрузка справочников…</p>}
           {options.isError && <p className="error">{errorMessage(options.error)}</p>}
@@ -154,19 +157,19 @@ export function LessonDetailRoute() {
               onMoveInQueue={(index, delta) => moveInQueue(row.key, index, delta)}
             />
           ))}
-          <p><button type="button" onClick={addRow}>+ Добавить рабочее место</button></p>
+          <p><button type="button" className="arm-secondary-action" onClick={addRow}>+ Добавить рабочее место</button></p>
           {current.level === "hard" && effectiveRows.some((r) => r.queue.length > 1) && !((current.timing?.spawn_every_s ?? 0) > 0) && (
             <p role="alert" className="error">У занятия не задан интервал новых карточек — очередь длиннее одной версии недопустима.</p>
           )}
           {save.isError && <p role="alert" className="error">{errorMessage(save.error)}</p>}
           {save.isSuccess && <p>Назначения сохранены.</p>}
-          <p><button type="submit" disabled={!canSave || save.isPending}>Сохранить назначения</button></p>
+          <p><button type="submit" className="arm-primary-action" disabled={!canSave || save.isPending}>Сохранить назначения</button></p>
         </form>
       ) : (
         <>
           <h2>Назначения</h2>
           {current.assignments && current.assignments.length > 0 ? (
-            <table>
+            <div className="arm-table-wrap"><table className="assignments-summary">
               <thead><tr><th>РМ</th><th>Обучаемый</th><th>Карточек в очереди</th></tr></thead>
               <tbody>{current.assignments.map((a) => (
                 <tr key={a.user_id}>
@@ -175,17 +178,17 @@ export function LessonDetailRoute() {
                   <td>{a.scenario_version_ids.length}</td>
                 </tr>
               ))}</tbody>
-            </table>
+            </table></div>
           ) : <p>Назначений нет.</p>}
         </>
       )}
 
-      {isDraft && <p><button type="button" disabled={!hasSavedAssignments || start.isPending} onClick={() => start.mutate()}>Запустить</button>{start.isError && <span role="alert" className="error"> {errorMessage(start.error)}</span>}</p>}
+      {isDraft && <p className="lesson-launch"><button type="button" className="arm-start-action" disabled={!hasSavedAssignments || start.isPending} onClick={() => start.mutate()}>▶ Запустить занятие</button>{start.isError && <span role="alert" className="error"> {errorMessage(start.error)}</span>}</p>}
       {current.state === "running" && (
-        <div className="lesson-form">
+        <div className="lesson-form lesson-running-panel">
           <p><Link to={`/instructor/lessons/${lessonId}/monitor`}>Открыть монитор занятия →</Link></p>
           <label>Причина остановки (необязательно)<input value={stopReason} maxLength={500} onChange={(event) => setStopReason(event.target.value)} /></label>
-          <p><button type="button" onClick={() => stop.mutate()} disabled={stop.isPending}>Остановить занятие</button></p>
+          <p><button type="button" className="arm-stop-action" onClick={() => stop.mutate()} disabled={stop.isPending}>Остановить занятие</button></p>
           {stop.isError && <p role="alert" className="error">{errorMessage(stop.error)}</p>}
         </div>
       )}

@@ -43,11 +43,13 @@ export function LessonsRoute() {
   };
 
   return (
-    <section>
-      <h1>Занятия</h1>
-      <p><button type="button" onClick={() => setShowCreate((shown) => !shown)}>Создать занятие</button></p>
+    <section className="instructor-page lessons-page">
+      <header className="page-heading">
+        <div><h1>Занятия</h1><p>Создание, назначение и запуск учебных смен.</p></div>
+        <button type="button" className="arm-primary-action" onClick={() => setShowCreate((shown) => !shown)}>{showCreate ? "Закрыть форму" : "Создать занятие"}</button>
+      </header>
       {showCreate && (
-        <form className="lesson-form" onSubmit={onSubmit}>
+        <form className="lesson-form arm-form-panel" onSubmit={onSubmit}>
           <h2>Новое занятие</h2>
           <label>Название<input required maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} /></label>
           <label>Уровень
@@ -72,7 +74,8 @@ export function LessonsRoute() {
       {lessons.isError && <p className="error">{errorMessage(lessons.error)}</p>}
       {lessons.data?.length === 0 && <p>Занятий пока нет.</p>}
       {lessons.data && lessons.data.length > 0 && (
-        <table>
+        <div className="arm-table-wrap">
+        <table className="lessons-table">
           <thead><tr><th>Название</th><th>Режим</th><th>Уровень</th><th>Состояние</th><th>Начато</th></tr></thead>
           <tbody>{lessons.data.map((lesson) => (
             <tr key={lesson.id}>
@@ -84,6 +87,7 @@ export function LessonsRoute() {
             </tr>
           ))}</tbody>
         </table>
+        </div>
       )}
     </section>
   );
