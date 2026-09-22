@@ -197,6 +197,66 @@ dd { margin: 0; }
 .phone-panel button { margin: 8px 8px 0 0; background: #4e6069; border-color: #657880; }
 .phone-panel button.active { background: var(--arm-accent); border-color: #fa956a; }
 
+/* Login mirrors the blue System-112 authorization screen without copying
+   its proprietary artwork or real support contacts. */
+.login {
+  display: grid;
+  grid-template-columns: minmax(720px, 2fr) minmax(500px, 1fr);
+  min-height: 100vh;
+  color: #fff;
+  overflow: hidden;
+  background: #6aaed0;
+}
+.login-city {
+  position: relative;
+  overflow: hidden;
+  min-height: 720px;
+  background:
+    linear-gradient(90deg, rgb(23 81 122 / 37%), transparent 30%),
+    linear-gradient(#70b4d7, #9fcae1);
+}
+.login-city::before,
+.login-city::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  content: "";
+}
+.login-city::before {
+  height: 75%;
+  opacity: .84;
+  background:
+    linear-gradient(90deg, transparent 0 4%, #5183a7 4% 13%, transparent 13% 16%, #9dd0e5 16% 25%, transparent 25% 28%, #4e7da2 28% 37%, transparent 37% 41%, #82b8d4 41% 51%, transparent 51% 56%, #5487a9 56% 66%, transparent 66% 71%, #a6d5e8 71% 82%, transparent 82% 87%, #5f94b5 87% 96%, transparent 96%),
+    linear-gradient(90deg, transparent 0 4%, #75aac7 4% 13%, transparent 13% 16%, #d4edf5 16% 25%, transparent 25% 28%, #77acc8 28% 37%, transparent 37% 41%, #c3e4f0 41% 51%, transparent 51% 56%, #78abc8 56% 66%, transparent 66% 71%, #d3edf6 71% 82%, transparent 82% 87%, #81b5d1 87% 96%, transparent 96%);
+  clip-path: polygon(0 0, 8% 12%, 14% 0, 20% 23%, 28% 12%, 38% 28%, 46% 5%, 55% 20%, 66% 0, 73% 33%, 82% 12%, 92% 27%, 100% 5%, 100% 100%, 0 100%);
+}
+.login-city::after {
+  height: 20%;
+  background:
+    linear-gradient(90deg, #e6ebeb 0 11%, #bcc5c9 11% 13%, #f3f4f2 13% 29%, #c2c9cc 29% 32%, #e5e8e6 32% 46%, #b1bbc0 46% 49%, #f2f2ef 49% 70%, #c0c9cc 70% 73%, #e7e9e7 73% 100%);
+  clip-path: polygon(0 44%, 9% 44%, 9% 18%, 19% 18%, 19% 51%, 29% 51%, 29% 0, 38% 0, 38% 38%, 51% 38%, 51% 15%, 63% 15%, 63% 52%, 76% 52%, 76% 9%, 88% 9%, 88% 37%, 100% 37%, 100% 100%, 0 100%);
+}
+.login-city-helicopter { position: absolute; z-index: 1; top: 21%; right: 28%; color: #fff; font-size: 78px; font-weight: 700; transform: rotate(-10deg); }
+.login-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 72px 8vw 72px 5vw;
+  background: linear-gradient(90deg, rgb(92 165 204 / 86%), #6aaed0 32%);
+}
+.login-title { display: flex; align-items: center; gap: 18px; margin-bottom: 34px; }
+.login-title > span { font-size: clamp(72px, 8vw, 112px); font-weight: 200; letter-spacing: -.08em; }
+.login-title h1 { margin: 0; color: #fff; font-size: 30px; font-weight: 300; text-transform: uppercase; white-space: nowrap; }
+.login .login-form { max-width: none; gap: 16px; margin: 0; }
+.login .login-form label { gap: 4px; color: #edf7fb; font-size: 13px; }
+.login .login-form input { padding: 6px 2px; color: #fff; background: transparent; border: 0; border-bottom: 1px solid #f4fbfd; }
+.login .login-form input:focus-visible { outline-offset: 4px; }
+.login .login-form button { margin-top: 10px; min-height: 46px; color: #fff; background: #767777; border: 0; font-size: 16px; font-weight: 700; text-transform: uppercase; }
+.login .login-form button:hover:not(:disabled) { background: #5b6569; }
+.login .error { margin: 0; color: #7e1321; background: #fff1f2; }
+.login-help { max-width: 370px; margin: 30px 0 0; color: #edf7fb; line-height: 1.45; }
+
 @media (max-width: 1365px) {
   body::before {
     position: fixed; z-index: 10; inset: 0; display: grid; place-items: center;
