@@ -479,6 +479,38 @@ dd { margin: 0; }
 .online-indicator.online { background: #3c7d5d; }
 .online-indicator.offline { background: #7d898e; }
 
+/* Operator 112 first-call workstation. The telephone, applicant text and
+   editable card remain visible together at a 1366px operator desk. */
+.intake-workplace { display: grid; grid-template-columns: minmax(350px, .8fr) minmax(650px, 1.5fr); gap: 12px; align-items: start; }
+.intake-header { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; padding: 11px 15px; color: #fff; background: var(--arm-panel); }
+.intake-header h2 { margin: 2px 0 0; font-size: 19px; }
+.intake-header .workplace-kicker { color: #c9d7dc; }
+.intake-elapsed { padding: 7px 10px; background: #566873; font-variant-numeric: tabular-nums; }
+.intake-phone, .intake-transcript, .intake-dispatch, .intake-form { padding: 14px; background: #edf1f2; border: 1px solid #abb9be; box-shadow: var(--arm-shadow); }
+.intake-phone { grid-column: 1; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; border-top: 4px solid var(--arm-accent); }
+.intake-phone > div { display: flex; align-items: center; gap: 12px; }
+.intake-phone strong { font-size: 20px; }
+.intake-phone p { margin: 3px 0 0; color: #52636b; }
+.intake-phone-icon { display: grid; place-items: center; width: 42px; height: 42px; color: #fff; background: var(--arm-accent); border-radius: 50%; font-size: 25px; }
+.intake-phone button { width: 100%; }
+.intake-call-ringing { color: #8d3a20; background: #ffe7d9; }
+.intake-call-connected { color: #236246; background: #d7eee1; }
+.intake-transcript { grid-column: 1; }
+.intake-transcript ol { padding-left: 22px; margin: 0; }
+.intake-transcript li { padding: 8px 0; border-bottom: 1px solid #c9d3d7; line-height: 1.45; }
+.intake-form { grid-column: 2; grid-row: 2 / span 3; border-top: 4px solid #637781; }
+.intake-form > p { color: #53646c; }
+.intake-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 14px; }
+.intake-field { display: flex; flex-direction: column; gap: 5px; }
+.intake-field label { display: grid; grid-template-columns: 1fr 145px; gap: 6px; align-items: center; font-size: 12px; font-weight: 700; }
+.intake-field select, .intake-field input, .intake-field textarea { width: 100%; }
+.intake-field > input, .intake-field > select, .intake-field > textarea { margin-top: 1px; }
+.intake-form > button { margin-top: 14px; }
+.intake-form .notice { margin: 10px 0 0; }
+.intake-dispatch { grid-column: 1; }
+.intake-dispatch label { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+.intake-review-card { max-width: 900px; padding: 12px; background: #edf1f2; border-left: 4px solid #657c86; }
+
 @media (max-width: 1365px) {
   body::before {
     position: fixed; z-index: 10; inset: 0; display: grid; place-items: center;

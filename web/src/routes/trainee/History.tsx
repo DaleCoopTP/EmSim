@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useState } from "react";
 import { errorMessage } from "../../api/errors";
 import { useMyProgress, useMyResults, type AssessmentStatus } from "../../api/reporting";
 import { formatDateTime } from "../../format";
@@ -16,8 +17,9 @@ function score(value: number | null) {
 }
 
 export function HistoryRoute() {
-  const progress = useMyProgress();
-  const results = useMyResults();
+  const [exerciseType, setExerciseType] = useState<"dds_processing" | "operator112_intake">("operator112_intake");
+  const progress = useMyProgress(exerciseType);
+  const results = useMyResults(exerciseType);
 
   if (progress.isPending || results.isPending) return <p>Загрузка истории…</p>;
   if (progress.isError) return <p className="error">{errorMessage(progress.error)}</p>;
@@ -27,6 +29,7 @@ export function HistoryRoute() {
     <section>
       <h1>Моя история</h1>
       <p>Здесь показаны только ваши завершённые карточки. Эталонные ответы и материалы проверки не раскрываются.</p>
+	  <label>Упражнение <select value={exerciseType} onChange={(event) => setExerciseType(event.target.value as "dds_processing" | "operator112_intake")}><option value="operator112_intake">Оператор 112</option><option value="dds_processing">Оператор ДДС</option></select></label>
 
       <h2>Прогресс</h2>
       <dl>

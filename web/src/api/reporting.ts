@@ -118,13 +118,13 @@ export function requestLessonPDF(lessonId: string) {
   return api.post<ReportFile>(`/lessons/${encodeURIComponent(lessonId)}/report.pdf`);
 }
 
-export const myResultsQueryKey = ["my-results"] as const;
-export const myProgressQueryKey = ["my-progress"] as const;
+export const myResultsQueryKey = (exerciseType: string) => ["my-results", exerciseType] as const;
+export const myProgressQueryKey = (exerciseType: string) => ["my-progress", exerciseType] as const;
 
-export function useMyResults() {
-  return useQuery({ queryKey: myResultsQueryKey, queryFn: () => api.get<ReportItem[]>("/my/results") });
+export function useMyResults(exerciseType: "dds_processing" | "operator112_intake" = "dds_processing") {
+  return useQuery({ queryKey: myResultsQueryKey(exerciseType), queryFn: () => api.get<ReportItem[]>(`/my/results?exercise_type=${exerciseType}`) });
 }
 
-export function useMyProgress() {
-  return useQuery({ queryKey: myProgressQueryKey, queryFn: () => api.get<Progress>("/my/progress") });
+export function useMyProgress(exerciseType: "dds_processing" | "operator112_intake" = "dds_processing") {
+  return useQuery({ queryKey: myProgressQueryKey(exerciseType), queryFn: () => api.get<Progress>(`/my/progress?exercise_type=${exerciseType}`) });
 }

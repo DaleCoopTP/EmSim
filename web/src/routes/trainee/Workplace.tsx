@@ -5,11 +5,14 @@ import { executeCommand, type Command, type Receipt } from "../../api/commands";
 import { errorMessage } from "../../api/errors";
 import { useEventStream } from "../../api/realtime";
 import type { Me } from "../../api/useMe";
-import { itemQueryKey, myItemsQueryKey, myRunQueryKey, useItem, useMyItems, useMyRun } from "../../api/workplace";
+import { itemQueryKey, myItemsQueryKey, myRunQueryKey, useItem, useMyItems, useMyRun, type CardView, type Item } from "../../api/workplace";
 import { availableLocalStorage, clearPending, loadPending, savePending, type PendingCommand } from "../../commands/pending";
 import { IncidentCard } from "../../components/IncidentCard";
 import { formatDateTime } from "../../format";
 import { reactionLabel } from "../../labels";
+import { Operator112Workplace, type IntakeItem } from "./Operator112Workplace";
+
+type DDSItem = Omit<Item, "card"> & { card: CardView };
 
 const deliveryLabels: Record<string, string> = {
   notice: "Сообщение",
@@ -74,7 +77,7 @@ export function WorkplaceRoute() {
       <section>
         {item.isPending && <p>Загрузка карточки…</p>}
         {item.isError && <p className="error">{errorMessage(item.error)}</p>}
-        {item.data && <ItemWorkplace key={item.data.id} me={me} item={item.data} />}
+		{item.data && (item.data.exercise_type === "operator112_intake" ? <Operator112Workplace key={item.data.id} me={me} item={item.data as unknown as IntakeItem} /> : <ItemWorkplace key={item.data.id} me={me} item={item.data as DDSItem} />)}
       </section>
     );
   }
@@ -83,8 +86,8 @@ export function WorkplaceRoute() {
     <section className="trainee-workplace">
       <header className="workplace-header">
         <div>
-          <p className="workplace-kicker">Рабочее место ДДС · РМ-{run.data.workstation_no}</p>
-          <h1>{selectedItemId ? "Карточка происшествия" : run.data.lesson.title}</h1>
+		  <p className="workplace-kicker">Рабочее место {run.data.exercise_type === "operator112_intake" ? "112" : "ДДС"} · РМ-{run.data.workstation_no}</p>
+		  <h1>{selectedItemId ? run.data.exercise_type === "operator112_intake" ? "Входящий вызов" : "Карточка происшествия" : run.data.lesson.title}</h1>
         </div>
         <dl className="workplace-facts">
           <dt>В очереди</dt><dd>{run.data.queue_left}</dd>
@@ -108,10 +111,10 @@ export function WorkplaceRoute() {
       )}
       {workstationMatches && selectedItemId && (
         <>
-          <button type="button" className="back-to-queue" onClick={() => setSelectedItemId("")}>← К списку происшествий</button>
+		  <button type="button" className="back-to-queue" onClick={() => setSelectedItemId("")}>← К списку вызовов</button>
           {item.isPending && <p>Загрузка карточки…</p>}
           {item.isError && <p className="error">{errorMessage(item.error)}</p>}
-          {item.data && <ItemWorkplace key={item.data.id} me={me} item={item.data} />}
+		  {item.data && (item.data.exercise_type === "operator112_intake" ? <Operator112Workplace key={item.data.id} me={me} item={item.data as unknown as IntakeItem} /> : <ItemWorkplace key={item.data.id} me={me} item={item.data as DDSItem} />)}
         </>
       )}
     </section>
@@ -186,7 +189,7 @@ function IncidentQueue({
                 <td>{formatQueueTime(candidate.offered_at)}</td>
                 <td>{candidate.incident_type ?? "—"}</td>
                 <td>{candidate.address_short ?? "—"}</td>
-                <td>{reactionLabel(candidate.reaction)}{candidate.interruptions.length > 0 && " · ⚠"}</td>
+				<td>{candidate.exercise_type === "operator112_intake" ? candidate.call_status === "ringing" ? "Ожидает ответа" : candidate.call_status === "connected" ? "Разговор" : candidate.dispatched ? "Направлена" : "Разговор окончен" : reactionLabel(candidate.reaction)}{candidate.interruptions.length > 0 && " · ⚠"}</td>
                 <td><button type="button" className="queue-open" onClick={() => onOpen(candidate.id)}>Открыть карточку № {candidate.card_number}</button></td>
               </tr>
             ))}
@@ -204,7 +207,7 @@ function formatQueueTime(value: string): string {
   return new Date(value).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function ItemWorkplace({ me, item }: { me: Me; item: NonNullable<ReturnType<typeof useItem>["data"]> }) {
+function ItemWorkplace({ me, item }: { me: Me; item: DDSItem }) {
   const queryClient = useQueryClient();
   const [storage] = useState(() => availableLocalStorage());
   const [pending, setPending] = useState<PendingCommand | null>(() => storage ? loadPending(storage, me.user.id, item.id) : null);
@@ -347,7 +350,7 @@ function ItemWorkplace({ me, item }: { me: Me; item: NonNullable<ReturnType<type
 // PhonePanel is intentionally a small browser simulator, not a SIP client.
 // A not-yet-uploaded recording stays in this component's memory only; a tab
 // reload therefore has the explicitly documented "missing recording" outcome.
-function PhonePanel({ item, onChanged }: { item: NonNullable<ReturnType<typeof useItem>["data"]>; onChanged: () => Promise<void> }) {
+function PhonePanel({ item, onChanged }: { item: DDSItem; onChanged: () => Promise<void> }) {
   const contacts = item.card.contacts ?? [];
   const [contact, setContact] = useState(contacts[0]?.key ?? "");
   const [callId, setCallId] = useState<string | null>(null);
