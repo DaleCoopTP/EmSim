@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate, useOutletContext } from "react-router-dom";
 import { useLogout } from "../api/auth";
 import type { Me } from "../api/useMe";
@@ -24,7 +25,10 @@ export function Layout() {
   return (
     <div className="layout">
       <header className="layout-header">
-        <strong>EmSim</strong>
+        <div className="layout-brand" aria-label="EmSim, учебный АРМ ДДС">
+          <strong>112 · EmSim</strong>
+          <small>учебный АРМ ДДС</small>
+        </div>
         {me.user.role === "admin" && (
           <nav>
             <NavLink to="/admin/users">Пользователи</NavLink>
@@ -44,6 +48,7 @@ export function Layout() {
           {me.user.full_name} · {roleLabels[me.user.role]}
           {me.workstation ? ` · ${me.workstation.label}` : ""}
         </span>
+        <Clock />
         <button type="button" onClick={onLogout} disabled={logout.isPending}>
           Выйти
         </button>
@@ -51,6 +56,22 @@ export function Layout() {
       <main className="layout-main">
         <Outlet context={me} />
       </main>
+    </div>
+  );
+}
+
+function Clock() {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(new Date()), 1_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="layout-clock" aria-label="Текущее время">
+      <time dateTime={now.toISOString()}>{now.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</time>
+      <span>{now.toLocaleDateString("ru-RU", { weekday: "short", day: "2-digit", month: "short" })}</span>
     </div>
   );
 }
