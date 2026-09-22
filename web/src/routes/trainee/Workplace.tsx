@@ -512,19 +512,35 @@ function PhonePanel({ item, onChanged }: { item: NonNullable<ReturnType<typeof u
 
   return (
     <section className="phone-panel">
-      <h3>Телефон Т16Р</h3>
-      <p>Номер: {contacts.find((candidate) => candidate.key === contact)?.number ?? "—"} · громкая связь ●</p>
-      <div>{contacts.map((candidate) => <button type="button" key={candidate.key} className={contact === candidate.key ? "active" : undefined} disabled={!!callId} onClick={() => setContact(candidate.key)}>{candidate.label}</button>)}</div>
-      {!callId ? <button type="button" onClick={() => void start()} disabled={!contact || isEnding}>Вызов</button> : <>
-        <button type="button" aria-pressed={muted} onClick={toggleMute} disabled={!isRecording}>{muted ? "Включить микрофон" : "Mute"}</button>
-        <label>Кто принял<input value={acceptedBy} onChange={(event) => setAcceptedBy(event.target.value)} /></label>
-        <label>Суть сообщения<textarea value={summary} onChange={(event) => setSummary(event.target.value)} /></label>
-        <button type="button" onClick={() => void end()} disabled={isEnding || !acceptedBy.trim() || !summary.trim()}>Завершить</button>
-      </>}
-      {pendingUpload && <button type="button" onClick={() => void uploadRecording(pendingUpload)}>Повторить загрузку записи</button>}
-      {item.calls.map((call) => <p key={call.id} className="notice">Запись {call.recording_state === "expired" ? "missing" : call.recording_state}</p>)}
-      {status && <p className="notice">{status}</p>}
-      {error && <p className="error">{error}</p>}
+      <header className="phone-panel-header">
+        <div><span className="phone-panel-overline">Встроенный симулятор</span><h3>Телефон Т16Р</h3></div>
+        <div className="phone-display"><span>Линия ДДС</span><strong>{contacts.find((candidate) => candidate.key === contact)?.number ?? "—"}</strong></div>
+      </header>
+      <div className="phone-panel-body">
+        <div className="phone-contacts" aria-label="Контакты для вызова">
+          <span className="phone-section-label">Кому звоним</span>
+          {contacts.map((candidate) => <button type="button" key={candidate.key} className={contact === candidate.key ? "active" : undefined} disabled={!!callId} onClick={() => setContact(candidate.key)}>{candidate.label}<small>{candidate.number}</small></button>)}
+          {contacts.length === 0 && <p>Контакты не назначены.</p>}
+        </div>
+        {!callId ? (
+          <div className="phone-start-control">
+            <span>Громкая связь <b aria-label="включена">●</b></span>
+            <button type="button" className="phone-call-button" onClick={() => void start()} disabled={!contact || isEnding}>Вызов</button>
+          </div>
+        ) : (
+          <div className="phone-call-control">
+            <div className="phone-call-state"><span className={isRecording ? "phone-recording" : undefined}>●</span>{isRecording ? "Запись доклада" : "Звонок без записи"}</div>
+            <button type="button" aria-pressed={muted} onClick={toggleMute} disabled={!isRecording}>{muted ? "Включить микрофон" : "Mute"}</button>
+            <label>Кто принял<input value={acceptedBy} onChange={(event) => setAcceptedBy(event.target.value)} /></label>
+            <label>Суть сообщения<textarea value={summary} onChange={(event) => setSummary(event.target.value)} /></label>
+            <button type="button" className="phone-end-button" onClick={() => void end()} disabled={isEnding || !acceptedBy.trim() || !summary.trim()}>Завершить</button>
+          </div>
+        )}
+        {pendingUpload && <button type="button" className="phone-retry-button" onClick={() => void uploadRecording(pendingUpload)}>Повторить загрузку записи</button>}
+        {item.calls.map((call) => <p key={call.id} className="phone-call-history">Запись: {call.recording_state === "expired" ? "не загружена" : call.recording_state}</p>)}
+        {status && <p className="notice" aria-live="polite">{status}</p>}
+        {error && <p className="error" role="alert">{error}</p>}
+      </div>
     </section>
   );
 }

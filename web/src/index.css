@@ -357,6 +357,43 @@ dd { margin: 0; }
 .dds-item-status span { display: block; color: #647279; font-size: 10px; text-transform: uppercase; }
 .dds-item-status strong { display: block; margin-top: 4px; color: #26353d; font-size: 12px; }
 
+/* C5: browser phone simulator keeps all call evidence in the card context. */
+.phone-panel { padding: 0; overflow: hidden; color: #fff; background: #2b3941; border: 1px solid #1e2b32; box-shadow: var(--arm-shadow); }
+.phone-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 13px; background: #202e36; border-bottom: 1px solid #596a72; }
+.phone-panel h3 { margin: 1px 0 0; font-size: 16px; }
+.phone-panel-overline,
+.phone-section-label { display: block; color: #afc0c6; font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.phone-display { min-width: 180px; padding: 5px 9px; color: #17242d; background: #bac8a8; font-family: "Courier New", monospace; }
+.phone-display span { display: block; font-size: 10px; }
+.phone-display strong { display: block; margin-top: 2px; font-size: 14px; }
+.phone-panel-body { padding: 12px; }
+.phone-contacts { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin-bottom: 12px; }
+.phone-contacts .phone-section-label { display: flex; align-items: center; width: 95px; }
+.phone-contacts button { min-width: 132px; min-height: 46px; padding: 5px 9px; margin: 0; color: #e8eff1; background: #465963; border-color: #60737d; text-align: left; }
+.phone-contacts button small { display: block; margin-top: 3px; color: #b9c8ce; font-size: 10px; }
+.phone-contacts button.active { color: #fff; background: var(--arm-accent); border-color: #ff9d72; }
+.phone-contacts button.active small { color: #fff0e9; }
+.phone-start-control { display: flex; align-items: center; justify-content: space-between; padding-top: 8px; border-top: 1px solid #52646d; }
+.phone-start-control > span { color: #c6d2d6; font-size: 12px; }
+.phone-start-control b { color: #6fce75; }
+.phone-panel .phone-call-button,
+.phone-panel .phone-end-button,
+.phone-panel .phone-retry-button { min-width: 140px; min-height: 35px; margin: 0; color: #fff; background: var(--arm-accent); border-color: #f49a73; font-weight: 700; text-transform: uppercase; }
+.phone-panel .phone-end-button { background: #b34137; border-color: #e47c72; }
+.phone-call-control { display: grid; grid-template-columns: max-content max-content minmax(180px, .7fr) minmax(260px, 1.4fr) max-content; align-items: end; gap: 8px; padding-top: 8px; border-top: 1px solid #52646d; }
+.phone-call-state { align-self: center; color: #e4ecee; font-size: 12px; white-space: nowrap; }
+.phone-call-state > span { margin-right: 4px; color: #8b9ca2; }
+.phone-call-state > .phone-recording { color: #f66a61; animation: phone-pulse 1.2s ease-in-out infinite; }
+.phone-call-control label { display: flex; flex-direction: column; gap: 4px; margin: 0; color: #dce6e9; font-size: 11px; }
+.phone-call-control input,
+.phone-call-control textarea { width: 100%; margin: 0; color: #1c2b32; background: #edf0f1; }
+.phone-call-control textarea { min-height: 44px; }
+.phone-panel .phone-call-control > button { margin: 0; }
+.phone-call-history { padding: 6px 8px; margin: 9px 0 0; color: #d7e2e5; background: #3b4d56; font-size: 12px; }
+.phone-panel .notice,
+.phone-panel .error { margin: 9px 0 0; }
+@keyframes phone-pulse { 50% { opacity: .35; } }
+
 @media (max-width: 1365px) {
   body::before {
     position: fixed; z-index: 10; inset: 0; display: grid; place-items: center;
