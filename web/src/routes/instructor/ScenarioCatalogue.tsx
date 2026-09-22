@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useScenarios, useServices, type ScenarioFilter, type ScenarioStatus } from "../../api/content";
 import { errorMessage } from "../../api/errors";
 import { formatDateTime } from "../../format";
+import { scenarioStatusLabel } from "../../labels";
 
 const pageSize = 20;
 
@@ -44,9 +45,12 @@ export function ScenarioCatalogueRoute() {
   const setDifficultyMaxFiltered = updateFilter(setDifficultyMax);
 
   return (
-    <section>
-      <h1>Сценарии</h1>
-      <form className="scenario-filters" onSubmit={(e) => e.preventDefault()}>
+    <section className="instructor-page scenario-catalogue">
+      <header className="page-heading">
+        <div><h1>Сценарии</h1><p>Каталог учебных происшествий для назначения на рабочие места.</p></div>
+        <span className="page-count">{total} сценариев</span>
+      </header>
+      <form className="scenario-filters arm-filters" onSubmit={(e) => e.preventDefault()}>
         <label>
           Служба
           <select value={service} onChange={(e) => setServiceFiltered(e.target.value)}>
@@ -94,12 +98,14 @@ export function ScenarioCatalogueRoute() {
       {scenarios.data && scenarios.data.items.length === 0 && <p>Сценарии не найдены.</p>}
       {scenarios.data && scenarios.data.items.length > 0 && (
         <>
-          <table>
+          <div className="arm-table-wrap">
+          <table className="scenario-table">
             <thead>
               <tr>
                 <th>Название</th>
                 <th>Служба</th>
                 <th>Сложность</th>
+                <th>Статус</th>
                 <th>Версия</th>
                 <th>Обновлён</th>
               </tr>
@@ -112,21 +118,18 @@ export function ScenarioCatalogueRoute() {
                   </td>
                   <td>{s.target_service}</td>
                   <td>{s.difficulty}</td>
+                  <td><span className={`status-badge status-${s.status}`}>{scenarioStatusLabel(s.status)}</span></td>
                   <td>{s.version}</td>
                   <td>{formatDateTime(s.updated_at)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p>
-            Всего: {total}. Страница {page} из {pages}.{" "}
-            <button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-              ←
-            </button>{" "}
-            <button type="button" disabled={page >= pages} onClick={() => setPage(page + 1)}>
-              →
-            </button>
-          </p>
+          </div>
+          <div className="arm-pagination">
+            <span>Всего: {total}. Страница {page} из {pages}.</span>
+            <span><button type="button" aria-label="Предыдущая страница" disabled={page <= 1} onClick={() => setPage(page - 1)}>←</button><button type="button" aria-label="Следующая страница" disabled={page >= pages} onClick={() => setPage(page + 1)}>→</button></span>
+          </div>
         </>
       )}
     </section>

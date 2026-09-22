@@ -394,6 +394,48 @@ dd { margin: 0; }
 .phone-panel .error { margin: 9px 0 0; }
 @keyframes phone-pulse { 50% { opacity: .35; } }
 
+/* C6: instructor's read-only scenario catalogue and review layout. */
+.instructor-page { max-width: 1880px; }
+.page-count { padding: 6px 9px; color: #40525b; background: #d5dde0; font-size: 12px; white-space: nowrap; }
+.arm-filters { align-items: end; padding: 12px 15px; margin: 0 0 12px; background: #e1e6e8; border-top: 3px solid #7b8c94; box-shadow: var(--arm-shadow); }
+.arm-filters label { min-width: 160px; color: #42535c; font-size: 12px; }
+.arm-filters input,
+.arm-filters select { background: #f5f7f7; }
+.arm-table-wrap { overflow-x: auto; box-shadow: var(--arm-shadow); }
+.scenario-table { min-width: 840px; }
+.scenario-table tbody tr:hover td { background: #e1e8ea; }
+.scenario-table a { color: #135f91; font-weight: 700; text-decoration: none; }
+.scenario-table a:hover { text-decoration: underline; }
+.status-badge { display: inline-block; padding: 3px 6px; color: #3e4d54; background: #dce4e7; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.status-approved { color: #275b43; background: #dceadf; }
+.status-draft { color: #80531e; background: #f6e7c6; }
+.status-archived { color: #647077; background: #e1e4e5; }
+.arm-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; color: #ecf2f4; background: #586a73; font-size: 12px; }
+.arm-pagination button { min-width: 30px; padding: 4px 8px; margin-left: 4px; background: #3c4e57; border-color: #75858c; }
+.back-link { margin-bottom: 10px; font-size: 12px; }
+.scenario-meta { grid-template-columns: max-content max-content max-content max-content; gap: 4px 10px; padding: 8px 12px; margin: 0 0 12px; background: #e4e9ea; border-left: 4px solid #7b8c94; box-shadow: var(--arm-shadow); font-size: 12px; }
+.scenario-meta dd { margin-right: 15px; }
+.scenario-review-grid { display: grid; grid-template-columns: minmax(600px, 1.55fr) minmax(300px, .7fr); gap: 12px; align-items: start; }
+.scenario-review-grid .incident-card { margin: 0; }
+.scenario-reference-pane,
+.scenario-note-panel,
+.scenario-versions { background: #e8edef; border-top: 4px solid #52636c; box-shadow: var(--arm-shadow); }
+.scenario-reference-pane h2,
+.scenario-note-panel h2,
+.scenario-versions h2 { padding: 9px 12px; margin: 0; color: #fff; background: #52636c; font-size: 15px; }
+.scenario-reference-pane h3 { padding: 0 12px; margin: 14px 0 6px; font-size: 13px; }
+.scenario-reference-pane dl,
+.scenario-reference-pane p,
+.scenario-reference-pane ul,
+.scenario-note-panel p { padding: 0 12px; }
+.scenario-reference-pane ul { margin: 8px 0 14px 22px; }
+.scenario-reference-pane .notice { margin: 10px 12px; }
+.scenario-notes-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.scenario-note-panel { min-height: 112px; }
+.scenario-note-panel p { margin: 12px 0; line-height: 1.4; }
+.scenario-versions { margin-top: 12px; overflow: hidden; }
+.scenario-versions table { border: 0; }
+
 @media (max-width: 1365px) {
   body::before {
     position: fixed; z-index: 10; inset: 0; display: grid; place-items: center;

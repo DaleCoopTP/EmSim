@@ -38,32 +38,29 @@ export function ScenarioDetailRoute() {
   const { card, reference } = preview.data;
 
   return (
-    <section>
-      <p>
+    <section className="instructor-page scenario-detail">
+      <p className="back-link">
         <Link to="/instructor/scenarios">← К каталогу</Link>
       </p>
-      <h1>{s.title}</h1>
-      <dl>
-        <dt>Служба</dt>
-        <dd>{s.target_service}</dd>
-        <dt>Сложность</dt>
-        <dd>{s.difficulty}</dd>
-        <dt>Статус</dt>
-        <dd>{scenarioStatusLabel(s.status)}</dd>
-        <dt>Версия</dt>
-        <dd>{s.version}</dd>
-        {s.source_key && (
-          <>
-            <dt>Ключ файла</dt>
-            <dd>{s.source_key}</dd>
-          </>
-        )}
+      <header className="page-heading scenario-heading">
+        <div><h1>{s.title}</h1><p>{s.target_service} · версия {s.version}</p></div>
+        <span className={`status-badge status-${s.status}`}>{scenarioStatusLabel(s.status)}</span>
+      </header>
+      <dl className="scenario-meta">
+        <dt>Служба</dt><dd>{s.target_service}</dd>
+        <dt>Сложность</dt><dd>{s.difficulty}</dd>
+        <dt>Версия</dt><dd>{s.version}</dd>
+        {s.source_key && <><dt>Ключ файла</dt><dd>{s.source_key}</dd></>}
       </dl>
 
-      <IncidentCard card={card} />
-      <ReferenceBlock reference={reference} card={card} />
-      <EventsBlock hasEvents={s.has_events ?? false} />
-      <CallBlock reference={reference} card={card} />
+      <div className="scenario-review-grid">
+        <IncidentCard card={card} />
+        <ReferenceBlock reference={reference} card={card} />
+      </div>
+      <div className="scenario-notes-grid">
+        <EventsBlock hasEvents={s.has_events ?? false} />
+        <CallBlock reference={reference} card={card} />
+      </div>
       <VersionsBlock scenarioId={scenarioId} />
     </section>
   );
@@ -91,7 +88,7 @@ function currentFieldValue(card: CardPreview, path: string): string | undefined 
 function ReferenceBlock({ reference, card }: { reference: ScenarioReference; card: CardPreview }) {
   const corrections = reference.field_corrections ?? [];
   return (
-    <section>
+    <section className="scenario-reference-pane">
       <h2>Эталон</h2>
       <dl>
         <dt>Первичное решение</dt>
@@ -139,7 +136,7 @@ function ReferenceBlock({ reference, card }: { reference: ScenarioReference; car
 
 function EventsBlock({ hasEvents }: { hasEvents: boolean }) {
   return (
-    <section>
+    <section className="scenario-note-panel">
       <h2>События</h2>
       <p>{hasEvents ? "У сценария есть события по таймлайну." : "Событий нет."}</p>
     </section>
@@ -149,7 +146,7 @@ function EventsBlock({ hasEvents }: { hasEvents: boolean }) {
 function CallBlock({ reference, card }: { reference: ScenarioReference; card: CardPreview }) {
   if (!reference.call.required) {
     return (
-      <section>
+      <section className="scenario-note-panel">
         <h2>Звонки</h2>
         <p>Не требуются.</p>
       </section>
@@ -157,7 +154,7 @@ function CallBlock({ reference, card }: { reference: ScenarioReference; card: Ca
   }
   const target = card.contacts?.find((c) => c.key === reference.call.to);
   return (
-    <section>
+    <section className="scenario-note-panel">
       <h2>Звонки</h2>
       <p>
         Требуется до статуса «{reactionLabel(reference.call.before_status)}»
@@ -173,7 +170,7 @@ function CallBlock({ reference, card }: { reference: ScenarioReference; card: Ca
 function VersionsBlock({ scenarioId }: { scenarioId: string }) {
   const versions = useScenarioVersions(scenarioId);
   return (
-    <section>
+    <section className="scenario-versions">
       <h2>Версии</h2>
       {versions.isPending && <p>Загрузка…</p>}
       {versions.isError && <p className="error">{errorMessage(versions.error)}</p>}
