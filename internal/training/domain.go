@@ -49,6 +49,8 @@ const (
 	CloseCompleted   CloseReason = "completed"
 	CloseRefused     CloseReason = "refused"
 	CloseInterrupted CloseReason = "interrupted"
+	CloseNoContact   CloseReason = "no_contact"
+	CloseCallDropped CloseReason = "call_dropped"
 	// ClosePilotCompleted is ADR-017's pilot exception: close from
 	// accepted for a scenario version with reference.pilot_goal=
 	// accept_card. It does not mean the trainee performed correctly.
@@ -84,6 +86,8 @@ const (
 	CommandSaveIntakeDraft CommandType = "save_intake_draft"
 	CommandDispatchIntake  CommandType = "dispatch_intake"
 	CommandCompleteIntake  CommandType = "complete_intake"
+	CommandMarkNoContact   CommandType = "mark_no_contact"
+	CommandMarkCallDropped CommandType = "mark_call_dropped"
 )
 
 // Deadlines is items.deadlines: absolute server time, frozen once set.

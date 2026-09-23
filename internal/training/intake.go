@@ -14,12 +14,22 @@ type IntakeField struct {
 }
 
 type IntakeAddress struct {
-	City     IntakeField `json:"city"`
-	Street   IntakeField `json:"street"`
-	House    IntakeField `json:"house"`
-	Building IntakeField `json:"building"`
-	Flat     IntakeField `json:"flat"`
-	Landmark IntakeField `json:"landmark"`
+	Country     IntakeField `json:"country"`
+	Region      IntakeField `json:"region"`
+	City        IntakeField `json:"city"`
+	Object      IntakeField `json:"object"`
+	Okrug       IntakeField `json:"okrug"`
+	District    IntakeField `json:"district"`
+	Street      IntakeField `json:"street"`
+	House       IntakeField `json:"house"`
+	Building    IntakeField `json:"building"`
+	Structure   IntakeField `json:"structure"`
+	Flat        IntakeField `json:"flat"`
+	Entrance    IntakeField `json:"entrance"`
+	Floor       IntakeField `json:"floor"`
+	Code        IntakeField `json:"code"`
+	Landmark    IntakeField `json:"landmark"`
+	Descriptive IntakeField `json:"descriptive"`
 }
 
 // IntakeCard is the operator's mutable draft. Metadata is copied from the
@@ -38,45 +48,81 @@ type IntakeCard struct {
 	VictimsPresent  IntakeField   `json:"victims_present"`
 	VictimsCount    IntakeField   `json:"victims_count"`
 	ProvidedPhone   IntakeField   `json:"provided_phone"`
+	OnSitePhone     IntakeField   `json:"on_site_phone"`
+	Channel         IntakeField   `json:"channel"`
+	ForeignLanguage IntakeField   `json:"foreign_language"`
+	NoOnSite        IntakeField   `json:"no_on_site"`
+	NoAccess        IntakeField   `json:"no_access"`
 }
 
 func UnansweredIntakeCard(number, aon, localTime, zone string) IntakeCard {
 	u := IntakeField{State: "unanswered"}
 	return IntakeCard{Number: number, AON: aon, CallLocalTime: localTime, CallTimeZone: zone,
 		ApplicantName: u, ApplicantStatus: u, Age: u, IncidentType: u, Complaint: u,
-		VictimsPresent: u, VictimsCount: u, ProvidedPhone: u,
-		Address: IntakeAddress{City: u, Street: u, House: u, Building: u, Flat: u, Landmark: u}}
+		VictimsPresent: u, VictimsCount: u, ProvidedPhone: u, OnSitePhone: u,
+		Channel: IntakeField{State: "known", Value: "phone"}, ForeignLanguage: u, NoOnSite: u, NoAccess: u,
+		Address: IntakeAddress{Country: u, Region: u, City: u, Object: u,
+			Okrug: u, District: u, Street: u, House: u, Building: u,
+			Structure: u, Flat: u, Entrance: u, Floor: u, Code: u,
+			Landmark: u, Descriptive: u}}
 }
 
 // ValidIntakeCard validates only the form's representation, not correctness
 // against the scenario's private reference. Incomplete cards may be saved.
 func ValidIntakeCard(card IntakeCard) bool {
-	fields := []IntakeField{card.ApplicantName, card.ApplicantStatus, card.Age,
+	required := []IntakeField{card.ApplicantName, card.ApplicantStatus, card.Age,
 		card.Address.City, card.Address.Street, card.Address.House, card.Address.Building,
-		card.Address.Flat, card.Address.Landmark, card.IncidentType, card.Complaint,
-		card.VictimsPresent, card.VictimsCount, card.ProvidedPhone}
-	for i, field := range fields {
-		if len(field.Value) > 1000 || strings.TrimSpace(field.Value) != field.Value {
-			return false
-		}
-		switch field.State {
-		case "known":
-			if field.Value == "" {
-				return false
-			}
-		case "unanswered", "unknown":
-			if field.Value != "" {
-				return false
-			}
-		case "negative":
-			if i != 11 || field.Value != "" {
-				return false
-			}
-		default:
+		card.Address.Flat, card.Address.Landmark, card.IncidentType,
+		card.VictimsCount, card.ProvidedPhone}
+	for _, field := range required {
+		if !validIntakeField(field, 1000, false) {
 			return false
 		}
 	}
-	return true
+	optional := []IntakeField{card.Address.Country, card.Address.Region, card.Address.Object,
+		card.Address.Okrug, card.Address.District, card.Address.Structure,
+		card.Address.Entrance, card.Address.Floor, card.Address.Code,
+		card.Address.Descriptive, card.OnSitePhone}
+	for _, field := range optional {
+		if !validIntakeField(field, 1000, true) {
+			return false
+		}
+	}
+	return validIntakeField(card.Complaint, 1999, false) &&
+		validVictimsPresent(card.VictimsPresent) &&
+		validOptionalChoice(card.Channel, "phone") &&
+		validOptionalChoice(card.ForeignLanguage, "yes") &&
+		validOptionalChoice(card.NoOnSite, "yes") &&
+		validOptionalChoice(card.NoAccess, "yes")
+}
+
+func validOptionalChoice(field IntakeField, choice string) bool {
+	return validIntakeField(field, 1000, true) &&
+		(field.State != "known" || field.Value == choice)
+}
+
+func validIntakeField(field IntakeField, maxLength int, legacyOptional bool) bool {
+	if len(field.Value) > maxLength || strings.TrimSpace(field.Value) != field.Value {
+		return false
+	}
+	switch field.State {
+	case "known":
+		return field.Value != ""
+	case "unanswered", "unknown":
+		return field.Value == ""
+	case "":
+		return legacyOptional && field.Value == ""
+	default:
+		return false
+	}
+}
+
+func validVictimsPresent(field IntakeField) bool {
+	if field.State == "negative" {
+		return field.Value == ""
+	}
+	return field.State == "known" && field.Value == "yes" ||
+		(field.State == "unanswered" || field.State == "unknown") && field.Value == ""
 }
 
 type IntakeLine struct {

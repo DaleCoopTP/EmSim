@@ -29,7 +29,7 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-const ExpectedSchemaVersion int64 = 11
+const ExpectedSchemaVersion int64 = 12
 
 // applicationTables lists the platform tables Ready() requires to exist,
 // alongside the expected goose version — a version match alone would not

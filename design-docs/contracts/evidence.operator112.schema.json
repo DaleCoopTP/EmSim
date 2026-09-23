@@ -17,7 +17,7 @@
     "offered_at": {"type": "string", "format": "date-time"},
     "opened_at": {"type": ["string", "null"], "format": "date-time"},
     "closed_at": {"type": "string", "format": "date-time"},
-    "close_reason": {"enum": ["completed", "interrupted"]},
+    "close_reason": {"enum": ["completed", "interrupted", "no_contact", "call_dropped"]},
     "mode": {"const": "training"},
     "final_card": {"type": "object", "required": ["number", "aon", "call_local_time", "call_time_zone", "applicant_name", "applicant_status", "age", "address", "incident_type", "complaint", "victims_present", "victims_count", "provided_phone"]},
     "intake_state": {"type": "object", "required": ["call_status", "transcript", "has_saved_draft", "dispatched"], "properties": {"call_status": {"enum": ["ringing", "connected", "ended"]}, "transcript": {"type": "array"}}},

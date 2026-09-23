@@ -1013,14 +1013,14 @@ func (s *Service) lockForCommand(ctx context.Context, tx pgx.Tx, itemID uuid.UUI
 
 	lessonLock := LockShare
 	run := peekRun
-	if cmdType == CommandClose || cmdType == CommandCompleteIntake {
+	if cmdType == CommandClose || cmdType == CommandCompleteIntake || cmdType == CommandMarkNoContact || cmdType == CommandMarkCallDropped {
 		lessonLock = LockUpdate
 	}
 	lesson, err := s.store.LessonByID(ctx, tx, peekRun.LessonID, lessonLock)
 	if err != nil {
 		return Lesson{}, Run{}, Item{}, err
 	}
-	if cmdType == CommandClose || cmdType == CommandCompleteIntake {
+	if cmdType == CommandClose || cmdType == CommandCompleteIntake || cmdType == CommandMarkNoContact || cmdType == CommandMarkCallDropped {
 		run, err = s.store.RunByID(ctx, tx, peekRun.ID, LockUpdate)
 		if err != nil {
 			return Lesson{}, Run{}, Item{}, err

@@ -791,12 +791,22 @@ components:
       type: object
       required: [city, street, house, building, flat, landmark]
       properties:
+        country: { $ref: '#/components/schemas/Intake112Field' }
+        region: { $ref: '#/components/schemas/Intake112Field' }
         city: { $ref: '#/components/schemas/Intake112Field' }
+        object: { $ref: '#/components/schemas/Intake112Field' }
+        okrug: { $ref: '#/components/schemas/Intake112Field' }
+        district: { $ref: '#/components/schemas/Intake112Field' }
         street: { $ref: '#/components/schemas/Intake112Field' }
         house: { $ref: '#/components/schemas/Intake112Field' }
         building: { $ref: '#/components/schemas/Intake112Field' }
+        structure: { $ref: '#/components/schemas/Intake112Field' }
         flat: { $ref: '#/components/schemas/Intake112Field' }
+        entrance: { $ref: '#/components/schemas/Intake112Field' }
+        floor: { $ref: '#/components/schemas/Intake112Field' }
+        code: { $ref: '#/components/schemas/Intake112Field' }
         landmark: { $ref: '#/components/schemas/Intake112Field' }
+        descriptive: { $ref: '#/components/schemas/Intake112Field' }
     Intake112Card:
       type: object
       required: [number, aon, call_local_time, call_time_zone, applicant_name, applicant_status, age, address, incident_type, complaint, victims_present, victims_count, provided_phone]
@@ -814,6 +824,11 @@ components:
         victims_present: { $ref: '#/components/schemas/Intake112Field' }
         victims_count: { $ref: '#/components/schemas/Intake112Field' }
         provided_phone: { $ref: '#/components/schemas/Intake112Field' }
+        on_site_phone: { $ref: '#/components/schemas/Intake112Field' }
+        channel: { $ref: '#/components/schemas/Intake112Field' }
+        foreign_language: { $ref: '#/components/schemas/Intake112Field' }
+        no_on_site: { $ref: '#/components/schemas/Intake112Field' }
+        no_access: { $ref: '#/components/schemas/Intake112Field' }
     Intake112State:
       type: object
       required: [call_status, transcript, has_saved_draft, dispatched]
@@ -1205,7 +1220,7 @@ components:
           nullable: true
         close_reason:
           type: string
-          enum: [completed, refused, interrupted, pilot_completed]
+          enum: [completed, refused, interrupted, pilot_completed, no_contact, call_dropped]
           nullable: true
           description: 'pilot_completed — пилотное завершение из accepted (ADR-017, срез 3); не означает правильного выполнения.'
         deadlines:
@@ -1319,6 +1334,8 @@ components:
           - save_intake_draft
           - dispatch_intake
           - complete_intake
+          - mark_no_contact
+          - mark_call_dropped
         payload:
           type: object
         client_at:
@@ -1477,6 +1494,12 @@ components:
               service_code: { type: string }
       - properties:
           type: { const: complete_intake }
+          payload: { type: object, additionalProperties: false }
+      - properties:
+          type: { const: mark_no_contact }
+          payload: { type: object, additionalProperties: false }
+      - properties:
+          type: { const: mark_call_dropped }
           payload: { type: object, additionalProperties: false }
 
     Receipt:

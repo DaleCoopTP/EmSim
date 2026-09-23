@@ -10,7 +10,7 @@ import { formatDateTime } from "../../format";
 type CriterionStatus = CriterionResult["status"];
 type Item = components["schemas"]["Item"];
 type IntakeField = { state: string; value?: string };
-type IntakeCard = { number: string; aon: string; call_local_time: string; call_time_zone: string; applicant_name: IntakeField; applicant_status: IntakeField; age: IntakeField; address: Record<string, IntakeField>; incident_type: IntakeField; complaint: IntakeField; victims_present: IntakeField; victims_count: IntakeField; provided_phone: IntakeField };
+type IntakeCard = { number: string; aon: string; call_local_time: string; call_time_zone: string; applicant_name: IntakeField; applicant_status: IntakeField; age: IntakeField; address: Record<string, IntakeField>; incident_type: IntakeField; complaint: IntakeField; victims_present: IntakeField; victims_count: IntakeField; provided_phone: IntakeField; on_site_phone?: IntakeField; channel?: IntakeField; foreign_language?: IntakeField; no_on_site?: IntakeField; no_access?: IntakeField };
 type IntakeReviewItem = Item & { card: IntakeCard; intake_reference?: unknown; intake_state?: { transcript?: Array<{ text: string; server_at: string }> }; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard } };
 type IntakeReviewEvidence = { final_card?: IntakeCard; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; intake_state?: { transcript?: Array<{ text: string; server_at: string }> } };
 const labels: Record<string, string> = { met: "выполнено", partial: "частично", not_met: "не выполнено", not_applicable: "не применимо", unavailable: "не проверено" };
@@ -77,18 +77,28 @@ function IntakeReviewPanel({ item, evidence }: { item: IntakeReviewItem; evidenc
     <h2>Итоговая карточка</h2>
     <IntakeCardView card={card} />
     <h2>Передача службе</h2>
-    {dispatch ? <><p>Адресат: {dispatch.service_code} · отправлено {formatDateTime(dispatch.sent_at)}</p><p>Снимок на момент отправки:</p><IntakeCardView card={dispatch.card_snapshot} /></> : <p>Карточка не направлена.</p>}
+    {dispatch ? <><p>Адресат: {dispatch.service_code === "pilot_ambulance" ? "03 · Скорая помощь" : dispatch.service_code} · отправлено {formatDateTime(dispatch.sent_at)}</p><p>Снимок на момент отправки:</p><IntakeCardView card={dispatch.card_snapshot} /></> : <p>Карточка не направлена.</p>}
     <details><summary>Эталон сценария</summary><pre>{JSON.stringify(item.intake_reference ?? {}, null, 2)}</pre></details>
   </>;
 }
 
 function IntakeCardView({ card }: { card: IntakeCard }) {
-  const value = (field: IntakeField | undefined) => field?.state === "known" ? field.value : field?.state === "unknown" ? "неизвестно" : field?.state === "negative" ? "нет" : "не заполнено";
+  const value = (field: IntakeField | undefined) => field?.state === "known" ? field.value === "yes" ? "да" : field.value : field?.state === "unknown" ? "неизвестно" : field?.state === "negative" ? "нет" : "не заполнено";
+  const addressFields = [
+    ["country", "Страна"], ["region", "Субъект"], ["city", "Населённый пункт"], ["object", "Объект"],
+    ["okrug", "Округ"], ["district", "Район"], ["street", "Улица"], ["house", "Дом"],
+    ["building", "Корпус"], ["structure", "Строение"], ["flat", "Квартира / офис"],
+    ["entrance", "Подъезд"], ["floor", "Этаж"], ["code", "Код"], ["landmark", "Ориентир"],
+    ["descriptive", "Описательный адрес"],
+  ] as const;
   return <dl className="intake-review-card">
     <dt>Номер</dt><dd>{card.number}</dd><dt>АОН</dt><dd>{card.aon}</dd><dt>Время вызова</dt><dd>{card.call_local_time} ({card.call_time_zone})</dd>
     <dt>Заявитель</dt><dd>{value(card.applicant_name)} · {value(card.applicant_status)} · возраст {value(card.age)}</dd>
-    <dt>Адрес</dt><dd>{["city", "street", "house", "building", "flat", "landmark"].map((key) => value(card.address[key])).join(", ")}</dd>
+    <dt>Канал и язык</dt><dd>{value(card.channel)} · иностранный язык: {value(card.foreign_language)}</dd>
+    <dt>Адрес</dt><dd>{addressFields.map(([key, label]) => <div key={key}>{label}: {value(card.address[key])}</div>)}</dd>
     <dt>Тип</dt><dd>{value(card.incident_type)}</dd><dt>Жалоба</dt><dd>{value(card.complaint)}</dd>
-    <dt>Пострадавшие</dt><dd>{value(card.victims_present)} · {value(card.victims_count)}</dd><dt>Телефон</dt><dd>{value(card.provided_phone)}</dd>
+    <dt>Пострадавшие</dt><dd>{value(card.victims_present)} · {value(card.victims_count)}</dd>
+    <dt>Телефоны</dt><dd>Предоставленный: {value(card.provided_phone)} · На место: {value(card.on_site_phone)}</dd>
+    <dt>Особые отметки</dt><dd>Нет на месте / отказ от скорой: {value(card.no_on_site)} · Нет доступа / заблокированные: {value(card.no_access)}</dd>
   </dl>;
 }

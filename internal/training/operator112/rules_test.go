@@ -2,6 +2,7 @@ package operator112
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,8 @@ func TestIntakeFlowAndImmutableDispatch(t *testing.T) {
 		t.Fatalf("save incomplete draft: %+v", d)
 	}
 	card.Complaint = training.IntakeField{State: "known", Value: "Сильная диарея и обильная рвота"}
+	card.OnSitePhone = training.IntakeField{State: "known", Value: "+79161313131"}
+	card.Address.Descriptive = training.IntakeField{State: "known", Value: "рядом с метро ВДНХ"}
 	if d := run(training.CommandSaveIntakeDraft, map[string]any{"draft": card}); !d.Accepted {
 		t.Fatalf("save complaint: %+v", d)
 	}
@@ -49,7 +52,9 @@ func TestIntakeFlowAndImmutableDispatch(t *testing.T) {
 		t.Fatal("unlisted recipient")
 	}
 	d := run(training.CommandDispatchIntake, map[string]string{"service_code": "pilot_ambulance"})
-	if !d.Accepted || d.IntakeDispatch == nil || d.IntakeDispatch.CardSnapshot.Complaint.Value != card.Complaint.Value {
+	if !d.Accepted || d.IntakeDispatch == nil || d.IntakeDispatch.CardSnapshot.Complaint.Value != card.Complaint.Value ||
+		d.IntakeDispatch.CardSnapshot.OnSitePhone.Value != card.OnSitePhone.Value ||
+		d.IntakeDispatch.CardSnapshot.Address.Descriptive.Value != card.Address.Descriptive.Value {
 		t.Fatalf("dispatch: %+v", d)
 	}
 	if d := run(training.CommandSaveIntakeDraft, map[string]any{"draft": card}); d.Accepted {
@@ -82,5 +87,56 @@ func TestIntakeFieldStates(t *testing.T) {
 	c.Age = training.IntakeField{State: "unknown"}
 	if !training.ValidIntakeCard(c) {
 		t.Fatal("explicit unknown should be valid")
+	}
+	c.Address.Descriptive = training.IntakeField{State: "known", Value: "рядом с метро ВДНХ"}
+	c.OnSitePhone = training.IntakeField{State: "known", Value: "+79161313131"}
+	if !training.ValidIntakeCard(c) {
+		t.Fatal("new address and phone fields should be valid")
+	}
+	c.NoAccess = training.IntakeField{State: "negative"}
+	if training.ValidIntakeCard(c) {
+		t.Fatal("negative remains exclusive to victims_present")
+	}
+	c.NoAccess = training.IntakeField{State: "known", Value: "not-yes"}
+	if training.ValidIntakeCard(c) {
+		t.Fatal("flag values must be allowlisted")
+	}
+	c.NoAccess = training.IntakeField{State: "unanswered"}
+	c.Complaint = training.IntakeField{State: "known", Value: strings.Repeat("x", 1999)}
+	if !training.ValidIntakeCard(c) {
+		t.Fatal("description accepts the reference limit")
+	}
+	c.Complaint.Value += "x"
+	if training.ValidIntakeCard(c) {
+		t.Fatal("description over the reference limit must fail")
+	}
+}
+
+func TestExceptionalCallOutcomes(t *testing.T) {
+	now := time.Date(2026, 9, 23, 2, 3, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name    string
+		status  string
+		state   training.ItemState
+		command training.CommandType
+		want    training.CloseReason
+	}{
+		{"no contact", "ringing", training.ItemOpened, training.CommandMarkNoContact, training.CloseNoContact},
+		{"dropped call", "connected", training.ItemInProgress, training.CommandMarkCallDropped, training.CloseCallDropped},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			card := training.UnansweredIntakeCard("112-1", "+79161313131", "02:03", "Europe/Moscow")
+			state := training.IntakeState{CallStatus: test.status}
+			item := training.Item{State: test.state, IntakeCard: &card, IntakeState: &state}
+			decision, err := New().Decide(item, training.Command{Type: test.command, Payload: []byte(`{}`)}, now)
+			if err != nil || !decision.Accepted || decision.Close == nil || *decision.Close != test.want ||
+				decision.State != training.ItemClosed || decision.IntakeState.CallStatus != "ended" || decision.IntakeDispatch != nil {
+				t.Fatalf("exceptional close: %+v, %v", decision, err)
+			}
+			item.State, item.IntakeCard, item.IntakeState = decision.State, decision.IntakeCard, decision.IntakeState
+			if replay, err := New().Decide(item, training.Command{Type: test.command, Payload: []byte(`{}`)}, now); err != nil || replay.Accepted {
+				t.Fatalf("cannot close twice: %+v, %v", replay, err)
+			}
+		})
 	}
 }

@@ -71,6 +71,28 @@ func (exercise) Decide(item training.Item, cmd training.Command, now time.Time) 
 			return reject(item, training.RejectInvalidPayload), nil
 		}
 		state.CallStatus, state.EndedAt = "ended", &now
+	case training.CommandMarkNoContact:
+		if item.State != training.ItemOpened || state.CallStatus != "ringing" {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		var empty struct{}
+		if !payload(cmd.Payload, &empty) {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		state.CallStatus, state.EndedAt = "ended", &now
+		reason := training.CloseNoContact
+		d.Close, d.State = &reason, training.ItemClosed
+	case training.CommandMarkCallDropped:
+		if state.CallStatus != "connected" || state.Dispatched {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		var empty struct{}
+		if !payload(cmd.Payload, &empty) {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		state.CallStatus, state.EndedAt = "ended", &now
+		reason := training.CloseCallDropped
+		d.Close, d.State = &reason, training.ItemClosed
 	case training.CommandSaveIntakeDraft:
 		if state.CallStatus == "ringing" || state.Dispatched {
 			return reject(item, training.RejectTransitionNotAllowed), nil

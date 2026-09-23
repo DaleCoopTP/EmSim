@@ -20,7 +20,9 @@ Dockerfile's Node stage) populates it.
 
 The operator 112 intake has its own trainee workspace and instructor review
 screens. The first 112 slice includes its UI alongside the API and storage
-work; see [slice-112-1-plan.md](../slice-112-1-plan.md).
+work. The trainee card follows the operator reference layout, with a single
+training service labelled 03. The incident selector and supplemental incident
+card are deferred; see [slice-112-1-plan.md](../slice-112-1-plan.md).
 
 `test:e2e` creates a uniquely named Compose project with its own volumes and
 free localhost ports, feeds Chromium `seed/voice-assets/crew_leader_greeting.wav`

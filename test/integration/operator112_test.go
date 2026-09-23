@@ -53,6 +53,17 @@ func TestOperator112IntakeTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	otherWorkstation := insertWorkstation(t, ctx, pool, 2)
+	noContactData := newTrainee("112-no-contact-"+uuid.NewString(), "")
+	noContactData.ServiceCode = nil
+	var noContactUser auth.User
+	if err := store.WithTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		noContactUser, err = store.InsertUser(ctx, tx, noContactData)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	noContactWorkstation := insertWorkstation(t, ctx, pool, 3)
 	if _, err := pool.Exec(ctx, `INSERT INTO services (code, name, workflow) VALUES ('pilot_ambulance', 'Учебная скорая', '{}')`); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +99,8 @@ func TestOperator112IntakeTransaction(t *testing.T) {
 	}
 	if _, err := svc.ReplaceAssignments(ctx, instructor, lesson.ID, []training.AssignmentInput{{WorkstationNo: 1,
 		UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{versionID}}, {WorkstationNo: 2,
-		UserID: other.ID, ScenarioVersionIDs: []uuid.UUID{versionID}}}, "112-assign"); err != nil {
+		UserID: other.ID, ScenarioVersionIDs: []uuid.UUID{versionID}}, {WorkstationNo: 3,
+		UserID: noContactUser.ID, ScenarioVersionIDs: []uuid.UUID{versionID}}}, "112-assign"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Start(ctx, instructor, lesson.ID, "112-start"); err != nil {
@@ -138,6 +150,8 @@ func TestOperator112IntakeTransaction(t *testing.T) {
 	draft := *loaded.IntakeCard
 	draft.Age = training.IntakeField{State: "known", Value: "19"}
 	draft.Address.City = training.IntakeField{State: "known", Value: "Москва"}
+	draft.Address.Descriptive = training.IntakeField{State: "known", Value: "рядом с метро ВДНХ"}
+	draft.OnSitePhone = training.IntakeField{State: "known", Value: "+79161313131"}
 	if r := command(training.CommandSaveIntakeDraft, map[string]any{"draft": draft}, 2); r.Outcome != training.OutcomeApplied {
 		t.Fatalf("save: %+v", r)
 	}
@@ -178,8 +192,39 @@ func TestOperator112IntakeTransaction(t *testing.T) {
 	if err := json.Unmarshal(evidenceJSON, &evidence); err != nil {
 		t.Fatal(err)
 	}
-	if evidence.Schema != "operator112_intake/v1" || evidence.Dispatch == nil || evidence.Dispatch.CardSnapshot.Age.Value != "19" {
+	if evidence.Schema != "operator112_intake/v1" || evidence.Dispatch == nil || evidence.Dispatch.CardSnapshot.Age.Value != "19" ||
+		evidence.Dispatch.CardSnapshot.Address.Descriptive.Value != "рядом с метро ВДНХ" ||
+		evidence.Dispatch.CardSnapshot.OnSitePhone.Value != "+79161313131" {
 		t.Fatalf("evidence: %+v", evidence)
+	}
+	noContact := principal(noContactUser, noContactWorkstation)
+	noContactItems, err := svc.MyItems(ctx, noContact)
+	if err != nil || len(noContactItems) != 1 {
+		t.Fatalf("no-contact item: %+v, %v", noContactItems, err)
+	}
+	noContactItem := noContactItems[0]
+	if r, err := svc.Execute(ctx, noContact, noContactItem.ID, training.Command{
+		CommandID: uuid.New(), ExpectedSeq: 0, Type: training.CommandOpen, Payload: []byte(`{}`)}, "112-no-contact-open"); err != nil || r.Outcome != training.OutcomeApplied {
+		t.Fatalf("no-contact open: %+v, %v", r, err)
+	}
+	noContactCommand := training.Command{CommandID: uuid.New(), ExpectedSeq: 1,
+		Type: training.CommandMarkNoContact, Payload: []byte(`{}`)}
+	if r, err := svc.Execute(ctx, noContact, noContactItem.ID, noContactCommand, "112-no-contact-close"); err != nil || r.Outcome != training.OutcomeApplied {
+		t.Fatalf("no-contact close: %+v, %v", r, err)
+	}
+	if r, err := svc.Execute(ctx, noContact, noContactItem.ID, noContactCommand, "112-no-contact-replay"); err != nil || !r.Replayed {
+		t.Fatalf("no-contact replay: %+v, %v", r, err)
+	}
+	var noContactEvidence []byte
+	if err := pool.QueryRow(ctx, `SELECT body FROM evidence WHERE item_id=$1`, noContactItem.ID).Scan(&noContactEvidence); err != nil {
+		t.Fatal(err)
+	}
+	var exceptional struct {
+		CloseReason training.CloseReason     `json:"close_reason"`
+		Dispatch    *training.IntakeDispatch `json:"dispatch"`
+	}
+	if err := json.Unmarshal(noContactEvidence, &exceptional); err != nil || exceptional.CloseReason != training.CloseNoContact || exceptional.Dispatch != nil {
+		t.Fatalf("no-contact evidence: %+v, %v", exceptional, err)
 	}
 	var autoCount int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM tasks WHERE kind = 'assessment.evaluate'`).Scan(&autoCount); err != nil || autoCount != 0 {

@@ -84,7 +84,7 @@ export function WorkplaceRoute() {
 
   return (
     <section className="trainee-workplace">
-      <header className="workplace-header">
+      {!(selectedItemId && run.data.exercise_type === "operator112_intake") && <header className="workplace-header">
         <div>
 		  <p className="workplace-kicker">Рабочее место {run.data.exercise_type === "operator112_intake" ? "112" : "ДДС"} · РМ-{run.data.workstation_no}</p>
 		  <h1>{selectedItemId ? run.data.exercise_type === "operator112_intake" ? "Входящий вызов" : "Карточка происшествия" : run.data.lesson.title}</h1>
@@ -93,7 +93,7 @@ export function WorkplaceRoute() {
           <dt>В очереди</dt><dd>{run.data.queue_left}</dd>
           <dt>Режим</dt><dd>{run.data.mode === "intro" ? "ознакомительный" : "тренировка"}</dd>
         </dl>
-      </header>
+      </header>}
       {run.data.lesson.state === "stopped" && (
         <p role="alert" className="notice">Занятие остановлено преподавателем{run.data.lesson.stop_reason ? `: ${run.data.lesson.stop_reason}` : ""}. Открытые карточки прерываются фоново.</p>
       )}
@@ -111,7 +111,7 @@ export function WorkplaceRoute() {
       )}
       {workstationMatches && selectedItemId && (
         <>
-		  <button type="button" className="back-to-queue" onClick={() => setSelectedItemId("")}>← К списку {run.data.exercise_type === "operator112_intake" ? "вызовов" : "происшествий"}</button>
+		  <button type="button" className={`back-to-queue${run.data.exercise_type === "operator112_intake" ? " intake-back-to-queue" : ""}`} onClick={() => setSelectedItemId("")}>← К списку {run.data.exercise_type === "operator112_intake" ? "вызовов" : "происшествий"}</button>
           {item.isPending && <p>Загрузка карточки…</p>}
           {item.isError && <p className="error">{errorMessage(item.error)}</p>}
 		  {item.data && (item.data.exercise_type === "operator112_intake" ? <Operator112Workplace key={item.data.id} me={me} item={item.data as unknown as IntakeItem} /> : <ItemWorkplace key={item.data.id} me={me} item={item.data as DDSItem} />)}
