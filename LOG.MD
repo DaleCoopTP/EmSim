@@ -965,3 +965,20 @@ warning), `python3 design-docs/contracts/check.py`, четыре браузер�
 
 Remaining risk: профильное подтверждение полей и правил служб остаётся
 открытым. Next: получить решения по вопросам в `slice-112-3-plan.md`.
+
+## 2026-09-23 — Проверка контракта evidence для 112-3
+
+Status: техническая проверка завершена.
+
+- `design-docs/contracts/evidence.operator112.schema.json` уточняет режим
+  `card_only`: в evidence нет разговора и отправки, а завершённый кейс содержит
+  выбранный тип и зафиксированный выбор служб.
+- `test/integration/operator112_profiles_test.go` валидирует реальные evidence
+  всех трёх кейсов и остановленного задания по контрактной схеме, а также
+  проверяет, что схема отклоняет некорректное состояние вызова и завершение
+  без выбора служб.
+
+Validation: `python3 design-docs/contracts/check.py`,
+`go test -tags integration -run '^TestOperator112ProfileCases$' -count=1
+./test/integration/` на PostgreSQL 16 и `git diff --check` прошли.
+Оставшийся шаг: профильная приёмка вопросов из `slice-112-3-plan.md`.

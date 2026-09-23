@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"emsim/internal/auth"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 func TestOperator112ProfileCases(t *testing.T) {
@@ -43,6 +45,33 @@ func TestOperator112ProfileCases(t *testing.T) {
 		t.Fatal(err)
 	}
 	trainingService := newTrainingService(pool)
+	evidenceSchemaJSON, err := os.ReadFile("../../design-docs/contracts/evidence.operator112.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidenceSchemaDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(evidenceSchemaJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler := jsonschema.NewCompiler()
+	const evidenceSchemaID = "https://emsim.local/schemas/evidence/operator112/v1"
+	if err := compiler.AddResource(evidenceSchemaID, evidenceSchemaDoc); err != nil {
+		t.Fatal(err)
+	}
+	evidenceSchema, err := compiler.Compile(evidenceSchemaID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validateEvidence := func(raw []byte) {
+		t.Helper()
+		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := evidenceSchema.Validate(doc); err != nil {
+			t.Fatalf("operator112 evidence violates schema: %v", err)
+		}
+	}
 	lesson, err := trainingService.CreateLesson(ctx, principal(actor, uuid.Nil), training.LessonCreate{
 		ExerciseType: content.ExerciseTypeOperator112Intake, Title: "Карты 104 и 101", Mode: training.ModeTraining, Level: auth.LevelEasy,
 	}, "profile-lesson")
@@ -184,6 +213,25 @@ func TestOperator112ProfileCases(t *testing.T) {
 			if err := pool.QueryRow(ctx, `SELECT body FROM evidence WHERE item_id=$1`, itemID).Scan(&evidenceJSON); err != nil {
 				t.Fatal(err)
 			}
+			validateEvidence(evidenceJSON)
+			if i == 0 {
+				invalidDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(evidenceJSON))
+				if err != nil {
+					t.Fatal(err)
+				}
+				invalidDoc.(map[string]any)["intake_state"].(map[string]any)["call_status"] = "connected"
+				if err := evidenceSchema.Validate(invalidDoc); err == nil {
+					t.Fatal("schema accepted a connected call in card_only evidence")
+				}
+				invalidDoc, err = jsonschema.UnmarshalJSON(bytes.NewReader(evidenceJSON))
+				if err != nil {
+					t.Fatal(err)
+				}
+				delete(invalidDoc.(map[string]any)["intake_state"].(map[string]any), "service_review")
+				if err := evidenceSchema.Validate(invalidDoc); err == nil {
+					t.Fatal("schema accepted completed card_only evidence without service review")
+				}
+			}
 			var evidence struct {
 				FinalCard   training.IntakeCard      `json:"final_card"`
 				IntakeState training.IntakeState     `json:"intake_state"`
@@ -239,6 +287,7 @@ func TestOperator112ProfileCases(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT body FROM evidence WHERE item_id=$1`, stopItemID).Scan(&stoppedEvidence); err != nil {
 		t.Fatal(err)
 	}
+	validateEvidence(stoppedEvidence)
 	var stoppedBody struct {
 		FinalCard training.IntakeCard `json:"final_card"`
 	}

@@ -4,6 +4,25 @@
   "title": "Operator112IntakeEvidence v1",
   "type": "object",
   "required": ["schema", "exercise_type", "item_id", "run_id", "lesson_id", "trainee_id", "workstation_no", "scenario_version_id", "scenario_digest", "offered_at", "opened_at", "closed_at", "close_reason", "mode", "final_card", "intake_state", "dispatch", "actions", "cutoff_log_seq", "interruptions"],
+  "allOf": [
+    {
+      "if": {"properties": {"intake_state": {"properties": {"mode": {"const": "card_only"}}, "required": ["mode"]}}},
+      "then": {"properties": {
+        "dispatch": {"type": "null"},
+        "intake_state": {"properties": {"call_status": {"const": "not_applicable"}, "transcript": {"maxItems": 0}}}
+      }}
+    },
+    {
+      "if": {"properties": {
+        "close_reason": {"const": "completed"},
+        "intake_state": {"properties": {"mode": {"const": "card_only"}}, "required": ["mode"]}
+      }},
+      "then": {"properties": {
+        "final_card": {"required": ["incident_types", "profiles"], "properties": {"incident_types": {"minItems": 1}}},
+        "intake_state": {"required": ["service_review"]}
+      }}
+    }
+  ],
   "properties": {
     "schema": {"const": "operator112_intake/v1"},
     "exercise_type": {"const": "operator112_intake"},
