@@ -35,7 +35,7 @@ import (
 )
 
 var (
-	errImportCommandRequired = errors.New("import subcommand is required: services | classifier | scenarios | voice-assets | seed")
+	errImportCommandRequired = errors.New("import subcommand is required: services | classifier | intake-catalog | scenarios | voice-assets | seed")
 	errImportUnknownCommand  = errors.New("unknown import subcommand")
 	errImportActorRequired   = errors.New("--actor <login> is required")
 	errImportPathRequired    = errors.New("a file or directory path is required")
@@ -52,7 +52,7 @@ func importRun(ctx context.Context, args []string, databaseURL string, stdout io
 		return errImportCommandRequired
 	}
 	command, rest := args[0], args[1:]
-	if command != "services" && command != "classifier" && command != "scenarios" && command != "voice-assets" && command != "seed" {
+	if command != "services" && command != "classifier" && command != "intake-catalog" && command != "scenarios" && command != "voice-assets" && command != "seed" {
 		return errImportUnknownCommand
 	}
 	actorLogin, path, err := parseImportArgs(rest)
@@ -93,6 +93,8 @@ func importRun(ctx context.Context, args []string, databaseURL string, stdout io
 		return importServicesStep(ctx, contentService, pool, path, actorID, actorRole, requestID, stdout)
 	case "classifier":
 		return importClassifierStep(ctx, contentService, path, actorID, actorRole, requestID, stdout)
+	case "intake-catalog":
+		return importIntakeCatalogStep(ctx, contentService, path, actorID, actorRole, requestID, stdout)
 	case "scenarios":
 		return importScenariosStep(ctx, contentService, path, actorID, actorRole, requestID, stdout)
 	case "voice-assets":
@@ -102,6 +104,9 @@ func importRun(ctx context.Context, args []string, databaseURL string, stdout io
 			return err
 		}
 		if err := importClassifierStep(ctx, contentService, filepath.Join(path, "classifier.json"), actorID, actorRole, requestID, stdout); err != nil {
+			return err
+		}
+		if err := importIntakeCatalogStep(ctx, contentService, filepath.Join(path, "intake-catalog.json"), actorID, actorRole, requestID, stdout); err != nil {
 			return err
 		}
 		if err := importScenariosStep(ctx, contentService, filepath.Join(path, "scenarios"), actorID, actorRole, requestID, stdout); err != nil {
@@ -326,6 +331,20 @@ func importClassifierStep(ctx context.Context, svc *content.Service, path string
 		return fmt.Errorf("import classifier: %w", err)
 	}
 	fmt.Fprintf(stdout, "classifier: created=%d unchanged=%d\n", result.Created, result.Unchanged)
+	return nil
+}
+
+func importIntakeCatalogStep(ctx context.Context, svc *content.Service, path string, actorID uuid.UUID, actorRole, requestID string, stdout io.Writer) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+	result, err := svc.ImportIntakeCatalog(ctx, f, actorID, actorRole, requestID)
+	if err != nil {
+		return fmt.Errorf("import intake catalog: %w", err)
+	}
+	fmt.Fprintf(stdout, "intake catalog: created=%d unchanged=%d\n", result.Created, result.Unchanged)
 	return nil
 }
 

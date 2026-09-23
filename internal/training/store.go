@@ -77,7 +77,7 @@ type Store interface {
 	ListLessonsByInstructor(ctx context.Context, tx pgx.Tx, instructorID uuid.UUID, state *LessonState) ([]Lesson, error)
 	// StartLesson transitions draft -> running, setting started_at, under
 	// the row lock the caller already holds (LessonByID with LockUpdate).
-	StartLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, startedAt time.Time) (Lesson, error)
+	StartLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, startedAt time.Time, intakeCatalogVersion *int) (Lesson, error)
 	// StopLesson transitions running -> stopped under the row lock the
 	// caller already holds, setting stopped_at/stop_reason and the new
 	// epoch (RFC-001 §7.5's barrier). The WHERE clause's own state='running'

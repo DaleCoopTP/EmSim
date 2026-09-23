@@ -47,6 +47,8 @@ type ScenarioReader interface {
 	VersionByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (content.ScenarioVersionRecord, error)
 	ScenarioByKey(ctx context.Context, tx pgx.Tx, key string) (content.ScenarioRecord, error)
 	VersionByNumber(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID, version int) (content.ScenarioVersionRecord, error)
+	LatestIntakeCatalog(ctx context.Context, tx pgx.Tx) (content.IntakeCatalog, error)
+	IntakeCatalogByVersion(ctx context.Context, tx pgx.Tx, version int) (content.IntakeCatalog, error)
 }
 
 // ServiceReader is training's read of content's service workflow

@@ -109,14 +109,14 @@ func lockSuffix(lock training.Lock, of string) string {
 
 // ------------------------------------------------------------ lessons
 
-const lessonColumns = `exercise_type, id, instructor_id, title, mode, level, state, epoch, timing, rubric_version, recording_grace_s, created_at, started_at, stopped_at, stop_reason, finished_at`
+const lessonColumns = `exercise_type, id, instructor_id, title, mode, level, state, epoch, timing, rubric_version, recording_grace_s, created_at, started_at, stopped_at, stop_reason, finished_at, intake_catalog_version`
 
 func scanLesson(row pgx.Row) (training.Lesson, error) {
 	var l training.Lesson
 	var timingJSON []byte
 	err := row.Scan(&l.ExerciseType, &l.ID, &l.InstructorID, &l.Title, &l.Mode, &l.Level, &l.State,
 		&l.Epoch, &timingJSON, &l.RubricVersion, &l.RecordingGraceS, &l.CreatedAt,
-		&l.StartedAt, &l.StoppedAt, &l.StopReason, &l.FinishedAt)
+		&l.StartedAt, &l.StoppedAt, &l.StopReason, &l.FinishedAt, &l.IntakeCatalogVersion)
 	if e := mapErr(err); e != nil {
 		return training.Lesson{}, e
 	}
@@ -177,9 +177,9 @@ func (s *Store) ListLessonsByInstructor(ctx context.Context, tx pgx.Tx, instruct
 	return lessons, nil
 }
 
-func (s *Store) StartLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, startedAt time.Time) (training.Lesson, error) {
-	query := `UPDATE lessons SET state = 'running', started_at = $2 WHERE id = $1 RETURNING ` + lessonColumns
-	return scanLesson(tx.QueryRow(ctx, query, id, startedAt))
+func (s *Store) StartLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, startedAt time.Time, intakeCatalogVersion *int) (training.Lesson, error) {
+	query := `UPDATE lessons SET state = 'running', started_at = $2, intake_catalog_version = $3 WHERE id = $1 RETURNING ` + lessonColumns
+	return scanLesson(tx.QueryRow(ctx, query, id, startedAt, intakeCatalogVersion))
 }
 
 func (s *Store) StopLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, stoppedAt time.Time, reason *string, epoch int64) (training.Lesson, error) {

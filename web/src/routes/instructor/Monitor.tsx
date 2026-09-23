@@ -16,6 +16,10 @@ const commandLabels: Record<string, string> = {
   answer_incoming: "Принял входящий вызов",
   end_incoming: "Завершил разговор",
   save_intake_draft: "Сохранил карточку",
+  add_incident_type: "Добавил тип происшествия",
+  remove_incident_type: "Убрал тип происшествия",
+  review_service_selection: "Зафиксировал выбор служб",
+  complete_profile_case: "Завершил кейс",
   dispatch_intake: "Направил карточку",
   complete_intake: "Завершил обработку",
 };
@@ -70,7 +74,7 @@ function MonitorRowView({ row }: { row: MonitorRow }) {
         {row.active_items.length === 0 && "—"}
         {row.active_items.map((item) => (
           <div key={item.id}>
-			№ {item.card_number} · {item.exercise_type === "operator112_intake" ? `вызов ${item.call_status === "ringing" ? "ожидает" : item.call_status === "connected" ? "идёт разговор" : "разговор завершён"}${item.dispatched ? " · направлена" : ""}` : reactionLabel(item.reaction)}
+			№ {item.card_number} · {item.exercise_type === "operator112_intake" ? item.call_status === "not_applicable" ? `кейс без разговора${item.incident_type ? ` · ${item.incident_type}` : " · тип не выбран"}` : `вызов ${item.call_status === "ringing" ? "ожидает" : item.call_status === "connected" ? "идёт разговор" : "разговор завершён"}${item.dispatched ? " · направлена" : ""}` : reactionLabel(item.reaction)}
             {item.interruptions.length > 0 && <span role="alert" className="error"> · прервана рестартом сервера</span>}
           </div>
         ))}

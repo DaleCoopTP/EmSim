@@ -72,6 +72,20 @@ func validateIntake112(intake *Intake112, catalog Catalog) error {
 	if intake == nil {
 		return invalid("intake112", "required")
 	}
+	if intake.Mode == "card_only" {
+		if intake.Dialogue != nil || intake.Call != nil || len(intake.RecipientServices) != 0 ||
+			len(intake.Reference.ExpectedTypes) == 0 || intake.Reference.CaseDescription == "" ||
+			intake.Reference.RecipientService != "" || intake.Reference.ExpectedCard != nil {
+			return invalid("intake112", "invalid_card_only_case")
+		}
+		return nil
+	}
+	if intake.Mode != "" && intake.Mode != "incoming_call" {
+		return invalid("intake112.mode", "invalid")
+	}
+	if intake.Call == nil || intake.Reference.ExpectedCard == nil {
+		return invalid("intake112", "incomplete_incoming_call")
+	}
 	if len(intake.RecipientServices) != 1 {
 		return invalid("intake112.recipient_services", "exactly_one_required")
 	}

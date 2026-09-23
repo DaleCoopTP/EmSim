@@ -24,22 +24,23 @@ const (
 // redeclaring it — the same reasoning domain.go documents for reusing
 // content.Reaction/content.Workflow.
 type Lesson struct {
-	ID              uuid.UUID
-	ExerciseType    content.ExerciseType
-	InstructorID    uuid.UUID
-	Title           string
-	Mode            Mode
-	Level           auth.Level
-	State           LessonState
-	Epoch           int64
-	Timing          Timing
-	RubricVersion   string
-	RecordingGraceS int
-	CreatedAt       time.Time
-	StartedAt       *time.Time
-	StoppedAt       *time.Time
-	StopReason      *string
-	FinishedAt      *time.Time
+	ID                   uuid.UUID
+	ExerciseType         content.ExerciseType
+	InstructorID         uuid.UUID
+	Title                string
+	Mode                 Mode
+	Level                auth.Level
+	State                LessonState
+	Epoch                int64
+	Timing               Timing
+	RubricVersion        string
+	RecordingGraceS      int
+	IntakeCatalogVersion *int
+	CreatedAt            time.Time
+	StartedAt            *time.Time
+	StoppedAt            *time.Time
+	StopReason           *string
+	FinishedAt           *time.Time
 }
 
 // LessonCreate is CreateLesson's input (openapi.yaml's LessonCreate). A

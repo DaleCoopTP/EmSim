@@ -152,6 +152,22 @@ func TestIntakeFieldStates(t *testing.T) {
 	if !training.ValidIntakeCard(c) {
 		t.Fatal("unanswered card should be valid")
 	}
+	if c.Channel.State != "unanswered" {
+		t.Fatal("new card must not invent a telecom provider")
+	}
+	c.Channel = training.IntakeField{State: "known", Value: "МТС"}
+	if !training.ValidIntakeCard(c) {
+		t.Fatal("telecom provider should be accepted")
+	}
+	c.Channel = training.IntakeField{State: "known", Value: "phone"}
+	if !training.ValidIntakeCard(c) {
+		t.Fatal("legacy phone channel should remain valid")
+	}
+	c.Channel = training.IntakeField{State: "known", Value: " МТС"}
+	if training.ValidIntakeCard(c) {
+		t.Fatal("channel with surrounding whitespace should be rejected")
+	}
+	c.Channel = training.IntakeField{State: "unanswered"}
 	c.VictimsPresent = training.IntakeField{State: "negative"}
 	if !training.ValidIntakeCard(c) {
 		t.Fatal("negative presence should be valid")

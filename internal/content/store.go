@@ -189,6 +189,9 @@ type Store interface {
 	ServiceByCode(ctx context.Context, tx pgx.Tx, code string) (ServiceRecord, error)
 	ListServices(ctx context.Context, tx pgx.Tx) ([]ServiceRecord, error)
 	InsertService(ctx context.Context, tx pgx.Tx, s ServiceRecord) error
+	LatestIntakeCatalog(ctx context.Context, tx pgx.Tx) (IntakeCatalog, error)
+	IntakeCatalogByVersion(ctx context.Context, tx pgx.Tx, version int) (IntakeCatalog, error)
+	InsertIntakeCatalog(ctx context.Context, tx pgx.Tx, catalog IntakeCatalog) error
 
 	ClassifierTypeByCode(ctx context.Context, tx pgx.Tx, code string) (ClassifierType, error)
 	InsertClassifierType(ctx context.Context, tx pgx.Tx, c ClassifierType) error

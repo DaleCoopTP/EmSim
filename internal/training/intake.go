@@ -1,6 +1,7 @@
 package training
 
 import (
+	"emsim/internal/content"
 	"github.com/google/uuid"
 	"strings"
 	"time"
@@ -35,24 +36,50 @@ type IntakeAddress struct {
 // IntakeCard is the operator's mutable draft. Metadata is copied from the
 // approved call and never accepted from a command payload.
 type IntakeCard struct {
-	Number          string        `json:"number"`
-	AON             string        `json:"aon"`
-	CallLocalTime   string        `json:"call_local_time"`
-	CallTimeZone    string        `json:"call_time_zone"`
-	ApplicantName   IntakeField   `json:"applicant_name"`
-	ApplicantStatus IntakeField   `json:"applicant_status"`
-	Age             IntakeField   `json:"age"`
-	Address         IntakeAddress `json:"address"`
-	IncidentType    IntakeField   `json:"incident_type"`
-	Complaint       IntakeField   `json:"complaint"`
-	VictimsPresent  IntakeField   `json:"victims_present"`
-	VictimsCount    IntakeField   `json:"victims_count"`
-	ProvidedPhone   IntakeField   `json:"provided_phone"`
-	OnSitePhone     IntakeField   `json:"on_site_phone"`
-	Channel         IntakeField   `json:"channel"`
-	ForeignLanguage IntakeField   `json:"foreign_language"`
-	NoOnSite        IntakeField   `json:"no_on_site"`
-	NoAccess        IntakeField   `json:"no_access"`
+	Number          string                   `json:"number"`
+	AON             string                   `json:"aon"`
+	CallLocalTime   string                   `json:"call_local_time"`
+	CallTimeZone    string                   `json:"call_time_zone"`
+	ApplicantName   IntakeField              `json:"applicant_name"`
+	ApplicantStatus IntakeField              `json:"applicant_status"`
+	Age             IntakeField              `json:"age"`
+	Address         IntakeAddress            `json:"address"`
+	IncidentType    IntakeField              `json:"incident_type"`
+	Complaint       IntakeField              `json:"complaint"`
+	VictimsPresent  IntakeField              `json:"victims_present"`
+	VictimsCount    IntakeField              `json:"victims_count"`
+	ProvidedPhone   IntakeField              `json:"provided_phone"`
+	OnSitePhone     IntakeField              `json:"on_site_phone"`
+	Channel         IntakeField              `json:"channel"`
+	ForeignLanguage IntakeField              `json:"foreign_language"`
+	NoOnSite        IntakeField              `json:"no_on_site"`
+	NoAccess        IntakeField              `json:"no_access"`
+	IncidentTypes   []string                 `json:"incident_types,omitempty"`
+	Profiles        map[string]IntakeProfile `json:"profiles,omitempty"`
+}
+
+type IntakeProfileAnswer struct {
+	State  string   `json:"state"`
+	Value  string   `json:"value,omitempty"`
+	Values []string `json:"values,omitempty"`
+}
+
+type IntakeProfile struct {
+	DefinitionID string                         `json:"definition_id"`
+	Version      int                            `json:"version"`
+	Answers      map[string]IntakeProfileAnswer `json:"answers"`
+}
+
+type IntakeServiceSuggestion struct {
+	ServiceCode string   `json:"service_code"`
+	Reasons     []string `json:"reasons"`
+}
+
+type IntakeServiceReview struct {
+	Suggested  []IntakeServiceSuggestion `json:"suggested"`
+	Selected   []string                  `json:"selected"`
+	Reason     string                    `json:"reason,omitempty"`
+	ReviewedAt time.Time                 `json:"reviewed_at"`
 }
 
 func UnansweredIntakeCard(number, aon, localTime, zone string) IntakeCard {
@@ -60,7 +87,7 @@ func UnansweredIntakeCard(number, aon, localTime, zone string) IntakeCard {
 	return IntakeCard{Number: number, AON: aon, CallLocalTime: localTime, CallTimeZone: zone,
 		ApplicantName: u, ApplicantStatus: u, Age: u, IncidentType: u, Complaint: u,
 		VictimsPresent: u, VictimsCount: u, ProvidedPhone: u, OnSitePhone: u,
-		Channel: IntakeField{State: "known", Value: "phone"}, ForeignLanguage: u, NoOnSite: u, NoAccess: u,
+		Channel: u, ForeignLanguage: u, NoOnSite: u, NoAccess: u,
 		Address: IntakeAddress{Country: u, Region: u, City: u, Object: u,
 			Okrug: u, District: u, Street: u, House: u, Building: u,
 			Structure: u, Flat: u, Entrance: u, Floor: u, Code: u,
@@ -90,7 +117,7 @@ func ValidIntakeCard(card IntakeCard) bool {
 	}
 	return validIntakeField(card.Complaint, 1999, false) &&
 		validVictimsPresent(card.VictimsPresent) &&
-		validOptionalChoice(card.Channel, "phone") &&
+		validIntakeField(card.Channel, 100, true) &&
 		validOptionalChoice(card.ForeignLanguage, "yes") &&
 		validOptionalChoice(card.NoOnSite, "yes") &&
 		validOptionalChoice(card.NoAccess, "yes")
@@ -146,14 +173,19 @@ type IntakeQuestionOption struct {
 }
 
 type IntakeState struct {
-	CallStatus       string       `json:"call_status"` // ringing, connected, held, ended
-	Transcript       []IntakeLine `json:"transcript"`
-	AskedQuestionIDs []string     `json:"asked_question_ids,omitempty"`
-	HasSavedDraft    bool         `json:"has_saved_draft"`
-	Dispatched       bool         `json:"dispatched"`
-	SelectedService  string       `json:"selected_service,omitempty"`
-	AnsweredAt       *time.Time   `json:"answered_at,omitempty"`
-	EndedAt          *time.Time   `json:"ended_at,omitempty"`
+	Mode              string                    `json:"mode,omitempty"`
+	Catalog           *content.IntakeCatalog    `json:"catalog,omitempty"`
+	InactiveProfiles  map[string]IntakeProfile  `json:"inactive_profiles,omitempty"`
+	SuggestedServices []IntakeServiceSuggestion `json:"suggested_services,omitempty"`
+	ServiceReview     *IntakeServiceReview      `json:"service_review,omitempty"`
+	CallStatus        string                    `json:"call_status"` // ringing, connected, held, ended
+	Transcript        []IntakeLine              `json:"transcript"`
+	AskedQuestionIDs  []string                  `json:"asked_question_ids,omitempty"`
+	HasSavedDraft     bool                      `json:"has_saved_draft"`
+	Dispatched        bool                      `json:"dispatched"`
+	SelectedService   string                    `json:"selected_service,omitempty"`
+	AnsweredAt        *time.Time                `json:"answered_at,omitempty"`
+	EndedAt           *time.Time                `json:"ended_at,omitempty"`
 }
 
 type IntakeDispatch struct {

@@ -33,12 +33,14 @@
     "intake112": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["call", "recipient_services", "reference"],
+      "required": ["reference"],
       "oneOf": [
-        {"properties": {"call": {"required": ["script"]}, "dialogue": false}},
-        {"required": ["dialogue"], "properties": {"call": {"not": {"required": ["script"]}}}}
+        {"required": ["call", "recipient_services"], "properties": {"mode": {"enum": ["incoming_call"]}, "call": {"required": ["script"]}, "dialogue": false, "reference": {"required": ["expected_card", "recipient_service"]}}},
+        {"required": ["call", "recipient_services", "dialogue"], "properties": {"mode": {"enum": ["incoming_call"]}, "call": {"not": {"required": ["script"]}}, "reference": {"required": ["expected_card", "recipient_service"]}}},
+        {"required": ["mode"], "properties": {"mode": {"const": "card_only"}, "reference": {"required": ["expected_types", "case_description"], "not": {"anyOf": [{"required": ["expected_card"]}, {"required": ["recipient_service"]}]}}}, "not": {"anyOf": [{"required": ["call"]}, {"required": ["dialogue"]}, {"required": ["recipient_services"]}]}}
       ],
       "properties": {
+        "mode": {"enum": ["incoming_call", "card_only"]},
         "call": {
           "type": "object",
           "additionalProperties": false,
@@ -89,8 +91,9 @@
         },
         "reference": {
           "type": "object", "additionalProperties": false,
-          "required": ["expected_card", "recipient_service"],
           "properties": {
+            "expected_types": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["gas_explosion", "road_traffic_fire", "gas_explosion_road_traffic_fire"]}},
+            "case_description": {"type": "string", "minLength": 1},
             "expected_card": {
               "type": "object", "additionalProperties": false,
               "required": ["applicant_status", "age", "address", "incident_type", "complaint", "victims_count"],

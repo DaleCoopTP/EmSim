@@ -73,24 +73,28 @@ const (
 type CommandType string
 
 const (
-	CommandOpen              CommandType = "open"
-	CommandSetStatus         CommandType = "set_status"
-	CommandAddComment        CommandType = "add_comment"
-	CommandSetCardField      CommandType = "set_card_field" // ADR-017
-	CommandClose             CommandType = "close"
-	CommandCallStart         CommandType = "call_start"
-	CommandCallEnd           CommandType = "call_end"
-	CommandControlReport     CommandType = "control_report" // not implemented until slice 4/5
-	CommandAnswerIncoming    CommandType = "answer_incoming"
-	CommandEndIncoming       CommandType = "end_incoming"
-	CommandSaveIntakeDraft   CommandType = "save_intake_draft"
-	CommandDispatchIntake    CommandType = "dispatch_intake"
-	CommandCompleteIntake    CommandType = "complete_intake"
-	CommandMarkNoContact     CommandType = "mark_no_contact"
-	CommandMarkCallDropped   CommandType = "mark_call_dropped"
-	CommandAskIntakeQuestion CommandType = "ask_intake_question"
-	CommandHoldIncoming      CommandType = "hold_incoming"
-	CommandResumeIncoming    CommandType = "resume_incoming"
+	CommandOpen                CommandType = "open"
+	CommandSetStatus           CommandType = "set_status"
+	CommandAddComment          CommandType = "add_comment"
+	CommandSetCardField        CommandType = "set_card_field" // ADR-017
+	CommandClose               CommandType = "close"
+	CommandCallStart           CommandType = "call_start"
+	CommandCallEnd             CommandType = "call_end"
+	CommandControlReport       CommandType = "control_report" // not implemented until slice 4/5
+	CommandAnswerIncoming      CommandType = "answer_incoming"
+	CommandEndIncoming         CommandType = "end_incoming"
+	CommandSaveIntakeDraft     CommandType = "save_intake_draft"
+	CommandDispatchIntake      CommandType = "dispatch_intake"
+	CommandCompleteIntake      CommandType = "complete_intake"
+	CommandMarkNoContact       CommandType = "mark_no_contact"
+	CommandMarkCallDropped     CommandType = "mark_call_dropped"
+	CommandAskIntakeQuestion   CommandType = "ask_intake_question"
+	CommandHoldIncoming        CommandType = "hold_incoming"
+	CommandResumeIncoming      CommandType = "resume_incoming"
+	CommandAddIncidentType     CommandType = "add_incident_type"
+	CommandRemoveIncidentType  CommandType = "remove_incident_type"
+	CommandReviewServices      CommandType = "review_service_selection"
+	CommandCompleteProfileCase CommandType = "complete_profile_case"
 )
 
 // Deadlines is items.deadlines: absolute server time, frozen once set.

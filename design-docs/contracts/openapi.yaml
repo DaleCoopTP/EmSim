@@ -746,8 +746,9 @@ components:
       additionalProperties: true
     Intake112Scenario:
       type: object
-      required: [call, recipient_services, reference]
+      required: [reference]
       properties:
+        mode: { type: string, enum: [incoming_call, card_only], description: Отсутствие означает incoming_call для старых версий. }
         call:
           type: object
           required: [aon, local_time, time_zone]
@@ -757,12 +758,14 @@ components:
             time_zone: { type: string, const: Europe/Moscow }
             script: { type: array, items: { type: string }, description: Только утверждённые сценарии 112-1. }
         dialogue: { $ref: '#/components/schemas/Intake112Dialogue' }
-        recipient_services: { type: array, items: { type: string }, minItems: 1, maxItems: 1 }
+        recipient_services: { type: array, items: { type: string }, minItems: 1, maxItems: 1, description: Только для incoming_call. }
         reference:
           type: object
           required: [expected_card, recipient_service]
           properties:
             recipient_service: { type: string }
+            expected_types: { type: array, items: { type: string }, description: Закрытый эталон card_only; определения карт здесь не хранятся. }
+            case_description: { type: string, description: Закрытое описание ситуации card_only. }
             expected_card:
               type: object
               required: [applicant_status, age, address, incident_type, complaint, victims_count]
@@ -869,15 +872,105 @@ components:
         victims_count: { $ref: '#/components/schemas/Intake112Field' }
         provided_phone: { $ref: '#/components/schemas/Intake112Field' }
         on_site_phone: { $ref: '#/components/schemas/Intake112Field' }
-        channel: { $ref: '#/components/schemas/Intake112Field' }
+        channel:
+          allOf: [{ $ref: '#/components/schemas/Intake112Field' }]
+          description: Оператор или канал связи со слов заявителя; `phone` сохраняется как значение старых карточек.
         foreign_language: { $ref: '#/components/schemas/Intake112Field' }
         no_on_site: { $ref: '#/components/schemas/Intake112Field' }
         no_access: { $ref: '#/components/schemas/Intake112Field' }
+        incident_types: { type: array, items: { type: string }, description: Упорядоченные выбранные типы для card_only; старое incident_type остаётся для incoming_call. }
+        profiles:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/Intake112ProfileAnswers' }
+          description: Только активные карты; при удалении типа ответы временно хранятся вне итогового снимка.
+    Intake112ProfileAnswers:
+      type: object
+      required: [definition_id, version, answers]
+      properties:
+        definition_id: { type: string }
+        version: { type: integer, minimum: 1 }
+        answers:
+          type: object
+          additionalProperties:
+            type: object
+            required: [state]
+            properties:
+              state: { type: string, enum: [unanswered, unknown, known] }
+              value: { type: string }
+              values: { type: array, items: { type: string }, uniqueItems: true }
+    Intake112Catalog:
+      type: object
+      required: [version, types, profiles, service_rules]
+      properties:
+        version: { type: integer, minimum: 1 }
+        types:
+          type: array
+          items:
+            type: object
+            required: [id, name, profile_ids]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              profile_ids: { type: array, items: { type: string } }
+        profiles:
+          type: array
+          items:
+            type: object
+            required: [id, version, name, fields]
+            properties:
+              id: { type: string }
+              version: { type: integer }
+              name: { type: string }
+              fields:
+                type: array
+                items:
+                  type: object
+                  required: [id, label, kind]
+                  properties:
+                    id: { type: string }
+                    label: { type: string }
+                    kind: { type: string, enum: [single, multiple, text, shared] }
+                    options: { type: array, items: { type: string } }
+                    shared: { type: string, enum: [no_on_site, no_access] }
+        service_rules:
+          type: array
+          items:
+            type: object
+            required: [id, profile_id, service_code, reason]
+            properties:
+              id: { type: string }
+              profile_id: { type: string }
+              field_id: { type: string }
+              equals: { type: string }
+              service_code: { type: string }
+              reason: { type: string }
     Intake112State:
       type: object
       required: [call_status, transcript, has_saved_draft, dispatched]
       properties:
-        call_status: { type: string, enum: [ringing, connected, held, ended] }
+        mode: { type: string, enum: [card_only], description: Отсутствует у старых входящих вызовов. }
+        catalog: { $ref: '#/components/schemas/Intake112Catalog', description: Неизменяемый снимок каталога на момент выдачи. }
+        call_status: { type: string, enum: [ringing, connected, held, ended, not_applicable] }
+        inactive_profiles:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/Intake112ProfileAnswers' }
+          description: Только рабочее состояние; не входит в активный итоговый снимок evidence.
+        suggested_services:
+          type: array
+          items:
+            type: object
+            required: [service_code, reasons]
+            properties:
+              service_code: { type: string }
+              reasons: { type: array, items: { type: string } }
+        service_review:
+          type: object
+          required: [suggested, selected, reviewed_at]
+          properties:
+            suggested: { type: array, items: { type: object } }
+            selected: { type: array, items: { type: string } }
+            reason: { type: string }
+            reviewed_at: { type: string, format: date-time }
         asked_question_ids: { type: array, items: { type: string }, description: В порядке первого вопроса; повторные вопросы остаются в журнале реплик. }
         transcript:
           type: array
@@ -1233,7 +1326,7 @@ components:
       - interruptions
       properties:
         exercise_type: { $ref: '#/components/schemas/ExerciseType' }
-        call_status: { type: string, enum: [ringing, connected, held, ended] }
+        call_status: { type: string, enum: [ringing, connected, held, ended, not_applicable] }
         dispatched: { type: boolean }
         id:
           type: string
@@ -1394,6 +1487,10 @@ components:
           - ask_intake_question
           - hold_incoming
           - resume_incoming
+          - add_incident_type
+          - remove_incident_type
+          - review_service_selection
+          - complete_profile_case
         payload:
           type: object
         client_at:
@@ -1572,6 +1669,18 @@ components:
           payload: { type: object, additionalProperties: false }
       - properties:
           type: { const: mark_call_dropped }
+          payload: { type: object, additionalProperties: false }
+      - properties:
+          type: { const: add_incident_type }
+          payload: { type: object, additionalProperties: false, required: [type_id], properties: { type_id: { type: string } } }
+      - properties:
+          type: { const: remove_incident_type }
+          payload: { type: object, additionalProperties: false, required: [type_id], properties: { type_id: { type: string } } }
+      - properties:
+          type: { const: review_service_selection }
+          payload: { type: object, additionalProperties: false, required: [services, reason], properties: { services: { type: array, items: { type: string }, uniqueItems: true }, reason: { type: string } } }
+      - properties:
+          type: { const: complete_profile_case }
           payload: { type: object, additionalProperties: false }
 
     Receipt:

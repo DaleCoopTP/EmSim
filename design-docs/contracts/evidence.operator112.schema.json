@@ -19,9 +19,16 @@
     "closed_at": {"type": "string", "format": "date-time"},
     "close_reason": {"enum": ["completed", "interrupted", "no_contact", "call_dropped"]},
     "mode": {"const": "training"},
-    "final_card": {"type": "object", "required": ["number", "aon", "call_local_time", "call_time_zone", "applicant_name", "applicant_status", "age", "address", "incident_type", "complaint", "victims_present", "victims_count", "provided_phone"]},
+    "final_card": {"type": "object", "required": ["number", "aon", "call_local_time", "call_time_zone", "applicant_name", "applicant_status", "age", "address", "incident_type", "complaint", "victims_present", "victims_count", "provided_phone"], "properties": {
+      "incident_types": {"type": "array", "items": {"type": "string"}},
+      "profiles": {"type": "object", "additionalProperties": {"type": "object", "required": ["definition_id", "version", "answers"]}}
+    }},
     "intake_state": {"type": "object", "required": ["call_status", "transcript", "has_saved_draft", "dispatched"], "properties": {
-      "call_status": {"enum": ["ringing", "connected", "held", "ended"]},
+      "mode": {"const": "card_only"},
+      "catalog": {"type": "object", "required": ["version", "types", "profiles", "service_rules"]},
+      "suggested_services": {"type": "array", "items": {"type": "object"}},
+      "service_review": {"type": "object", "required": ["suggested", "selected", "reviewed_at"]},
+      "call_status": {"enum": ["ringing", "connected", "held", "ended", "not_applicable"]},
       "asked_question_ids": {"type": "array", "items": {"type": "string"}},
       "transcript": {"type": "array", "items": {"type": "object", "required": ["text", "server_at"], "properties": {
         "id": {"type": "string"}, "source_id": {"type": "string"},

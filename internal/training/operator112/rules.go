@@ -63,6 +63,9 @@ func (e exercise) Decide(item training.Item, cmd training.Command, now time.Time
 		return reject(item, training.RejectTransitionNotAllowed), nil
 	}
 	card, state := *item.IntakeCard, *item.IntakeState
+	if state.Mode == "card_only" {
+		return decideProfileCase(item, cmd, now)
+	}
 	state.Transcript = append(make([]training.IntakeLine, 0, len(item.IntakeState.Transcript)), item.IntakeState.Transcript...)
 	state.AskedQuestionIDs = append([]string(nil), item.IntakeState.AskedQuestionIDs...)
 	d := training.Decision{Accepted: true, State: item.State, Reaction: item.Reaction,

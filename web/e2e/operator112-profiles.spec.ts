@@ -1,0 +1,135 @@
+import { expect, request as apiRequest, test, type APIResponse } from "@playwright/test";
+
+const password = "e2e-password-123";
+const baseURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:18080";
+
+async function ok(response: APIResponse) {
+  expect(response.ok(), await response.text()).toBeTruthy();
+  return response;
+}
+
+test("operator 112: three card-only cases show profiles only after type selection", async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const admin = await apiRequest.newContext({ baseURL });
+  await ok(await admin.post("/api/v1/auth/login", { data: { login: "admin", password: "local-only-admin-password" } }));
+  await ok(await admin.put("/api/v1/admin/workstations", { data: [
+    { number: 905, label: "112 профиль 104" }, { number: 906, label: "112 профиль 101" }, { number: 907, label: "112 комбинированный" },
+  ] }));
+  const trainees = [];
+  for (const number of [905, 906, 907]) {
+    trainees.push(await (await ok(await admin.post("/api/v1/admin/users", { data: {
+      login: `e2e-112-profile-${number}`, password, full_name: `Обучаемый ${number}`, role: "trainee",
+    } }))).json());
+  }
+  await ok(await admin.post("/api/v1/admin/users", { data: {
+    login: "e2e-112-profile-instructor", password, full_name: "Преподаватель профилей", role: "instructor",
+  } }));
+  await admin.dispose();
+
+  const instructorAPI = await apiRequest.newContext({ baseURL });
+  await ok(await instructorAPI.post("/api/v1/auth/login", { data: { login: "e2e-112-profile-instructor", password } }));
+  const catalogue = await (await ok(await instructorAPI.get("/api/v1/scenarios?status=approved&exercise_type=operator112_intake&page=1&page_size=200"))).json();
+  const cases = [
+    { key: "pilot-112-gas-explosion-01", type: "gas_explosion", profiles: 1, services: 1 },
+    { key: "pilot-112-road-traffic-fire-01", type: "road_traffic_fire", profiles: 1, services: 2 },
+    { key: "pilot-112-gas-road-traffic-fire-01", type: "gas_explosion_road_traffic_fire", profiles: 2, services: 3 },
+  ];
+  const scenarios = cases.map((entry) => catalogue.items.find((candidate: { source_key?: string }) => candidate.source_key === entry.key));
+  for (const scenario of scenarios) expect(scenario).toBeTruthy();
+
+  await page.goto(`${baseURL}/login`);
+  await page.getByLabel("Логин").fill("e2e-112-profile-instructor");
+  await page.getByLabel("Пароль").fill(password);
+  await page.getByRole("button", { name: "Войти" }).click();
+  await page.getByRole("button", { name: "Создать занятие" }).click();
+  await page.getByLabel("Название").fill("Профильные карты 112 E2E");
+  await page.getByLabel("Упражнение").selectOption("operator112_intake");
+  await page.getByRole("button", { name: "Создать", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Профильные карты 112 E2E" })).toBeVisible();
+  await page.getByRole("button", { name: "+ Добавить рабочее место" }).click();
+  await page.getByRole("button", { name: "+ Добавить рабочее место" }).click();
+  const rows = page.locator(".assignment-row");
+  await expect(rows).toHaveCount(3);
+  for (let index = 0; index < 3; index++) {
+    const row = rows.nth(index);
+    await row.getByLabel("Рабочее место").selectOption(String(905 + index));
+    await row.getByLabel("Обучаемый").selectOption(trainees[index].id);
+    await row.locator(".queue-editor select").selectOption(scenarios[index].id);
+    await row.getByRole("button", { name: "+ В очередь" }).click();
+  }
+  await page.getByRole("button", { name: "Сохранить назначения" }).click();
+  await expect(page.getByText("Назначения сохранены.")).toBeVisible();
+  await page.getByRole("button", { name: /Запустить занятие/ }).click();
+  await expect(page.locator(".lesson-heading .status-badge")).toHaveText("Идёт");
+  await page.getByRole("button", { name: "Выйти" }).click();
+
+  const itemIDs: string[] = [];
+  for (let index = 0; index < 3; index++) {
+    await page.getByLabel("Логин").fill(`e2e-112-profile-${905 + index}`);
+    await page.getByLabel("Пароль").fill(password);
+    await page.getByLabel("Номер рабочего места (для обучаемого)").fill(String(905 + index));
+    await page.getByRole("button", { name: "Войти" }).click();
+    await expect(page.getByRole("heading", { name: "Профильные карты 112 E2E" })).toBeVisible();
+    const items = await (await ok(await page.request.get("/api/v1/my/items"))).json();
+    expect(items).toHaveLength(1);
+    itemIDs.push(items[0].id);
+    const initial = await (await ok(await page.request.get(`/api/v1/items/${items[0].id}`))).json();
+    expect(initial.intake_state.mode).toBe("card_only");
+    expect(initial.card.profiles ?? {}).toEqual({});
+    expect(initial.card.incident_types ?? []).toEqual([]);
+    expect(initial.intake_reference).toBeUndefined();
+    expect(JSON.stringify(initial)).not.toContain("case_description");
+    await page.getByRole("button", { name: /Открыть карточку №/ }).click();
+    await expect(page.getByText("Учебная карточка без разговора")).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Происшествие 10[14]/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Ответить" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Открыть кейс" }).click();
+    await page.getByLabel("Тип происшествия").selectOption(cases[index].type);
+    await page.getByRole("button", { name: "Добавить", exact: true }).click();
+    await expect(page.locator(".intake-profile-panel")).toHaveCount(cases[index].profiles);
+    await expect(page.locator(".intake-profile-options button[aria-pressed='true']")).toHaveCount(0);
+    if (index === 0 || index === 2) {
+      await page.getByRole("button", { name: "Вне помещения (на улице)" }).click();
+    }
+    if (index > 0) {
+      await page.locator(".intake-profile-row").filter({ hasText: "Медицинская помощь" }).getByRole("button", { name: "Да", exact: true }).click();
+    }
+    await page.getByRole("button", { name: "Сохранить карточку" }).click();
+    await expect(page.locator(".intake-services ul li")).toHaveCount(cases[index].services);
+    if (index === 2) await page.screenshot({ path: testInfo.outputPath("operator112-profiles.png"), fullPage: true });
+    if (index === 0) {
+      page.once("dialog", (dialog) => void dialog.accept());
+      await page.getByRole("button", { name: "Убрать", exact: true }).click();
+      await expect(page.locator(".intake-profile-panel")).toHaveCount(0);
+      await page.getByLabel("Тип происшествия").selectOption(cases[index].type);
+      await page.getByRole("button", { name: "Добавить", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Вне помещения (на улице)" })).toHaveAttribute("aria-pressed", "true");
+      await page.getByRole("button", { name: "Сохранить карточку" }).click();
+    }
+    await page.reload();
+    await page.getByRole("button", { name: /Открыть карточку №/ }).click();
+    await expect(page.locator(".intake-profile-panel")).toHaveCount(cases[index].profiles);
+    await page.getByRole("button", { name: "Зафиксировать выбор служб" }).click();
+    await page.getByRole("button", { name: "Завершить кейс" }).click();
+    await expect(page.getByText(/Кейс завершён/)).toBeVisible();
+    await page.getByRole("button", { name: "Выйти" }).click();
+  }
+
+  await page.getByLabel("Логин").fill("e2e-112-profile-instructor");
+  await page.getByLabel("Пароль").fill(password);
+  await page.getByRole("button", { name: "Войти" }).click();
+  await expect(page.getByRole("heading", { name: "Занятия" })).toBeVisible();
+  const reviewed = await (await ok(await page.request.get(`/api/v1/items/${itemIDs[2]}`))).json();
+  expect(reviewed.intake_reference.expected_types).toEqual(["gas_explosion_road_traffic_fire"]);
+  expect(reviewed.card.profiles["101"]).toBeTruthy();
+  expect(reviewed.card.profiles["104"]).toBeTruthy();
+  expect(reviewed.dispatch).toBeUndefined();
+  await page.goto(`${baseURL}/instructor/items/${itemIDs[2]}/review`);
+  await expect(page.getByRole("heading", { name: "Кейс без разговора" })).toBeVisible();
+  await expect(page.getByText(/Добавил тип: Взрыв газа и ДТП с пламенем/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Активные профильные карты" })).toBeVisible();
+  await expect(page.getByText(/pilot_gas_104: Добавлена карта 104/)).toBeVisible();
+  await expect(page.getByText(/pilot_fire_101: Добавлена карта 101/)).toBeVisible();
+  await instructorAPI.dispose();
+});

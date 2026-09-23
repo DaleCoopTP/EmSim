@@ -1,0 +1,21 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "pilot-112-gas-explosion-01",
+  "version": 1,
+  "title": "Взрыв газа",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "exercise_type": "operator112_intake",
+    "difficulty": 1,
+    "intake112": {
+      "mode": "card_only",
+      "reference": {
+        "expected_types": [
+          "gas_explosion"
+        ],
+        "case_description": "Учебное происшествие: сообщение о взрыве газа. Оператор самостоятельно добавляет тип происшествия и оформляет карту."
+      }
+    }
+  }
+}

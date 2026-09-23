@@ -6,6 +6,7 @@ import type { Me } from "../../api/useMe";
 import { itemQueryKey, myItemsQueryKey, myRunQueryKey, type Item } from "../../api/workplace";
 import { availableLocalStorage, clearPending, loadPending, savePending, type PendingCommand } from "../../commands/pending";
 import { formatDateTime } from "../../format";
+import { Operator112ProfileCase } from "./Operator112ProfileCase";
 
 export type IntakeField = { state: "unanswered" | "known" | "unknown" | "negative"; value?: string };
 export type IntakeCard = {
@@ -18,9 +19,16 @@ export type IntakeCard = {
   };
   incident_type: IntakeField; complaint: IntakeField; victims_present: IntakeField; victims_count: IntakeField; provided_phone: IntakeField;
   on_site_phone: IntakeField; channel: IntakeField; foreign_language: IntakeField; no_on_site: IntakeField; no_access: IntakeField;
+  incident_types?: string[]; profiles?: Record<string, IntakeProfileAnswerSet>;
 };
+export type IntakeProfileAnswer = { state: "unanswered" | "unknown" | "known"; value?: string; values?: string[] };
+export type IntakeProfileAnswerSet = { definition_id: string; version: number; answers: Record<string, IntakeProfileAnswer> };
+export type IntakeCatalog = { version: number; types: { id: string; name: string; profile_ids: string[] }[];
+  profiles: { id: string; version: number; name: string; fields: { id: string; label: string; kind: "single" | "multiple" | "text" | "shared"; options?: string[]; shared?: "no_on_site" | "no_access" }[] }[];
+  service_rules: { id: string; profile_id: string; field_id?: string; equals?: string; service_code: string; reason: string }[] };
 type IntakeLine = { id?: string; speaker?: "caller" | "operator"; text: string; server_at: string; topic_id?: string };
-type IntakeState = { call_status: "ringing" | "connected" | "held" | "ended"; transcript: IntakeLine[]; asked_question_ids?: string[];
+export type IntakeState = { mode?: "card_only"; catalog?: IntakeCatalog; call_status: "ringing" | "connected" | "held" | "ended" | "not_applicable"; transcript: IntakeLine[]; asked_question_ids?: string[];
+  suggested_services?: { service_code: string; reasons: string[] }[]; service_review?: { selected: string[]; reason?: string; reviewed_at: string };
   has_saved_draft: boolean; dispatched: boolean; selected_service?: string; answered_at?: string; ended_at?: string };
 type Dispatch = { service_code: string; sent_at: string; card_snapshot: IntakeCard };
 type IntakeQuestion = { id: string; text: string; topic_id: string; asked: boolean };
@@ -28,6 +36,13 @@ export type IntakeItem = Omit<Item, "card"> & { card: IntakeCard; intake_state: 
 
 const addressKeys = ["country", "region", "city", "object", "okrug", "district", "street", "house", "building", "structure", "flat", "entrance", "floor", "code", "landmark", "descriptive"] as const;
 const unanswered: IntakeField = { state: "unanswered" };
+const legacyChannelLabel = "Телефон, оператор не указан";
+const channelSuggestions = ["МТС", "Мегафон", "Билайн", "Теле2", "Мобильное приложение", "Стационарный телефон", legacyChannelLabel];
+
+function savedAvailability(storage: Storage | null, key: string): "available" | "unavailable" {
+  try { return storage?.getItem(key) === "unavailable" ? "unavailable" : "available"; }
+  catch { return "available"; }
+}
 
 // Rows created before the expanded form have no values for its new fields.
 function completeCard(card: IntakeCard): IntakeCard {
@@ -47,6 +62,10 @@ const errorLabels: Record<string, string> = {
 };
 
 export function Operator112Workplace({ me, item }: { me: Me; item: IntakeItem }) {
+  return item.intake_state.mode === "card_only" ? <Operator112ProfileCase me={me} item={item} /> : <Operator112IncomingWorkplace me={me} item={item} />;
+}
+
+function Operator112IncomingWorkplace({ me, item }: { me: Me; item: IntakeItem }) {
   const client = useQueryClient();
   const [storage] = useState(() => availableLocalStorage());
   const [pending, setPending] = useState<PendingCommand | null>(() => storage ? loadPending(storage, me.user.id, item.id) : null);
@@ -56,10 +75,15 @@ export function Operator112Workplace({ me, item }: { me: Me; item: IntakeItem })
   const [draft, setDraft] = useState<IntakeCard>(() => completeCard(item.card));
   const [clientNow, setClientNow] = useState(Date.now);
   const [clock] = useState(() => ({ client: Date.now(), server: new Date(item.server_time).getTime() }));
+  const availabilityKey = `emsim:112:availability:${me.user.id}:${me.workstation?.number ?? "unknown"}`;
+  const [manualAvailability, setManualAvailability] = useState(() => savedAvailability(storage, availabilityKey));
   const state = item.intake_state;
   const terminal = item.state === "closed" || item.state === "interrupted";
   const dirty = JSON.stringify(draft) !== JSON.stringify(completeCard(item.card));
-  const elapsed = Math.max(0, Math.floor((clock.server + clientNow - clock.client - new Date(item.offered_at).getTime()) / 1000));
+  const serverNow = clock.server + clientNow - clock.client;
+  const elapsed = Math.max(0, Math.floor((serverNow - new Date(item.offered_at).getTime()) / 1000));
+  const availabilityForced = item.state === "opened" || item.state === "in_progress" || (terminal && !!item.closed_at && serverNow < new Date(item.closed_at).getTime() + 10_000);
+  const availability = availabilityForced ? "unavailable" : manualAvailability;
 
   useEffect(() => { const timer = window.setInterval(() => setClientNow(Date.now()), 1000); return () => window.clearInterval(timer); }, []);
 
@@ -98,15 +122,25 @@ export function Operator112Workplace({ me, item }: { me: Me; item: IntakeItem })
   const addressSummary = [draft.address.city, draft.address.street, draft.address.house, draft.address.building]
     .filter((field) => field.state === "known").map((field) => field.value).join(", ");
   const clearAddress = () => setDraft((current) => ({ ...current, address: Object.fromEntries(addressKeys.map((key) => [key, unanswered])) as IntakeCard["address"] }));
-  const toggleFlag = (key: "foreign_language" | "no_on_site" | "no_access") => {
+  const toggleFlag = (key: "no_on_site" | "no_access") => {
     setDraft((current) => ({ ...current, [key]: current[key].state === "known" ? unanswered : { state: "known", value: "yes" } }));
   };
+  const toggleAvailability = () => {
+    if (availabilityForced) return;
+    const next = manualAvailability === "available" ? "unavailable" : "available";
+    setManualAvailability(next);
+    try { storage?.setItem(availabilityKey, next); } catch { /* local indication still works for this mount */ }
+  };
+  const channelField = draft.channel.state === "known" && draft.channel.value === "phone"
+    ? { state: "known" as const, value: legacyChannelLabel } : draft.channel;
 
   return <section className="intake-workplace">
     <header className="intake-console">
+      <div className="intake-console-icon" aria-hidden="true">☎</div>
       <section className="intake-console-call" aria-label="Входящий вызов">
-        <span aria-hidden="true" className="intake-phone-icon">☎</span>
-        <div><strong>{state.call_status === "ringing" ? "Входящий вызов" : state.call_status === "connected" ? "На связи" : state.call_status === "held" ? "На удержании" : "Разговор завершён"}</strong>
+        <button type="button" className="intake-availability" aria-label="Статус телефонии" aria-pressed={availability === "available"} disabled={availabilityForced} onClick={toggleAvailability}>{availability === "available" ? "Доступен" : "Недоступен"}</button>
+        <span className="intake-call-state">{state.call_status === "ringing" ? "Входящий вызов" : state.call_status === "connected" ? "Разговор" : state.call_status === "held" ? "На удержании" : "Разговор завершён"}</span>
+        <div className="intake-call-actions">
           {item.state === "offered" && <button type="button" disabled={!!pending} onClick={() => send("open", {})}>Открыть вызов</button>}
           {item.state === "opened" && state.call_status === "ringing" && <button type="button" disabled={!!pending} onClick={() => send("answer_incoming", {})}>Ответить</button>}
           {state.call_status === "connected" && !terminal && <button type="button" disabled={!!pending} onClick={() => send("hold_incoming", {})}>Удержать</button>}
@@ -125,23 +159,21 @@ export function Operator112Workplace({ me, item }: { me: Me; item: IntakeItem })
       </>}</div>
       <div className="intake-console-incident"><strong>Происшествие {item.card.number}</strong><span>Вызов {item.card.call_local_time} · {item.card.call_time_zone}</span><span>Оператор: {me.user.full_name}</span></div>
       <div className="intake-elapsed"><strong>{String(Math.floor(elapsed / 60)).padStart(2, "0")}:{String(elapsed % 60).padStart(2, "0")}</strong><span>минуты : секунды</span></div>
+      {!terminal && <div className="intake-outcome-controls">
+        <button type="button" disabled={!!pending || item.state !== "opened" || state.call_status !== "ringing"} onClick={() => setOutcomeIntent("no_contact")}>Нет контакта</button>
+        <button type="button" disabled={!!pending || (state.call_status !== "connected" && state.call_status !== "held") || state.dispatched} onClick={() => setOutcomeIntent("call_dropped")}>Срыв звонка</button>
+      </div>}
     </header>
     {item.interruptions.length > 0 && <p role="alert" className="notice">После перезапуска сервера состояние вызова и карточки восстановлено.</p>}
-    {!terminal && <div className="intake-outcome-controls">
-      <button type="button" disabled={!!pending || item.state !== "opened" || state.call_status !== "ringing"} onClick={() => setOutcomeIntent("no_contact")}>Нет контакта</button>
-      <button type="button" disabled={!!pending || (state.call_status !== "connected" && state.call_status !== "held") || state.dispatched} onClick={() => setOutcomeIntent("call_dropped")}>Срыв звонка</button>
-    </div>}
     {state.call_status === "ringing" ? <div className="intake-waiting">Примите вызов, чтобы открыть слова заявителя и карточку.</div> : <>
       <form id="intake-card-form" className="intake-main" onSubmit={save}>
         <div className="intake-left">
           <section className="intake-applicant intake-panel">
             <div className="intake-applicant-row">
               <Field label="ФИО заявителя" field={draft.applicant_name} disabled={locked} onChange={(v) => update("applicant_name", v)} />
-              <Field label="Кем приходится пострадавшему" field={draft.applicant_status} disabled={locked} choices={[{ value: "victim", label: "Пострадавший" }, { value: "relative", label: "Родственник" }, { value: "witness", label: "Очевидец" }, { value: "friend", label: "Знакомый" }, { value: "child", label: "Ребёнок" }, { value: "participant", label: "Участник" }]} onChange={(v) => update("applicant_status", v)} />
-              <Field label="Возраст" field={draft.age} disabled={locked} numeric onChange={(v) => update("age", v)} />
-              <button type="button" className="intake-small-toggle" aria-pressed={draft.foreign_language.state === "known"} disabled={locked} onClick={() => toggleFlag("foreign_language")}>Иностранный язык</button>
+              <ApplicantStatusField field={draft.applicant_status} disabled={locked} onChange={(v) => update("applicant_status", v)} />
+              <Field label="Канал связи" field={channelField} disabled={locked} suggestions={channelSuggestions} onChange={(v) => update("channel", v.state === "known" && v.value === legacyChannelLabel ? { state: "known", value: "phone" } : v)} />
             </div>
-            <Field label="Канал связи" field={draft.channel} disabled={locked} choices={[{ value: "phone", label: "Телефон" }]} onChange={(v) => update("channel", v)} />
           </section>
           <section className="intake-address intake-panel">
             <h3>Адрес</h3>
@@ -220,20 +252,34 @@ export function Operator112Workplace({ me, item }: { me: Me; item: IntakeItem })
   </section>;
 }
 
-function Field({ label, field, onChange, disabled, choices, numeric, multiline }: {
+function ApplicantStatusField({ field, disabled, onChange }: { field: IntakeField; disabled: boolean; onChange: (value: IntakeField) => void }) {
+  const statuses = [{ value: "victim", label: "Пострадавший" }, { value: "relative", label: "Родственник" },
+    { value: "witness", label: "Очевидец" }, { value: "friend", label: "Знакомый" },
+    { value: "child", label: "Ребёнок" }, { value: "participant", label: "Участник" }];
+  return <div className="intake-field intake-applicant-status">
+    <span>Статус заявителя</span>
+    <select aria-label="Статус заявителя: значение" disabled={disabled}
+      value={field.state === "known" ? field.value ?? "" : field.state === "unknown" ? "unknown" : ""}
+      onChange={(event) => onChange(event.target.value === "unknown" ? { state: "unknown" } : event.target.value ? { state: "known", value: event.target.value } : unanswered)}>
+      <option value="">Выберите статус</option>
+      {statuses.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+      <option value="unknown">Не знает</option>
+    </select>
+  </div>;
+}
+
+function Field({ label, field, onChange, disabled, suggestions, numeric, multiline }: {
   label: string; field: IntakeField; onChange: (value: IntakeField) => void; disabled: boolean;
-  choices?: Array<{ value: string; label: string }>; numeric?: boolean; multiline?: boolean;
+  suggestions?: string[]; numeric?: boolean; multiline?: boolean;
 }) {
   const state = field?.state || "unanswered";
-  const changeState = (next: IntakeField["state"]) => onChange(next === "known" ? { state: next, value: choices?.[0]?.value ?? field.value ?? "" } : { state: next });
+  const changeState = (next: IntakeField["state"]) => onChange(next === "known" ? { state: next, value: field.value ?? "" } : { state: next });
   const changeValue = (value: string) => onChange(value ? { state: "known", value } : { state: "unanswered" });
   return <div className="intake-field">
     <span>{label}</span>
     <div className="intake-field-control">
-      {choices ? <select aria-label={`${label}: значение`} value={state === "known" ? field.value ?? "" : ""} disabled={disabled} onChange={(event) => changeValue(event.target.value)}>
-        <option value="">Выберите</option>{choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
-      </select> : multiline ? <textarea aria-label={`${label}: значение`} value={state === "known" ? field.value ?? "" : ""} disabled={disabled} maxLength={1999} placeholder="Введите" onChange={(event) => changeValue(event.target.value)} />
-        : <input aria-label={`${label}: значение`} type={numeric ? "number" : "text"} min={numeric ? 0 : undefined} value={state === "known" ? field.value ?? "" : ""} disabled={disabled} maxLength={1000} placeholder="Введите" onChange={(event) => changeValue(event.target.value)} />}
+      {multiline ? <textarea aria-label={`${label}: значение`} value={state === "known" ? field.value ?? "" : ""} disabled={disabled} maxLength={1999} placeholder="Введите" onChange={(event) => changeValue(event.target.value)} />
+        : <><input aria-label={`${label}: значение`} type={numeric ? "number" : "text"} min={numeric ? 0 : undefined} list={suggestions ? "intake-channel-options" : undefined} value={state === "known" ? field.value ?? "" : ""} disabled={disabled} maxLength={suggestions ? 100 : 1000} placeholder="Введите" onChange={(event) => changeValue(event.target.value)} />{suggestions && <datalist id="intake-channel-options">{suggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}</datalist>}</>}
       <select aria-label={`${label}: статус`} value={state} disabled={disabled} onChange={(event) => changeState(event.target.value as IntakeField["state"])} title="Не заполнено или неизвестно заявителю">
         <option value="unanswered">—</option><option value="known">Известно</option><option value="unknown">Не знает</option>
       </select>

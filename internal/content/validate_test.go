@@ -59,9 +59,9 @@ func pilotCatalog() fakeCatalog {
 
 func validIntakeDialogueBody() Body {
 	return Body{ExerciseType: ExerciseTypeOperator112Intake, Intake112: &Intake112{
-		Call:              Intake112Call{AON: "+79161313131", LocalTime: "02:03", TimeZone: "Europe/Moscow"},
+		Call:              &Intake112Call{AON: "+79161313131", LocalTime: "02:03", TimeZone: "Europe/Moscow"},
 		RecipientServices: []string{"pilot_ambulance"},
-		Reference:         Intake112Reference{RecipientService: "pilot_ambulance"},
+		Reference:         Intake112Reference{RecipientService: "pilot_ambulance", ExpectedCard: &Intake112ExpectedCard{}},
 		Dialogue: &Intake112Dialogue{
 			Facts: []Intake112Fact{
 				{ID: "address_city", Label: "Город", CardPath: "/address/city", Knowledge: "initial", Value: "Москва"},

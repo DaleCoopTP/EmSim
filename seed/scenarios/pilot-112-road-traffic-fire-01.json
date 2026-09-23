@@ -1,0 +1,21 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "pilot-112-road-traffic-fire-01",
+  "version": 1,
+  "title": "ДТП с пламенем",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "exercise_type": "operator112_intake",
+    "difficulty": 1,
+    "intake112": {
+      "mode": "card_only",
+      "reference": {
+        "expected_types": [
+          "road_traffic_fire"
+        ],
+        "case_description": "Учебное происшествие: ДТП с открытым пламенем. Оператор самостоятельно добавляет тип происшествия и оформляет карту."
+      }
+    }
+  }
+}

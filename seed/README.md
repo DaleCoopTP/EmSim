@@ -13,8 +13,12 @@
   сокращения «Деп. природ.» со скриншота). У всех — один и тот же минимальный
   workflow (`added → received → accepted|not_accepted`, `not_accepted → accepted`),
   этого достаточно для UC5/UC5 пилота; полный workflow служб — не предмет слайса 2.
-  `pilot_ambulance` — единственный учебный адресат отправки в срезе 112-1;
-  наличие его в справочнике не означает реального оповещения.
+  `pilot_ambulance` — учебный адресат отправки в разговорном 112; для новых
+  кейсов дополнительно добавлены `pilot_gas_104` и `pilot_fire_101`.
+  Наличие этих служб в справочнике не означает реального оповещения.
+- `intake-catalog.json` — неизменяемая версия каталога типов происшествий,
+  карт 104/101 и пилотных правил предложения учебных служб. Загружается
+  отдельно от кейсов и фиксируется для занятия при его запуске.
 - `classifier.json` — одна строка классификатора: код `14080106`, признаки —
   колонки XLSX «признак 1/2/3» и «группа», `notify` — коды трёх служб выше
   (в исходном XLSX это колонки 74 «Территориальные ОИВ» и 66 «Департамент
@@ -50,6 +54,11 @@
 - `scenarios/pilot-112-address-01.json` и `pilot-112-victims-01.json` —
   учебные задания на неполный адрес, уточнение числа пострадавших и сведения,
   которых заявитель не знает. Это фикстуры диалога, а не медицинские советы.
+- `scenarios/pilot-112-gas-explosion-01.json`,
+  `pilot-112-road-traffic-fire-01.json` и
+  `pilot-112-gas-road-traffic-fire-01.json` — три самостоятельных назначения
+  без разговора. Их закрытый эталон хранит ожидаемый тип, а карты появляются
+  только после действия обучаемого «Добавить тип происшествия».
 - `voice-assets/manifest.json` и два PCM WAV-файла — greeting/ack этого
   контакта (mono, 16-bit, 16 kHz). `import seed` после сценариев импортирует
   их идемпотентно в content-addressed `BLOB_ROOT`.
@@ -63,6 +72,7 @@
 ```bash
 emsim import services --actor <login-администратора> seed/services.json
 emsim import classifier --actor <login-администратора> seed/classifier.json
+emsim import intake-catalog --actor <login-администратора> seed/intake-catalog.json
 emsim import scenarios --actor <login-администратора> seed/scenarios
 ```
 

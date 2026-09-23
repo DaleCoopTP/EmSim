@@ -50,6 +50,9 @@ func (exercise) Evidence(item training.Item, actions []training.Action, _ []trai
 	}
 	if item.IntakeState != nil {
 		body.IntakeState = *item.IntakeState
+		// Inactive answers remain resumable while the item is open, but they
+		// are not part of the final active card snapshot.
+		body.IntakeState.InactiveProfiles = nil
 	}
 	for _, a := range actions {
 		if a.LogSeq > cutoffLogSeq {

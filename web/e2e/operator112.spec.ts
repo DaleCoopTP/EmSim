@@ -8,7 +8,7 @@ async function ok(response: APIResponse) {
   return response;
 }
 
-test("operator 112: instructor assignment → incoming call → saved draft → dispatch → manual review", async ({ page }) => {
+test("operator 112: instructor assignment → incoming call → saved draft → dispatch → manual review", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1366, height: 768 });
   const admin = await apiRequest.newContext({ baseURL });
@@ -64,7 +64,18 @@ test("operator 112: instructor assignment → incoming call → saved draft → 
   await page.getByRole("button", { name: /Открыть карточку №/ }).click();
   await expect(page.getByText("+79161313131")).toBeVisible();
   await expect(page.getByText("Дом 2, корпус 3", { exact: false })).toHaveCount(0);
+  const availability = page.getByRole("button", { name: "Статус телефонии" });
+  await expect(availability).toHaveText("Доступен");
+  await availability.click();
+  await expect(availability).toHaveText("Недоступен");
+  await page.reload();
+  await page.getByRole("button", { name: /Открыть карточку №/ }).click();
+  await expect(availability).toHaveText("Недоступен");
+  await availability.click();
+  await expect(availability).toHaveText("Доступен");
   await page.getByRole("button", { name: "Открыть вызов" }).click();
+  await expect(availability).toHaveText("Недоступен");
+  await expect(availability).toBeDisabled();
   await page.getByRole("button", { name: "Ответить" }).click();
   await expect(page.getByText(/Здравствуйте\. Мне плохо/)).toBeVisible();
   await expect(page.getByText("Дом 2, корпус 3", { exact: false })).toHaveCount(0);
@@ -84,8 +95,16 @@ test("operator 112: instructor assignment → incoming call → saved draft → 
   await page.getByRole("button", { name: "Какой номер квартиры?" }).click();
   await expect(page.getByText("Номер квартиры не знаю.")).toBeVisible();
   await expect(page.getByText("03 · Скорая помощь")).toBeVisible();
-  await page.getByLabel("Кем приходится пострадавшему: значение").selectOption("victim");
-  await page.getByLabel("Возраст: значение").fill("19");
+  await page.getByLabel("Статус заявителя: значение").selectOption("victim");
+  await page.getByLabel("Канал связи: значение").fill("Телефон, оператор не указан");
+  await expect(page.getByLabel("Возраст: значение")).toHaveCount(0);
+  await expect(page.getByLabel("Иностранный язык")).toHaveCount(0);
+  const address = page.locator(".intake-address");
+  expect(await address.evaluate((node) => getComputedStyle(node).overflowY)).toBe("visible");
+  expect(await address.evaluate((node) => node.scrollHeight <= node.clientHeight + 1)).toBeTruthy();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  expect(await page.evaluate(() => document.querySelector(".intake-action-bar")!.getBoundingClientRect().top >= document.querySelector(".intake-address")!.getBoundingClientRect().bottom)).toBeTruthy();
+  await page.screenshot({ path: testInfo.outputPath("operator112-layout.png"), fullPage: true });
   await page.getByLabel("Страна: значение").fill("Россия");
   await page.getByLabel("Субъект: значение").fill("Москва");
   await page.getByLabel("Населённый пункт: значение").fill("Москва");
@@ -100,10 +119,17 @@ test("operator 112: instructor assignment → incoming call → saved draft → 
   await page.locator(".intake-console-number").nth(2).getByRole("button", { name: "АОН" }).click();
   await page.getByRole("button", { name: "Сохранить карточку" }).click();
   await expect(page.getByText("Черновик сохранён на сервере.")).toBeVisible();
+  const legacyCard = await (await ok(await page.request.get(`/api/v1/items/${offered[0].id}`))).json();
+  expect(legacyCard.card.channel.value).toBe("phone");
 
   await page.reload();
   await page.getByRole("button", { name: /Открыть карточку №/ }).click();
-  await expect(page.getByLabel("Возраст: значение")).toHaveValue("19");
+  await expect(page.getByLabel("Статус заявителя: значение")).toHaveValue("victim");
+  await expect(page.getByLabel("Канал связи: значение")).toHaveValue("Телефон, оператор не указан");
+  await page.getByLabel("Канал связи: значение").fill("МТС");
+  await page.getByRole("button", { name: "Сохранить карточку" }).click();
+  await expect(page.getByText("Черновик сохранён на сервере.")).toBeVisible();
+  await expect(page.getByLabel("Канал связи: значение")).toHaveValue("МТС");
   await expect(page.getByLabel("Описательный адрес: значение")).toHaveValue("рядом с метро ВДНХ");
   await expect(page.getByLabel("Телефон на место: значение")).toHaveValue("+79161313131");
   await expect(page.getByText("Мне 19 лет.")).toBeVisible();
@@ -111,6 +137,9 @@ test("operator 112: instructor assignment → incoming call → saved draft → 
   await expect(page.getByText(/Направлена в 03/)).toBeVisible();
   await page.getByRole("button", { name: "Завершить разговор" }).click();
   await page.getByRole("button", { name: "Завершить обработку" }).click();
+  await expect(availability).toHaveText("Недоступен");
+  await expect(availability).toBeDisabled();
+  await expect(availability).toHaveText("Доступен", { timeout: 12_000 });
   await expect(page.getByText(/Результат появится после оценки преподавателя/)).toBeVisible();
   await page.getByRole("button", { name: "Выйти" }).click();
 

@@ -29,9 +29,10 @@ type Body struct {
 // versions use Dialogue. Neither the dialogue tree nor Reference is sent
 // to a trainee.
 type Intake112 struct {
-	Call              Intake112Call      `json:"call"`
+	Mode              string             `json:"mode,omitempty"`
+	Call              *Intake112Call     `json:"call,omitempty"`
 	Dialogue          *Intake112Dialogue `json:"dialogue,omitempty"`
-	RecipientServices []string           `json:"recipient_services"`
+	RecipientServices []string           `json:"recipient_services,omitempty"`
 	Reference         Intake112Reference `json:"reference"`
 }
 
@@ -73,8 +74,10 @@ type Intake112Dialogue struct {
 }
 
 type Intake112Reference struct {
-	ExpectedCard     Intake112ExpectedCard `json:"expected_card"`
-	RecipientService string                `json:"recipient_service"`
+	ExpectedCard     *Intake112ExpectedCard `json:"expected_card,omitempty"`
+	RecipientService string                 `json:"recipient_service"`
+	ExpectedTypes    []string               `json:"expected_types,omitempty"`
+	CaseDescription  string                 `json:"case_description,omitempty"`
 }
 
 type Intake112ExpectedCard struct {

@@ -834,12 +834,25 @@ func toItemSummaryJSON(item training.Item) itemSummaryJSON {
 	}
 	if item.IntakeCard != nil {
 		callStatus, dispatched := "", false
+		incidentType := ""
 		if item.IntakeState != nil {
 			callStatus, dispatched = item.IntakeState.CallStatus, item.IntakeState.Dispatched
+			if item.IntakeState.Mode == "card_only" && item.IntakeState.Catalog != nil {
+				var names []string
+				for _, id := range item.IntakeCard.IncidentTypes {
+					for _, option := range item.IntakeState.Catalog.Types {
+						if option.ID == id {
+							names = append(names, option.Name)
+							break
+						}
+					}
+				}
+				incidentType = strings.Join(names, ", ")
+			}
 		}
 		return itemSummaryJSON{ID: item.ID.String(), ExerciseType: string(item.ExerciseType),
 			State: string(item.State), Reaction: string(item.Reaction), Seq: item.Seq, CardNumber: item.IntakeCard.Number,
-			CallStatus: callStatus, Dispatched: dispatched, OfferedAt: formatTime(item.OfferedAt),
+			CallStatus: callStatus, Dispatched: dispatched, IncidentType: incidentType, OfferedAt: formatTime(item.OfferedAt),
 			OpenedAt: formatTimePtr(item.OpenedAt), ClosedAt: formatTimePtr(item.ClosedAt),
 			CloseReason: closeReason, Deadlines: toDeadlinesJSON(item.Deadlines), Interruptions: toInterruptionsJSON(item.Interruptions)}
 	}

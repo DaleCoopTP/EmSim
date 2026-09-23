@@ -35,6 +35,24 @@
     }
   },
   {
+    "code": "pilot_gas_104",
+    "name": "Учебная служба 104 · газ",
+    "workflow": {
+      "transitions": {"added": ["received"], "received": ["accepted"]},
+      "comment_required": [],
+      "terminal": []
+    }
+  },
+  {
+    "code": "pilot_fire_101",
+    "name": "Учебная служба 101 · пожар",
+    "workflow": {
+      "transitions": {"added": ["received"], "received": ["accepted"]},
+      "comment_required": [],
+      "terminal": []
+    }
+  },
+  {
     "code": "pilot_nature_department",
     "name": "Департамент природопользования и охраны окружающей среды",
     "workflow": {

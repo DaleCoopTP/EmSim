@@ -162,6 +162,7 @@ func resetSchema(t *testing.T, ctx context.Context, databaseURL string) {
 		DROP TABLE IF EXISTS runs;
 		DROP TABLE IF EXISTS assignments;
 		DROP TABLE IF EXISTS lessons;
+		DROP TABLE IF EXISTS intake_catalog_versions;
 		DROP FUNCTION IF EXISTS reject_immutable_change();
 		DROP TABLE IF EXISTS voice_assets;
 		DROP TABLE IF EXISTS scenario_versions;
@@ -273,7 +274,7 @@ func assertTableSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	want := []string{
 		"actions", "assessment_inputs", "assessments", "assignments", "audit_log", "blobs", "calls",
 		"classifier_types", "control_reports", "evidence",
-		"intake_dispatches", "item_events",
+		"intake_catalog_versions", "intake_dispatches", "item_events",
 		"items", "lessons", "report_files", "runs", "scenario_versions", "scenarios",
 		"services", "sessions", "tasks", "tickets", "trainee_assessment_state", "training_examples", "users",
 		"voice_assets", "workstations",
@@ -291,7 +292,8 @@ func assertApplicationTablesAbsent(t *testing.T, ctx context.Context, pool *pgxp
 		FROM pg_catalog.pg_tables
 		WHERE schemaname = 'public' AND tablename IN (
 			'actions', 'assessment_inputs', 'assessments', 'assignments', 'audit_log', 'blobs', 'calls',
-			'classifier_types', 'control_reports', 'evidence', 'item_events',
+			'classifier_types', 'control_reports', 'evidence', 'intake_catalog_versions',
+			'intake_dispatches', 'item_events',
 			'items', 'lessons', 'report_files', 'runs', 'scenario_versions', 'scenarios',
 			'services', 'sessions', 'tasks', 'tickets', 'trainee_assessment_state', 'training_examples', 'users',
 			'voice_assets', 'workstations'

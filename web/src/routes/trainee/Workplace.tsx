@@ -189,7 +189,7 @@ function IncidentQueue({
                 <td>{formatQueueTime(candidate.offered_at)}</td>
                 <td>{candidate.incident_type ?? "—"}</td>
                 <td>{candidate.address_short ?? "—"}</td>
-				<td>{candidate.exercise_type === "operator112_intake" ? candidate.call_status === "ringing" ? "Ожидает ответа" : candidate.call_status === "connected" ? "Разговор" : candidate.dispatched ? "Направлена" : "Разговор окончен" : reactionLabel(candidate.reaction)}{candidate.interruptions.length > 0 && " · ⚠"}</td>
+				<td>{candidate.exercise_type === "operator112_intake" ? candidate.call_status === "not_applicable" ? candidate.state === "closed" ? "Кейс завершён" : candidate.state === "offered" ? "Кейс ожидает открытия" : "Оформление карт" : candidate.call_status === "ringing" ? "Ожидает ответа" : candidate.call_status === "connected" ? "Разговор" : candidate.dispatched ? "Направлена" : "Разговор окончен" : reactionLabel(candidate.reaction)}{candidate.interruptions.length > 0 && " · ⚠"}</td>
                 <td><button type="button" className="queue-open" onClick={() => onOpen(candidate.id)}>Открыть карточку № {candidate.card_number}</button></td>
               </tr>
             ))}

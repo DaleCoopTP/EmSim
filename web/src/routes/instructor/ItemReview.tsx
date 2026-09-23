@@ -10,12 +10,14 @@ import { formatDateTime } from "../../format";
 type CriterionStatus = CriterionResult["status"];
 type Item = components["schemas"]["Item"];
 type IntakeField = { state: string; value?: string };
-type IntakeCard = { number: string; aon: string; call_local_time: string; call_time_zone: string; applicant_name: IntakeField; applicant_status: IntakeField; age: IntakeField; address: Record<string, IntakeField>; incident_type: IntakeField; complaint: IntakeField; victims_present: IntakeField; victims_count: IntakeField; provided_phone: IntakeField; on_site_phone?: IntakeField; channel?: IntakeField; foreign_language?: IntakeField; no_on_site?: IntakeField; no_access?: IntakeField };
+type IntakeCard = { number: string; aon: string; call_local_time: string; call_time_zone: string; applicant_name: IntakeField; applicant_status: IntakeField; age: IntakeField; address: Record<string, IntakeField>; incident_type: IntakeField; incident_types?: string[]; profiles?: Record<string, { definition_id: string; version: number; answers: Record<string, { state: string; value?: string; values?: string[] }> }>; complaint: IntakeField; victims_present: IntakeField; victims_count: IntakeField; provided_phone: IntakeField; on_site_phone?: IntakeField; channel?: IntakeField; foreign_language?: IntakeField; no_on_site?: IntakeField; no_access?: IntakeField };
 type IntakeReviewLine = { id?: string; speaker?: "caller" | "operator"; text: string; server_at: string; reveals?: string[]; topic_id?: string };
-type IntakeReviewAction = { type: string; accepted: boolean; server_at: string; log_seq: number; payload?: { draft?: IntakeCard } };
+type IntakeReviewAction = { type: string; accepted: boolean; server_at: string; log_seq: number; payload?: { draft?: IntakeCard; type_id?: string; services?: string[]; reason?: string }; effect?: { suggested?: { service_code: string; reasons: string[] }[] } };
 type DialogueFact = { id: string; label: string; card_path: string; knowledge: "initial" | "on_question" | "unknown"; value?: string };
-type IntakeReviewItem = Item & { card: IntakeCard; intake_reference?: unknown; intake_dialogue_reference?: { facts: DialogueFact[] }; intake_state?: { transcript?: IntakeReviewLine[] }; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard } };
-type IntakeReviewEvidence = { final_card?: IntakeCard; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; intake_state?: { transcript?: IntakeReviewLine[] }; actions?: IntakeReviewAction[] };
+type ReviewCatalog = { version: number; types: { id: string; name: string }[]; profiles: { id: string; name: string; fields: { id: string; label: string; kind: string; shared?: string }[] }[] };
+type ReviewServiceState = { suggested_services?: { service_code: string; reasons: string[] }[]; service_review?: { suggested: { service_code: string; reasons: string[] }[]; selected: string[]; reason?: string; reviewed_at: string } };
+type IntakeReviewItem = Item & { card: IntakeCard; intake_reference?: unknown; intake_dialogue_reference?: { facts: DialogueFact[] }; intake_state?: { mode?: string; catalog?: ReviewCatalog; transcript?: IntakeReviewLine[] } & ReviewServiceState; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard } };
+type IntakeReviewEvidence = { final_card?: IntakeCard; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; intake_state?: { mode?: string; catalog?: ReviewCatalog; transcript?: IntakeReviewLine[] } & ReviewServiceState; actions?: IntakeReviewAction[] };
 const labels: Record<string, string> = { met: "выполнено", partial: "частично", not_met: "не выполнено", not_applicable: "не применимо", unavailable: "не проверено" };
 const manualStatuses: CriterionStatus[] = ["met", "partial", "not_met", "not_applicable"];
 
@@ -72,6 +74,7 @@ function useItem(itemId: string) { return useQuery({ queryKey: ["training", "ite
 function CriteriaTable({ criteria }: { criteria: CriterionResult[] }) { if (criteria.length === 0) return <p>Автооценка ещё не готова.</p>; return <table><thead><tr><th>Критерий</th><th>Статус</th><th>Основание</th></tr></thead><tbody>{criteria.map((criterion) => <tr key={criterion.id}><td>{criterion.id}{criterion.critical ? " · критичный" : ""}</td><td>{labels[criterion.status]}</td><td>{criterion.explanation || "—"}{criterion.evidence_refs?.length ? ` (${criterion.evidence_refs.join(", ")})` : ""}</td></tr>)}</tbody></table>; }
 
 function IntakeReviewPanel({ item, evidence }: { item: IntakeReviewItem; evidence: IntakeReviewEvidence }) {
+  if (item.intake_state?.mode === "card_only" || evidence.intake_state?.mode === "card_only") return <IntakeProfileReviewPanel item={item} evidence={evidence} />;
   const card = evidence.final_card ?? item.card;
   const dispatch = evidence.dispatch ?? item.dispatch;
   const transcript = evidence.intake_state?.transcript ?? item.intake_state?.transcript ?? [];
@@ -98,6 +101,39 @@ function IntakeReviewPanel({ item, evidence }: { item: IntakeReviewItem; evidenc
     <h2>Передача службе</h2>
     {dispatch ? <><p>Адресат: {dispatch.service_code === "pilot_ambulance" ? "03 · Скорая помощь" : dispatch.service_code} · отправлено {formatDateTime(dispatch.sent_at)}</p><p>Снимок на момент отправки:</p><IntakeCardView card={dispatch.card_snapshot} /></> : <p>Карточка не направлена.</p>}
     <details><summary>Эталон сценария</summary><pre>{JSON.stringify(item.intake_reference ?? {}, null, 2)}</pre></details>
+  </>;
+}
+
+function IntakeProfileReviewPanel({ item, evidence }: { item: IntakeReviewItem; evidence: IntakeReviewEvidence }) {
+  const card = evidence.final_card ?? item.card;
+  const state = evidence.intake_state ?? item.intake_state;
+  const catalog = state?.catalog;
+  const typeName = (id: string) => catalog?.types.find((type) => type.id === id)?.name ?? id;
+  const actions = (evidence.actions ?? []).filter((action) => action.accepted);
+  const actionText = (action: IntakeReviewAction) => {
+    switch (action.type) {
+      case "open": return "Открыл кейс";
+      case "add_incident_type": return `Добавил тип: ${typeName(action.payload?.type_id ?? "")}`;
+      case "remove_incident_type": return `Убрал тип: ${typeName(action.payload?.type_id ?? "")}`;
+      case "save_intake_draft": return "Сохранил карточку";
+      case "review_service_selection": return `Исходное предложение: ${(action.effect?.suggested ?? []).map((entry) => `${entry.service_code} (${entry.reasons.join("; ")})`).join(", ") || "без служб"}; итоговый выбор: ${(action.payload?.services ?? []).join(", ") || "без служб"}${action.payload?.reason ? `; причина: ${action.payload.reason}` : ""}`;
+      case "complete_profile_case": return "Завершил кейс";
+      default: return action.type;
+    }
+  };
+  const answerText = (answer: { state: string; value?: string; values?: string[] } | undefined) => answer?.state === "known" ? answer.values?.join(", ") ?? answer.value ?? "" : answer?.state === "unknown" ? "неизвестно" : "не заполнено";
+  return <>
+    <h2>Кейс без разговора</h2><p>Каталог профилей: версия {catalog?.version ?? "—"}. Отправка карточки в службу для этого режима не выполняется.</p>
+    <h3>Последовательность действий</h3><ol>{actions.map((action) => <li key={action.log_seq}>{formatDateTime(action.server_at)} · {actionText(action)}</li>)}</ol>
+    <h3>Итоговая общая карточка</h3><IntakeCardView card={card} />
+    <h3>Выбранные типы</h3><ul>{(card.incident_types ?? []).map((id) => <li key={id}>{typeName(id)}</li>)}</ul>
+    <h3>Активные профильные карты</h3>{catalog?.profiles.filter((profile) => card.profiles?.[profile.id]).map((profile) => <section key={profile.id} className="intake-review-card"><h4>{profile.name}</h4><dl>
+      {profile.fields.map((field) => <div key={field.id}><dt>{field.label}</dt><dd>{field.kind === "shared" ? intakeFieldText(field.shared === "no_on_site" ? card.no_on_site : card.no_access) : answerText(card.profiles?.[profile.id].answers[field.id])}</dd></div>)}
+    </dl></section>)}
+    <h3>Предложение и итоговый выбор служб</h3>
+    <ul>{state?.service_review?.suggested.map((service) => <li key={service.service_code}>{service.service_code}: {service.reasons.join("; ")}</li>) ?? state?.suggested_services?.map((service) => <li key={service.service_code}>{service.service_code}: {service.reasons.join("; ")}</li>)}</ul>
+    <p>Выбрано: {state?.service_review?.selected.join(", ") || "—"}{state?.service_review?.reason ? ` · Причина изменения: ${state.service_review.reason}` : ""}</p>
+    <details><summary>Эталон кейса</summary><pre>{JSON.stringify(item.intake_reference ?? {}, null, 2)}</pre></details>
   </>;
 }
 

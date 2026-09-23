@@ -1,0 +1,21 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "pilot-112-gas-road-traffic-fire-01",
+  "version": 1,
+  "title": "Взрыв газа и ДТП с пламенем",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "exercise_type": "operator112_intake",
+    "difficulty": 1,
+    "intake112": {
+      "mode": "card_only",
+      "reference": {
+        "expected_types": [
+          "gas_explosion_road_traffic_fire"
+        ],
+        "case_description": "Учебное происшествие: одновременно рассматриваются взрыв газа и ДТП с пламенем. Оператор самостоятельно добавляет тип происшествия и оформляет обе карты."
+      }
+    }
+  }
+}

@@ -364,6 +364,27 @@ func (s *Service) Start(ctx context.Context, actor auth.Principal, lessonID uuid
 		if len(assignments) == 0 {
 			return validationErr("assignments", "at least one assignment is required before start")
 		}
+		if lesson.ExerciseType == content.ExerciseTypeOperator112Intake {
+			needsCatalog := false
+			for _, a := range assignments {
+				for _, id := range a.ScenarioVersionIDs {
+					version, err := s.scenarios.VersionByID(ctx, tx, id)
+					if err != nil {
+						return err
+					}
+					if version.Body.Intake112 != nil && version.Body.Intake112.Mode == "card_only" {
+						needsCatalog = true
+					}
+				}
+			}
+			if needsCatalog {
+				catalog, err := s.scenarios.LatestIntakeCatalog(ctx, tx)
+				if err != nil {
+					return validationErr("intake_catalog", "catalog is required for card_only")
+				}
+				lesson.IntakeCatalogVersion = &catalog.Version
+			}
+		}
 
 		now, err := s.store.Now(ctx, tx)
 		if err != nil {
@@ -376,7 +397,7 @@ func (s *Service) Start(ctx context.Context, actor auth.Principal, lessonID uuid
 			}
 		}
 
-		result, err = s.store.StartLesson(ctx, tx, lessonID, now)
+		result, err = s.store.StartLesson(ctx, tx, lessonID, now, lesson.IntakeCatalogVersion)
 		return err
 	})
 	if err != nil {
@@ -766,13 +787,29 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 			return fmt.Errorf("training: 112 scenario has no intake")
 		}
 		itemID := uuid.New()
-		call := version.Body.Intake112.Call
+		call := content.Intake112Call{}
+		if version.Body.Intake112.Call != nil {
+			call = *version.Body.Intake112.Call
+		}
 		card := UnansweredIntakeCard("112-"+itemID.String(), call.AON, call.LocalTime, call.TimeZone)
+		intakeState := &IntakeState{CallStatus: "ringing", Transcript: []IntakeLine{}}
+		if version.Body.Intake112.Mode == "card_only" {
+			if lesson.IntakeCatalogVersion == nil {
+				return fmt.Errorf("training: lesson has no intake catalog snapshot")
+			}
+			catalog, err := s.scenarios.IntakeCatalogByVersion(ctx, tx, *lesson.IntakeCatalogVersion)
+			if err != nil {
+				return fmt.Errorf("training: intake catalog missing: %w", err)
+			}
+			intakeState.Mode, intakeState.CallStatus, intakeState.Catalog = "card_only", "not_applicable", &catalog
+			card.IncidentTypes = []string{}
+			card.Profiles = map[string]IntakeProfile{}
+		}
 		item := Item{ID: itemID, ExerciseType: lesson.ExerciseType, RunID: run.ID, LessonID: lesson.ID,
 			UserID: run.UserID, WorkstationNo: run.WorkstationNo, ScenarioVersionID: versionID,
 			ScenarioDigest: fmt.Sprintf("%x", version.Digest), Ordinal: queueIndex + 1,
 			State: ItemOffered, Reaction: content.ReactionAdded, IntakeCard: &card,
-			IntakeState: &IntakeState{CallStatus: "ringing", Transcript: []IntakeLine{}},
+			IntakeState: intakeState,
 			Mode:        lesson.Mode, TimingEffective: lesson.Timing,
 			Deadlines: Deadlines{OpenAt: now, PrimaryAt: now}, OfferedAt: now}
 		if _, err := s.store.InsertItem(ctx, tx, item); err != nil {
@@ -966,7 +1003,9 @@ func (s *Service) Execute(ctx context.Context, actor auth.Principal, itemID uuid
 			}
 			item.Contacts, item.CallPolicy = version.Body.Contacts, version.Body.Reference.Call
 			if version.Body.Intake112 != nil {
-				item.IntakeScript = version.Body.Intake112.Call.Script
+				if version.Body.Intake112.Call != nil {
+					item.IntakeScript = version.Body.Intake112.Call.Script
+				}
 				item.IntakeDialogue = version.Body.Intake112.Dialogue
 				item.IntakeRecipients = version.Body.Intake112.RecipientServices
 			}
