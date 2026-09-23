@@ -90,7 +90,7 @@ export function Operator112ProfileCase({ me, item }: { me: Me; item: IntakeItem 
   const save = (event: FormEvent) => { event.preventDefault(); send("save_intake_draft", { draft }); };
   const toggleFlag = (key: "no_on_site" | "no_access") => update(key, draft[key]?.state === "known" ? empty : { state: "known", value: "yes" });
   const changeService = (code: string) => setSelectedServices((current) => current.includes(code) ? current.filter((entry) => entry !== code) : [...current, code]);
-  const allServices = Array.from(new Set(catalog?.service_rules.map((rule) => rule.service_code) ?? []));
+  const allServices = item.available_service_codes ?? [];
   const selectionChanged = selectedServices.length !== suggested.length || selectedServices.some((code) => !suggested.some((entry) => entry.service_code === code));
 
   return <section className="intake-workplace intake-profile-case">

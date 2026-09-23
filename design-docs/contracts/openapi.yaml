@@ -911,7 +911,7 @@ components:
             properties:
               id: { type: string }
               name: { type: string }
-              profile_ids: { type: array, items: { type: string } }
+              profile_ids: { type: array, items: { type: string }, description: В выдаче обучаемому скрыты; определения появляются только у активных карт. }
         profiles:
           type: array
           items:
@@ -934,6 +934,7 @@ components:
                     shared: { type: string, enum: [no_on_site, no_access] }
         service_rules:
           type: array
+          description: Во время прохождения обучаемому не раскрываются; основания уже предложенных служб доступны в suggested_services.
           items:
             type: object
             required: [id, profile_id, service_code, reason]
@@ -949,12 +950,12 @@ components:
       required: [call_status, transcript, has_saved_draft, dispatched]
       properties:
         mode: { type: string, enum: [card_only], description: Отсутствует у старых входящих вызовов. }
-        catalog: { $ref: '#/components/schemas/Intake112Catalog', description: Неизменяемый снимок каталога на момент выдачи. }
+        catalog: { $ref: '#/components/schemas/Intake112Catalog', description: Неизменяемый снимок каталога; обучаемому доступны только названия типов и определения активных карт, преподавателю — полный каталог. }
         call_status: { type: string, enum: [ringing, connected, held, ended, not_applicable] }
         inactive_profiles:
           type: object
           additionalProperties: { $ref: '#/components/schemas/Intake112ProfileAnswers' }
-          description: Только рабочее состояние; не входит в активный итоговый снимок evidence.
+          description: Только рабочее состояние для преподавателя; обучаемому не выдаётся и не входит в активный итоговый снимок evidence.
         suggested_services:
           type: array
           items:
@@ -1434,6 +1435,7 @@ components:
                 - { $ref: '#/components/schemas/CardView' }
                 - { $ref: '#/components/schemas/Intake112Card' }
             intake_state: { $ref: '#/components/schemas/Intake112State' }
+            available_service_codes: { type: array, items: { type: string }, description: Доступные учебные службы для ручного выбора в режиме card_only; не раскрывает условия предложений. }
             available_questions: { type: array, items: { $ref: '#/components/schemas/Intake112QuestionOption' }, description: Только вопросы, разрешённые в текущем состоянии вызова. }
             intake_dialogue_reference: { $ref: '#/components/schemas/Intake112Dialogue', description: Только преподавателю в режиме 112. }
             dispatch: { $ref: '#/components/schemas/Intake112Dispatch' }

@@ -78,6 +78,10 @@ test("operator 112: three card-only cases show profiles only after type selectio
     expect(initial.intake_state.mode).toBe("card_only");
     expect(initial.card.profiles ?? {}).toEqual({});
     expect(initial.card.incident_types ?? []).toEqual([]);
+    expect(initial.intake_state.catalog.profiles).toEqual([]);
+    expect(initial.intake_state.catalog.service_rules).toEqual([]);
+    expect(initial.intake_state.catalog.types.every((entry: { profile_ids: string[] }) => entry.profile_ids.length === 0)).toBe(true);
+    expect(initial.available_service_codes).toEqual(["pilot_gas_104", "pilot_fire_101", "pilot_ambulance"]);
     expect(initial.intake_reference).toBeUndefined();
     expect(JSON.stringify(initial)).not.toContain("case_description");
     await page.getByRole("button", { name: /Открыть карточку №/ }).click();
@@ -88,6 +92,9 @@ test("operator 112: three card-only cases show profiles only after type selectio
     await page.getByLabel("Тип происшествия").selectOption(cases[index].type);
     await page.getByRole("button", { name: "Добавить", exact: true }).click();
     await expect(page.locator(".intake-profile-panel")).toHaveCount(cases[index].profiles);
+    const active = await (await ok(await page.request.get(`/api/v1/items/${items[0].id}`))).json();
+    expect(active.intake_state.catalog.profiles.map((profile: { id: string }) => profile.id)).toEqual(index === 0 ? ["104"] : index === 1 ? ["101"] : ["104", "101"]);
+    expect(active.intake_state.catalog.service_rules).toEqual([]);
     await expect(page.locator(".intake-profile-options button[aria-pressed='true']")).toHaveCount(0);
     if (index === 0 || index === 2) {
       await page.getByRole("button", { name: "Вне помещения (на улице)" }).click();

@@ -536,7 +536,7 @@ func (h *Handlers) getItem(w http.ResponseWriter, r *http.Request) {
 			writeTrainingError(w, r, err)
 			return
 		}
-		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, nil, nil, nil, now))
+		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, nil, nil, nil, now, true))
 	case auth.RoleInstructor:
 		item, actions, events, body, err := h.training.ItemForInstructor(r.Context(), principal, itemID)
 		if err != nil {
@@ -552,7 +552,7 @@ func (h *Handlers) getItem(w http.ResponseWriter, r *http.Request) {
 		} else {
 			ddsReference = &body.Reference
 		}
-		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, ddsReference, intakeReference, intakeDialogue, now))
+		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, ddsReference, intakeReference, intakeDialogue, now, false))
 	default:
 		httpapi.WriteError(w, r, httpapi.CodeForbidden, "insufficient role", nil)
 	}
@@ -976,6 +976,7 @@ type itemJSON struct {
 	Mode                    string                          `json:"mode"`
 	Card                    any                             `json:"card"`
 	IntakeState             *training.IntakeState           `json:"intake_state,omitempty"`
+	AvailableServiceCodes   []string                        `json:"available_service_codes,omitempty"`
 	AvailableQuestions      []training.IntakeQuestionOption `json:"available_questions,omitempty"`
 	IntakeDialogueReference *content.Intake112Dialogue      `json:"intake_dialogue_reference,omitempty"`
 	Dispatch                *training.IntakeDispatch        `json:"dispatch,omitempty"`
@@ -1048,7 +1049,41 @@ func toDeliveredEventsJSON(events []training.DeliveredEvent) []deliveredEventJSO
 	return out
 }
 
-func toItemJSON(item training.Item, actions []training.Action, events []training.DeliveredEvent, reference *content.Reference, intakeReference *content.Intake112Reference, intakeDialogue *content.Intake112Dialogue, now time.Time) itemJSON {
+func traineeIntakeState(item training.Item) (*training.IntakeState, []string) {
+	state := *item.IntakeState
+	if state.Mode != "card_only" || state.Catalog == nil {
+		return &state, nil
+	}
+	full := state.Catalog
+	services := make([]string, 0, len(full.ServiceRules))
+	seen := make(map[string]bool, len(full.ServiceRules))
+	for _, rule := range full.ServiceRules {
+		if !seen[rule.ServiceCode] {
+			services = append(services, rule.ServiceCode)
+			seen[rule.ServiceCode] = true
+		}
+	}
+	visible := *full
+	visible.Types = make([]content.IntakeIncidentType, len(full.Types))
+	for i, incidentType := range full.Types {
+		incidentType.ProfileIDs = []string{}
+		visible.Types[i] = incidentType
+	}
+	visible.Profiles = []content.IntakeProfile{}
+	if item.IntakeCard != nil {
+		for _, profile := range full.Profiles {
+			if _, active := item.IntakeCard.Profiles[profile.ID]; active {
+				visible.Profiles = append(visible.Profiles, profile)
+			}
+		}
+	}
+	visible.ServiceRules = []content.IntakeServiceRule{}
+	state.Catalog = &visible
+	state.InactiveProfiles = nil
+	return &state, services
+}
+
+func toItemJSON(item training.Item, actions []training.Action, events []training.DeliveredEvent, reference *content.Reference, intakeReference *content.Intake112Reference, intakeDialogue *content.Intake112Dialogue, now time.Time, traineeView bool) itemJSON {
 	actionItems := make([]actionJSON, len(actions))
 	for i, a := range actions {
 		actionItems[i] = toActionJSON(a)
@@ -1059,8 +1094,13 @@ func toItemJSON(item training.Item, actions []training.Action, events []training
 		allowed[i] = string(next)
 	}
 	if item.IntakeCard != nil {
+		state := item.IntakeState
+		var availableServices []string
+		if traineeView && state != nil {
+			state, availableServices = traineeIntakeState(item)
+		}
 		return itemJSON{itemSummaryJSON: toItemSummaryJSON(item), Mode: string(item.Mode),
-			Card: item.IntakeCard, IntakeState: item.IntakeState, Dispatch: item.IntakeDispatch,
+			Card: item.IntakeCard, IntakeState: state, AvailableServiceCodes: availableServices, Dispatch: item.IntakeDispatch,
 			RecipientServices: item.IntakeRecipients, IntakeReference: intakeReference,
 			AvailableQuestions: item.AvailableQuestions, IntakeDialogueReference: intakeDialogue,
 			AllowedTransitions: []string{}, Actions: actionItems, Events: []deliveredEventJSON{}, Calls: []callJSON{},

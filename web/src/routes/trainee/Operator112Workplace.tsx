@@ -32,7 +32,8 @@ export type IntakeState = { mode?: "card_only"; catalog?: IntakeCatalog; call_st
   has_saved_draft: boolean; dispatched: boolean; selected_service?: string; answered_at?: string; ended_at?: string };
 type Dispatch = { service_code: string; sent_at: string; card_snapshot: IntakeCard };
 type IntakeQuestion = { id: string; text: string; topic_id: string; asked: boolean };
-export type IntakeItem = Omit<Item, "card"> & { card: IntakeCard; intake_state: IntakeState; available_questions?: IntakeQuestion[]; recipient_services: string[]; dispatch?: Dispatch };
+export type IntakeItem = Omit<Item, "card"> & { card: IntakeCard; intake_state: IntakeState; available_questions?: IntakeQuestion[];
+  available_service_codes?: string[]; recipient_services: string[]; dispatch?: Dispatch };
 
 const addressKeys = ["country", "region", "city", "object", "okrug", "district", "street", "house", "building", "structure", "flat", "entrance", "floor", "code", "landmark", "descriptive"] as const;
 const unanswered: IntakeField = { state: "unanswered" };
