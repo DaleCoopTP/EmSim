@@ -350,3 +350,223 @@ func containsJSONKey(raw []byte, key string) bool {
 	var value map[string]json.RawMessage
 	return json.Unmarshal(raw, &value) == nil && len(value[key]) > 0
 }
+
+func TestOperator112PreparedDialogueTransaction(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatal(err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	svc := newTrainingService(pool)
+	actor := insertInstructor(t, ctx, pool, "112-dialogue-instructor-"+uuid.NewString())
+	users := authpg.NewStore(pool)
+	operators := make([]auth.Principal, 2)
+	for i := range operators {
+		candidate := newTrainee("112-dialogue-trainee-"+uuid.NewString(), "")
+		candidate.ServiceCode = nil
+		var user auth.User
+		if err := users.WithTx(ctx, func(tx pgx.Tx) error {
+			var err error
+			user, err = users.InsertUser(ctx, tx, candidate)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		operators[i] = principal(user, insertWorkstation(t, ctx, pool, 20+i))
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO services (code, name, workflow) VALUES ('pilot_ambulance', 'Учебная скорая', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("../../seed/scenarios/pilot-112-medical-01-v2.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Body content.Body `json:"body"`
+	}
+	if err := json.Unmarshal(raw, &file); err != nil {
+		t.Fatal(err)
+	}
+	bodyJSON, err := json.Marshal(file.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(bodyJSON)
+	scenarioID, versionID := uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO scenarios (id, source_key, title, difficulty, origin, status, created_by)
+		VALUES ($1, 'pilot-112-medical-01', 'Пилот 112', 1, 'manual', 'approved', $2)`, scenarioID, actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO scenario_versions (id, scenario_id, version, status, body, digest, difficulty, exercise_type, created_by, approved_by, approved_at)
+		VALUES ($1, $2, 2, 'approved', $3, $4, 1, 'operator112_intake', $5, $5, now())`, versionID, scenarioID, bodyJSON, digest[:], actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	instructor := principal(actor, uuid.Nil)
+	lesson, err := svc.CreateLesson(ctx, instructor, training.LessonCreate{ExerciseType: content.ExerciseTypeOperator112Intake,
+		Title: "Опрос 112", Mode: training.ModeTraining, Level: auth.LevelEasy}, "dialogue-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignments := make([]training.AssignmentInput, 2)
+	for i, operator := range operators {
+		assignments[i] = training.AssignmentInput{WorkstationNo: 20 + i, UserID: operator.UserID, ScenarioVersionIDs: []uuid.UUID{versionID}}
+	}
+	if _, err := svc.ReplaceAssignments(ctx, instructor, lesson.ID, assignments, "dialogue-assign"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Start(ctx, instructor, lesson.ID, "dialogue-start"); err != nil {
+		t.Fatal(err)
+	}
+	items := make([]training.Item, 2)
+	seq := []int64{0, 0}
+	for i, operator := range operators {
+		own, err := svc.MyItems(ctx, operator)
+		if err != nil || len(own) != 1 {
+			t.Fatalf("operator %d items: %+v, %v", i, own, err)
+		}
+		items[i] = own[0]
+	}
+	send := func(i int, typ training.CommandType, payload any) training.Receipt {
+		t.Helper()
+		body, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := svc.Execute(ctx, operators[i], items[i].ID, training.Command{CommandID: uuid.New(), ExpectedSeq: seq[i], Type: typ, Payload: body}, "dialogue-action")
+		if err != nil || r.Outcome != training.OutcomeApplied {
+			t.Fatalf("operator %d command %s: %+v, %v", i, typ, r, err)
+		}
+		seq[i] = r.Seq
+		return r
+	}
+	for i := range items {
+		send(i, training.CommandOpen, map[string]any{})
+		send(i, training.CommandAnswerIncoming, map[string]any{})
+		loaded, _, _, err := svc.ItemForTrainee(ctx, operators[i], items[i].ID)
+		if err != nil || len(loaded.IntakeState.Transcript) != 1 || len(loaded.AvailableQuestions) != 3 {
+			t.Fatalf("initial projection for %d: %+v, %v", i, loaded, err)
+		}
+	}
+	ask := func(i int, id string) training.Item {
+		t.Helper()
+		send(i, training.CommandAskIntakeQuestion, map[string]any{"question_id": id})
+		loaded, _, _, err := svc.ItemForTrainee(ctx, operators[i], items[i].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return loaded
+	}
+	firstAge := ask(0, "ask_age")
+	firstAddress := ask(0, "ask_address")
+	secondAddress := ask(1, "ask_address")
+	secondAge := ask(1, "ask_age")
+	if firstAge.IntakeState.Transcript[2].Text != secondAge.IntakeState.Transcript[4].Text ||
+		firstAddress.IntakeState.Transcript[4].Text != secondAddress.IntakeState.Transcript[2].Text {
+		t.Fatal("question order changed fixed applicant facts")
+	}
+	if len(firstAddress.AvailableQuestions) != 4 || len(secondAge.AvailableQuestions) != 4 {
+		t.Fatal("clarifications were not unlocked")
+	}
+	// The same command ID returns its receipt and cannot append another turn.
+	repeatCmd := training.Command{CommandID: uuid.New(), ExpectedSeq: seq[0], Type: training.CommandAskIntakeQuestion,
+		Payload: []byte(`{"question_id":"ask_age"}`)}
+	first, err := svc.Execute(ctx, operators[0], items[0].ID, repeatCmd, "dialogue-repeat")
+	if err != nil || first.Outcome != training.OutcomeApplied {
+		t.Fatalf("first repeat: %+v, %v", first, err)
+	}
+	seq[0] = first.Seq
+	replayed, err := svc.Execute(ctx, operators[0], items[0].ID, repeatCmd, "dialogue-replay")
+	if err != nil || !replayed.Replayed || replayed.Seq != first.Seq {
+		t.Fatalf("command replay: %+v, %v", replayed, err)
+	}
+	loaded, _, _, err := svc.ItemForTrainee(ctx, operators[0], items[0].ID)
+	if err != nil || len(loaded.IntakeState.Transcript) != 7 || len(loaded.IntakeState.AskedQuestionIDs) != 2 {
+		t.Fatalf("replay appended a turn: %+v, %v", loaded, err)
+	}
+	stale, err := svc.Execute(ctx, operators[0], items[0].ID, training.Command{CommandID: uuid.New(), ExpectedSeq: 2,
+		Type: training.CommandAskIntakeQuestion, Payload: []byte(`{"question_id":"ask_victims"}`)}, "dialogue-stale")
+	if err != nil || stale.ErrorCode == nil || *stale.ErrorCode != training.RejectStaleSeq {
+		t.Fatalf("stale question: %+v, %v", stale, err)
+	}
+	send(0, training.CommandHoldIncoming, map[string]any{})
+	held, _, _, err := svc.ItemForTrainee(ctx, operators[0], items[0].ID)
+	if err != nil || held.IntakeState.CallStatus != "held" || len(held.AvailableQuestions) != 0 {
+		t.Fatalf("held call: %+v, %v", held, err)
+	}
+	blocked, err := svc.Execute(ctx, operators[0], items[0].ID, training.Command{CommandID: uuid.New(), ExpectedSeq: seq[0],
+		Type: training.CommandAskIntakeQuestion, Payload: []byte(`{"question_id":"clarify_house"}`)}, "dialogue-held-question")
+	if err != nil || blocked.ErrorCode == nil || *blocked.ErrorCode != training.RejectTransitionNotAllowed {
+		t.Fatalf("question on hold: %+v, %v", blocked, err)
+	}
+	send(0, training.CommandResumeIncoming, map[string]any{})
+	loaded = ask(0, "clarify_house")
+	if loaded.IntakeState.Transcript[len(loaded.IntakeState.Transcript)-1].Text != "Дом 2, корпус 3, рядом с метро ВДНХ." {
+		t.Fatalf("clarification: %+v", loaded.IntakeState)
+	}
+	draft := *loaded.IntakeCard
+	draft.Address.House = training.IntakeField{State: "known", Value: "2"}
+	send(0, training.CommandSaveIntakeDraft, map[string]any{"draft": draft})
+	send(0, training.CommandDispatchIntake, map[string]any{"service_code": "pilot_ambulance"})
+	send(0, training.CommandEndIncoming, map[string]any{})
+	send(0, training.CommandCompleteIntake, map[string]any{})
+	if late, err := svc.Execute(ctx, operators[0], items[0].ID, training.Command{CommandID: uuid.New(), ExpectedSeq: seq[0],
+		Type: training.CommandAskIntakeQuestion, Payload: []byte(`{"question_id":"ask_victims"}`)}, "dialogue-ended-question"); err != nil || late.ErrorCode == nil || *late.ErrorCode != training.RejectItemClosed {
+		t.Fatalf("question after close: %+v, %v", late, err)
+	}
+	var closedEvidence []byte
+	if err := pool.QueryRow(ctx, `SELECT body FROM evidence WHERE item_id=$1`, items[0].ID).Scan(&closedEvidence); err != nil {
+		t.Fatal(err)
+	}
+	var evidence struct {
+		IntakeState training.IntakeState     `json:"intake_state"`
+		Dispatch    *training.IntakeDispatch `json:"dispatch"`
+	}
+	if err := json.Unmarshal(closedEvidence, &evidence); err != nil || evidence.Dispatch == nil ||
+		evidence.Dispatch.CardSnapshot.Address.House.Value != "2" || len(evidence.IntakeState.Transcript) != 9 ||
+		evidence.IntakeState.Transcript[1].Speaker != "operator" || evidence.IntakeState.Transcript[1].TopicID != "applicant" {
+		t.Fatalf("dialogue evidence: %+v, %v", evidence, err)
+	}
+	// Recovery reconstructs the other participant's confirmed branch.
+	recoveryID := uuid.New()
+	if _, err := svc.Recover(ctx, recoveryID, "server_restart"); err != nil {
+		t.Fatal(err)
+	}
+	other, _, _, err := svc.ItemForTrainee(ctx, operators[1], items[1].ID)
+	if err != nil || len(other.IntakeState.Transcript) != 5 || len(other.AvailableQuestions) != 4 || len(other.Interruptions) != 1 {
+		t.Fatalf("recovered dialogue: %+v, %v", other, err)
+	}
+	if _, err := svc.Stop(ctx, instructor, lesson.ID, nil, "dialogue-stop"); err != nil {
+		t.Fatal(err)
+	}
+	stopped, _, _, err := svc.ItemForTrainee(ctx, operators[1], items[1].ID)
+	if err != nil || len(stopped.AvailableQuestions) != 0 {
+		t.Fatalf("questions after stop: %+v, %v", stopped, err)
+	}
+	late, err := svc.Execute(ctx, operators[1], items[1].ID, training.Command{CommandID: uuid.New(), ExpectedSeq: seq[1],
+		Type: training.CommandAskIntakeQuestion, Payload: []byte(`{"question_id":"clarify_house"}`)}, "dialogue-after-stop")
+	if err != nil || late.ErrorCode == nil || *late.ErrorCode != training.RejectLessonStopped {
+		t.Fatalf("question after stop: %+v, %v", late, err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := svc.CloseStoppedLesson(ctx, tx, lesson.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var stoppedEvidence []byte
+	if err := pool.QueryRow(ctx, `SELECT body FROM evidence WHERE item_id=$1`, items[1].ID).Scan(&stoppedEvidence); err != nil {
+		t.Fatal(err)
+	}
+	var stoppedState struct {
+		IntakeState training.IntakeState `json:"intake_state"`
+	}
+	if err := json.Unmarshal(stoppedEvidence, &stoppedState); err != nil || len(stoppedState.IntakeState.Transcript) != 5 {
+		t.Fatalf("stop evidence lost or added a turn: %+v, %v", stoppedState, err)
+	}
+}

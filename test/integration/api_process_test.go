@@ -472,7 +472,7 @@ func TestAPIProcessContentCatalogAccess(t *testing.T) {
 	response = jsonRequest(t, ctx, instructorClient, baseURL, http.MethodGet, "/api/v1/scenarios", nil, &scenarioList)
 	// The slice-4 event, slice-5 phone, and 112 intake fixtures are part of
 	// the imported catalogue too; assert that the full offline seed loaded.
-	if response.StatusCode != http.StatusOK || scenarioList.Total != 5 || len(scenarioList.Items) != 5 {
+	if response.StatusCode != http.StatusOK || scenarioList.Total != 7 || len(scenarioList.Items) != 7 {
 		t.Fatalf("instructor GET /scenarios status = %d, body = %+v", response.StatusCode, scenarioList)
 	}
 

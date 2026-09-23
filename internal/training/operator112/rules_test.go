@@ -206,7 +206,8 @@ func TestExceptionalCallOutcomes(t *testing.T) {
 			item := training.Item{State: test.state, IntakeCard: &card, IntakeState: &state}
 			decision, err := New().Decide(item, training.Command{Type: test.command, Payload: []byte(`{}`)}, now)
 			if err != nil || !decision.Accepted || decision.Close == nil || *decision.Close != test.want ||
-				decision.State != training.ItemClosed || decision.IntakeState.CallStatus != "ended" || decision.IntakeDispatch != nil {
+				decision.State != training.ItemClosed || decision.IntakeState.CallStatus != "ended" || decision.IntakeDispatch != nil ||
+				decision.IntakeState.Transcript == nil {
 				t.Fatalf("exceptional close: %+v, %v", decision, err)
 			}
 			item.State, item.IntakeCard, item.IntakeState = decision.State, decision.IntakeCard, decision.IntakeState

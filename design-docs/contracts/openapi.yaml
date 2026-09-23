@@ -1233,7 +1233,7 @@ components:
       - interruptions
       properties:
         exercise_type: { $ref: '#/components/schemas/ExerciseType' }
-        call_status: { type: string, enum: [ringing, connected, ended] }
+        call_status: { type: string, enum: [ringing, connected, held, ended] }
         dispatched: { type: boolean }
         id:
           type: string

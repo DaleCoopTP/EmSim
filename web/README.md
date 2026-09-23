@@ -19,10 +19,12 @@ npm run test:e2e # isolated Chromium + compose browser acceptance test
 Dockerfile's Node stage) populates it.
 
 The operator 112 intake has its own trainee workspace and instructor review
-screens. The first 112 slice includes its UI alongside the API and storage
-work. The trainee card follows the operator reference layout, with a single
-training service labelled 03. The incident selector and supplemental incident
-card are deferred; see [slice-112-1-plan.md](../slice-112-1-plan.md).
+screens. Prepared questions now reveal only their spoken answers; hold and
+resume preserve the server-side dialogue across reloads. The instructor
+review shows the dialogue, disclosed facts, saved card changes and dispatch
+snapshot. The trainee card follows the operator reference layout, with a
+single training service labelled 03. The incident selector and supplemental
+incident card are deferred; see [slice-112-2-plan.md](../slice-112-2-plan.md).
 
 `test:e2e` creates a uniquely named Compose project with its own volumes and
 free localhost ports, feeds Chromium `seed/voice-assets/crew_leader_greeting.wav`
