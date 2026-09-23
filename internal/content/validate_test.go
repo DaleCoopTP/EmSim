@@ -57,6 +57,44 @@ func pilotCatalog() fakeCatalog {
 	}
 }
 
+func validIntakeDialogueBody() Body {
+	return Body{ExerciseType: ExerciseTypeOperator112Intake, Intake112: &Intake112{
+		Call:              Intake112Call{AON: "+79161313131", LocalTime: "02:03", TimeZone: "Europe/Moscow"},
+		RecipientServices: []string{"pilot_ambulance"},
+		Reference:         Intake112Reference{RecipientService: "pilot_ambulance"},
+		Dialogue: &Intake112Dialogue{
+			Facts: []Intake112Fact{
+				{ID: "address_city", Label: "Город", CardPath: "/address/city", Knowledge: "initial", Value: "Москва"},
+				{ID: "address_house", Label: "Дом", CardPath: "/address/house", Knowledge: "on_question", Value: "2"},
+				{ID: "address_flat", Label: "Квартира", CardPath: "/address/flat", Knowledge: "unknown"},
+			},
+			Initial: Intake112Utterance{ID: "greeting", Text: "Я в Москве", Reveals: []string{"address_city"}},
+			Questions: []Intake112Question{
+				{ID: "where", Text: "Назовите дом", TopicID: "address", Answer: Intake112Utterance{ID: "where_answer", Text: "Дом 2", Reveals: []string{"address_house"}}},
+				{ID: "flat", Text: "Назовите квартиру", TopicID: "address", AvailableAfter: []string{"where"}, Answer: Intake112Utterance{ID: "flat_answer", Text: "Не знаю", Reveals: []string{"address_flat"}}},
+			},
+		},
+	}}
+}
+
+func TestValidateIntakeDialogueReferencesAndCycles(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_ambulance"] = ServiceRecord{Active: true}
+	body := validIntakeDialogueBody()
+	if err := Validate(body, catalog); err != nil {
+		t.Fatalf("valid dialogue: %v", err)
+	}
+	body.Intake112.Dialogue.Questions[0].AvailableAfter = []string{"flat"}
+	if err := Validate(body, catalog); err == nil {
+		t.Fatal("question dependency cycle accepted")
+	}
+	body = validIntakeDialogueBody()
+	body.Intake112.Dialogue.Questions[0].Answer.Reveals = []string{"hidden_fact"}
+	if err := Validate(body, catalog); err == nil {
+		t.Fatal("unknown fact reference accepted")
+	}
+}
+
 // validPilotBody is case 2 from slice-2-plan.md: incoming card has the
 // wrong округ (ЮАР), and reference.field_corrections says to fix it
 // before "accepted" — Validate must accept this mismatch, not reject it.

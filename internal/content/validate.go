@@ -86,7 +86,123 @@ func validateIntake112(intake *Intake112, catalog Catalog) error {
 	if intake.Reference.RecipientService != code {
 		return invalid("intake112.reference.recipient_service", "not_available")
 	}
+	if (len(intake.Call.Script) > 0) == (intake.Dialogue != nil) {
+		return invalid("intake112.dialogue", "script_or_dialogue_required")
+	}
+	if intake.Dialogue != nil {
+		return validateIntake112Dialogue(*intake.Dialogue)
+	}
 	return nil
+}
+
+func validateIntake112Dialogue(dialogue Intake112Dialogue) error {
+	if dialogue.Initial.ID == "" || dialogue.Initial.Text == "" || len(dialogue.Questions) == 0 {
+		return invalid("intake112.dialogue", "incomplete")
+	}
+	facts := make(map[string]Intake112Fact, len(dialogue.Facts))
+	paths := make(map[string]bool, len(dialogue.Facts))
+	for i, fact := range dialogue.Facts {
+		field := fmt.Sprintf("intake112.dialogue.facts[%d]", i)
+		if fact.ID == "" || facts[fact.ID].ID != "" {
+			return invalid(field+".id", "missing_or_duplicate")
+		}
+		if !validIntake112CardPath(fact.CardPath) || paths[fact.CardPath] {
+			return invalid(field+".card_path", "invalid_or_duplicate")
+		}
+		if fact.Knowledge == "unknown" {
+			if fact.Value != "" {
+				return invalid(field+".value", "unknown_has_value")
+			}
+		} else if (fact.Knowledge != "initial" && fact.Knowledge != "on_question") || fact.Value == "" {
+			return invalid(field+".knowledge", "invalid")
+		}
+		facts[fact.ID], paths[fact.CardPath] = fact, true
+	}
+	questions := make(map[string]Intake112Question, len(dialogue.Questions))
+	utterances := map[string]bool{dialogue.Initial.ID: true}
+	for i, question := range dialogue.Questions {
+		field := fmt.Sprintf("intake112.dialogue.questions[%d]", i)
+		if question.ID == "" || question.Text == "" || question.TopicID == "" || questions[question.ID].ID != "" {
+			return invalid(field, "incomplete_or_duplicate")
+		}
+		if question.Answer.ID == "" || question.Answer.Text == "" || utterances[question.Answer.ID] {
+			return invalid(field+".answer", "incomplete_or_duplicate")
+		}
+		questions[question.ID] = question
+		utterances[question.Answer.ID] = true
+	}
+	revealed := make(map[string]bool, len(facts))
+	validateReveals := func(path string, ids []string, initial bool) error {
+		for _, id := range ids {
+			fact, exists := facts[id]
+			if !exists || (initial && fact.Knowledge != "initial") || (!initial && fact.Knowledge == "initial") {
+				return invalid(path, "invalid_fact_reference")
+			}
+			revealed[id] = true
+		}
+		return nil
+	}
+	if err := validateReveals("intake112.dialogue.initial.reveals", dialogue.Initial.Reveals, true); err != nil {
+		return err
+	}
+	for i, question := range dialogue.Questions {
+		field := fmt.Sprintf("intake112.dialogue.questions[%d]", i)
+		if err := validateReveals(field+".answer.reveals", question.Answer.Reveals, false); err != nil {
+			return err
+		}
+		for _, preceding := range question.AvailableAfter {
+			if _, exists := questions[preceding]; !exists || preceding == question.ID {
+				return invalid(field+".available_after", "invalid_question_reference")
+			}
+		}
+	}
+	for id := range facts {
+		if !revealed[id] {
+			return invalid("intake112.dialogue.facts", "unreachable_"+id)
+		}
+	}
+	visiting, visited := make(map[string]bool), make(map[string]bool)
+	var visit func(string) bool
+	visit = func(id string) bool {
+		if visiting[id] {
+			return false
+		}
+		if visited[id] {
+			return true
+		}
+		visiting[id] = true
+		for _, preceding := range questions[id].AvailableAfter {
+			if !visit(preceding) {
+				return false
+			}
+		}
+		visiting[id], visited[id] = false, true
+		return true
+	}
+	for id := range questions {
+		if !visit(id) {
+			return invalid("intake112.dialogue.questions", "prerequisite_cycle")
+		}
+	}
+	return nil
+}
+
+func validIntake112CardPath(path string) bool {
+	switch path {
+	case "/applicant_name", "/applicant_status", "/age", "/incident_type", "/complaint",
+		"/victims_present", "/victims_count", "/provided_phone", "/on_site_phone":
+		return true
+	}
+	const prefix = "/address/"
+	if len(path) <= len(prefix) || path[:len(prefix)] != prefix {
+		return false
+	}
+	switch path[len(prefix):] {
+	case "country", "region", "city", "object", "okrug", "district", "street", "house", "building",
+		"structure", "flat", "entrance", "floor", "code", "landmark", "descriptive":
+		return true
+	}
+	return false
 }
 
 func validateNotificationList(list []NotificationEntry, targetService string, catalog Catalog) error {

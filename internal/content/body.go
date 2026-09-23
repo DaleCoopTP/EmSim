@@ -25,11 +25,12 @@ type Body struct {
 	ExerciseType  ExerciseType `json:"exercise_type"`
 }
 
-// Intake112 is the immutable prepared content for the first operator 112
-// exercise. Reference is instructor-only; the trainee learns Script only
-// after answering the incoming call.
+// Intake112 is immutable prepared content. A legacy call has Script; new
+// versions use Dialogue. Neither the dialogue tree nor Reference is sent
+// to a trainee.
 type Intake112 struct {
 	Call              Intake112Call      `json:"call"`
+	Dialogue          *Intake112Dialogue `json:"dialogue,omitempty"`
 	RecipientServices []string           `json:"recipient_services"`
 	Reference         Intake112Reference `json:"reference"`
 }
@@ -38,7 +39,37 @@ type Intake112Call struct {
 	AON       string   `json:"aon"`
 	LocalTime string   `json:"local_time"`
 	TimeZone  string   `json:"time_zone"`
-	Script    []string `json:"script"`
+	Script    []string `json:"script,omitempty"`
+}
+
+// CallerKnowledge describes when a fact can become known to the trainee.
+// A fact marked unknown is one the applicant explicitly cannot supply.
+type Intake112Fact struct {
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	CardPath  string `json:"card_path"`
+	Knowledge string `json:"knowledge"`
+	Value     string `json:"value,omitempty"`
+}
+
+type Intake112Utterance struct {
+	ID      string   `json:"id"`
+	Text    string   `json:"text"`
+	Reveals []string `json:"reveals"`
+}
+
+type Intake112Question struct {
+	ID             string             `json:"id"`
+	Text           string             `json:"text"`
+	TopicID        string             `json:"topic_id"`
+	AvailableAfter []string           `json:"available_after,omitempty"`
+	Answer         Intake112Utterance `json:"answer"`
+}
+
+type Intake112Dialogue struct {
+	Facts     []Intake112Fact     `json:"facts"`
+	Initial   Intake112Utterance  `json:"initial"`
+	Questions []Intake112Question `json:"questions"`
 }
 
 type Intake112Reference struct {

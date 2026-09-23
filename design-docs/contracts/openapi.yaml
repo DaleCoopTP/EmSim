@@ -750,12 +750,13 @@ components:
       properties:
         call:
           type: object
-          required: [aon, local_time, time_zone, script]
+          required: [aon, local_time, time_zone]
           properties:
             aon: { type: string }
             local_time: { type: string, description: HH:mm в сценарии; не серверное время. }
             time_zone: { type: string, const: Europe/Moscow }
-            script: { type: array, items: { type: string } }
+            script: { type: array, items: { type: string }, description: Только утверждённые сценарии 112-1. }
+        dialogue: { $ref: '#/components/schemas/Intake112Dialogue' }
         recipient_services: { type: array, items: { type: string }, minItems: 1, maxItems: 1 }
         reference:
           type: object
@@ -780,6 +781,49 @@ components:
                 incident_type: { type: string, const: medical_assistance_request }
                 complaint: { type: string }
                 victims_count: { type: integer }
+    Intake112Dialogue:
+      type: object
+      description: Полный сценарий; доступен только преподавателю. Обучаемому выдаются текущие вопросы и произнесённые реплики.
+      required: [facts, initial, questions]
+      properties:
+        facts:
+          type: array
+          items:
+            type: object
+            required: [id, label, card_path, knowledge]
+            properties:
+              id: { type: string }
+              label: { type: string }
+              card_path: { type: string }
+              knowledge: { type: string, enum: [initial, on_question, unknown] }
+              value: { type: string }
+        initial: { $ref: '#/components/schemas/Intake112Utterance' }
+        questions:
+          type: array
+          items:
+            type: object
+            required: [id, text, topic_id, answer]
+            properties:
+              id: { type: string }
+              text: { type: string }
+              topic_id: { type: string }
+              available_after: { type: array, items: { type: string } }
+              answer: { $ref: '#/components/schemas/Intake112Utterance' }
+    Intake112Utterance:
+      type: object
+      required: [id, text, reveals]
+      properties:
+        id: { type: string }
+        text: { type: string }
+        reveals: { type: array, items: { type: string } }
+    Intake112QuestionOption:
+      type: object
+      required: [id, text, topic_id, asked]
+      properties:
+        id: { type: string }
+        text: { type: string }
+        topic_id: { type: string }
+        asked: { type: boolean }
     Intake112Field:
       type: object
       required: [state]
@@ -833,13 +877,22 @@ components:
       type: object
       required: [call_status, transcript, has_saved_draft, dispatched]
       properties:
-        call_status: { type: string, enum: [ringing, connected, ended] }
+        call_status: { type: string, enum: [ringing, connected, held, ended] }
+        asked_question_ids: { type: array, items: { type: string }, description: В порядке первого вопроса; повторные вопросы остаются в журнале реплик. }
         transcript:
           type: array
           items:
             type: object
             required: [text, server_at]
             properties:
+              id: { type: string, description: Уникальный ID произнесённой реплики. }
+              source_id: { type: string, description: ID реплики или вопроса в утверждённом сценарии. }
+              speaker: { type: string, enum: [caller, operator] }
+              call_id: { type: string, format: uuid, description: В 112-2 равен ID карточки. }
+              command_id: { type: string, format: uuid }
+              question_id: { type: string }
+              topic_id: { type: string }
+              reveals: { type: array, items: { type: string }, description: Только факты, уже раскрытые этой репликой. }
               text: { type: string }
               server_at: { type: string, format: date-time }
         has_saved_draft: { type: boolean }
@@ -1288,6 +1341,8 @@ components:
                 - { $ref: '#/components/schemas/CardView' }
                 - { $ref: '#/components/schemas/Intake112Card' }
             intake_state: { $ref: '#/components/schemas/Intake112State' }
+            available_questions: { type: array, items: { $ref: '#/components/schemas/Intake112QuestionOption' }, description: Только вопросы, разрешённые в текущем состоянии вызова. }
+            intake_dialogue_reference: { $ref: '#/components/schemas/Intake112Dialogue', description: Только преподавателю в режиме 112. }
             dispatch: { $ref: '#/components/schemas/Intake112Dispatch' }
             recipient_services: { type: array, items: { type: string }, description: Разрешённые учебные адресаты; эталон не раскрывается. }
             intake_reference: { type: object, description: Только преподавателю в режиме 112. }
@@ -1336,6 +1391,9 @@ components:
           - complete_intake
           - mark_no_contact
           - mark_call_dropped
+          - ask_intake_question
+          - hold_incoming
+          - resume_incoming
         payload:
           type: object
         client_at:
@@ -1475,6 +1533,20 @@ components:
           payload: { type: object, additionalProperties: false }
       - properties:
           type: { const: end_incoming }
+          payload: { type: object, additionalProperties: false }
+      - properties:
+          type: { const: ask_intake_question }
+          payload:
+            type: object
+            additionalProperties: false
+            required: [question_id]
+            properties:
+              question_id: { type: string }
+      - properties:
+          type: { const: hold_incoming }
+          payload: { type: object, additionalProperties: false }
+      - properties:
+          type: { const: resume_incoming }
           payload: { type: object, additionalProperties: false }
       - properties:
           type: { const: save_intake_draft }
