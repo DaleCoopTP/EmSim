@@ -6,7 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"emsim/internal/content"
 	"emsim/internal/training"
+
+	"github.com/google/uuid"
 )
 
 func TestIntakeFlowAndImmutableDispatch(t *testing.T) {
@@ -68,6 +71,79 @@ func TestIntakeFlowAndImmutableDispatch(t *testing.T) {
 	}
 	if d := run(training.CommandCompleteIntake, map[string]any{}); !d.Accepted || d.Close == nil || d.State != training.ItemClosed {
 		t.Fatalf("complete: %+v", d)
+	}
+}
+
+func TestPreparedDialogueOrdersHoldAndRepeat(t *testing.T) {
+	now := time.Date(2026, 9, 23, 0, 3, 0, 0, time.UTC)
+	dialogue := &content.Intake112Dialogue{
+		Initial: content.Intake112Utterance{ID: "initial", Text: "Нужна помощь", Reveals: []string{"complaint"}},
+		Questions: []content.Intake112Question{
+			{ID: "address", Text: "Где вы?", TopicID: "address", Answer: content.Intake112Utterance{ID: "address_reply", Text: "Москва, дом 2", Reveals: []string{"address"}}},
+			{ID: "victims", Text: "Сколько пострадавших?", TopicID: "victims", Answer: content.Intake112Utterance{ID: "victims_partial", Text: "Несколько, сейчас уточню", Reveals: []string{}}},
+			{ID: "clarify", Text: "Уточните число", TopicID: "victims", AvailableAfter: []string{"victims"}, Answer: content.Intake112Utterance{ID: "victims_reply", Text: "Двое", Reveals: []string{"victims_count"}}},
+		},
+	}
+	orders := [][]string{{"address", "victims", "clarify"}, {"victims", "clarify", "address"}}
+	for _, order := range orders {
+		card := training.UnansweredIntakeCard("112-1", "+79161313131", "02:03", "Europe/Moscow")
+		state := training.IntakeState{CallStatus: "ringing", Transcript: []training.IntakeLine{}}
+		item := training.Item{ID: uuid.New(), State: training.ItemOpened, IntakeCard: &card, IntakeState: &state, IntakeDialogue: dialogue}
+		ex := New().(exercise)
+		run := func(typ training.CommandType, p any) training.Decision {
+			t.Helper()
+			raw, err := json.Marshal(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decision, err := ex.Decide(item, training.Command{CommandID: uuid.New(), Type: typ, Payload: raw}, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decision.Accepted {
+				item.State, item.IntakeCard, item.IntakeState = decision.State, decision.IntakeCard, decision.IntakeState
+			}
+			return decision
+		}
+		if d := run(training.CommandAnswerIncoming, map[string]any{}); !d.Accepted || len(item.IntakeState.Transcript) != 1 ||
+			item.IntakeState.Transcript[0].Speaker != "caller" {
+			t.Fatalf("initial turn: %+v", d)
+		}
+		if d := run(training.CommandAskIntakeQuestion, map[string]any{"question_id": "clarify"}); d.Accepted {
+			t.Fatal("clarification before prerequisite accepted")
+		}
+		if d := run(training.CommandHoldIncoming, map[string]any{}); !d.Accepted {
+			t.Fatal("hold rejected")
+		}
+		if len(ex.AvailableQuestions(item)) != 0 {
+			t.Fatal("questions exposed while held")
+		}
+		if d := run(training.CommandAskIntakeQuestion, map[string]any{"question_id": order[0]}); d.Accepted {
+			t.Fatal("question accepted while held")
+		}
+		if d := run(training.CommandResumeIncoming, map[string]any{}); !d.Accepted {
+			t.Fatal("resume rejected")
+		}
+		for _, id := range order {
+			if d := run(training.CommandAskIntakeQuestion, map[string]any{"question_id": id}); !d.Accepted {
+				t.Fatalf("question %s: %+v", id, d)
+			}
+		}
+		lines := item.IntakeState.Transcript
+		if len(lines) != 7 || lines[1].Speaker != "operator" || lines[2].Speaker != "caller" ||
+			lines[2].CallID != item.ID.String() || lines[2].ID == "" || len(item.IntakeState.AskedQuestionIDs) != 3 {
+			t.Fatalf("dialogue: %+v", item.IntakeState)
+		}
+		if d := run(training.CommandAskIntakeQuestion, map[string]any{"question_id": "address"}); !d.Accepted ||
+			item.IntakeState.Transcript[len(item.IntakeState.Transcript)-1].Text != "Москва, дом 2" || len(item.IntakeState.AskedQuestionIDs) != 3 {
+			t.Fatalf("intentional repeat: %+v", d)
+		}
+		if d := run(training.CommandEndIncoming, map[string]any{}); !d.Accepted {
+			t.Fatal("end rejected")
+		}
+		if d := run(training.CommandAskIntakeQuestion, map[string]any{"question_id": "address"}); d.Accepted {
+			t.Fatal("question after end accepted")
+		}
 	}
 }
 

@@ -126,18 +126,34 @@ func validVictimsPresent(field IntakeField) bool {
 }
 
 type IntakeLine struct {
-	Text     string    `json:"text"`
-	ServerAt time.Time `json:"server_at"`
+	ID         string    `json:"id,omitempty"`
+	SourceID   string    `json:"source_id,omitempty"`
+	Speaker    string    `json:"speaker,omitempty"`
+	CallID     string    `json:"call_id,omitempty"`
+	CommandID  string    `json:"command_id,omitempty"`
+	QuestionID string    `json:"question_id,omitempty"`
+	TopicID    string    `json:"topic_id,omitempty"`
+	Reveals    []string  `json:"reveals,omitempty"`
+	Text       string    `json:"text"`
+	ServerAt   time.Time `json:"server_at"`
+}
+
+type IntakeQuestionOption struct {
+	ID      string `json:"id"`
+	Text    string `json:"text"`
+	TopicID string `json:"topic_id"`
+	Asked   bool   `json:"asked"`
 }
 
 type IntakeState struct {
-	CallStatus      string       `json:"call_status"` // ringing, connected, ended
-	Transcript      []IntakeLine `json:"transcript"`
-	HasSavedDraft   bool         `json:"has_saved_draft"`
-	Dispatched      bool         `json:"dispatched"`
-	SelectedService string       `json:"selected_service,omitempty"`
-	AnsweredAt      *time.Time   `json:"answered_at,omitempty"`
-	EndedAt         *time.Time   `json:"ended_at,omitempty"`
+	CallStatus       string       `json:"call_status"` // ringing, connected, held, ended
+	Transcript       []IntakeLine `json:"transcript"`
+	AskedQuestionIDs []string     `json:"asked_question_ids,omitempty"`
+	HasSavedDraft    bool         `json:"has_saved_draft"`
+	Dispatched       bool         `json:"dispatched"`
+	SelectedService  string       `json:"selected_service,omitempty"`
+	AnsweredAt       *time.Time   `json:"answered_at,omitempty"`
+	EndedAt          *time.Time   `json:"ended_at,omitempty"`
 }
 
 type IntakeDispatch struct {

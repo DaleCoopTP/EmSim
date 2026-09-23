@@ -73,21 +73,24 @@ const (
 type CommandType string
 
 const (
-	CommandOpen            CommandType = "open"
-	CommandSetStatus       CommandType = "set_status"
-	CommandAddComment      CommandType = "add_comment"
-	CommandSetCardField    CommandType = "set_card_field" // ADR-017
-	CommandClose           CommandType = "close"
-	CommandCallStart       CommandType = "call_start"
-	CommandCallEnd         CommandType = "call_end"
-	CommandControlReport   CommandType = "control_report" // not implemented until slice 4/5
-	CommandAnswerIncoming  CommandType = "answer_incoming"
-	CommandEndIncoming     CommandType = "end_incoming"
-	CommandSaveIntakeDraft CommandType = "save_intake_draft"
-	CommandDispatchIntake  CommandType = "dispatch_intake"
-	CommandCompleteIntake  CommandType = "complete_intake"
-	CommandMarkNoContact   CommandType = "mark_no_contact"
-	CommandMarkCallDropped CommandType = "mark_call_dropped"
+	CommandOpen              CommandType = "open"
+	CommandSetStatus         CommandType = "set_status"
+	CommandAddComment        CommandType = "add_comment"
+	CommandSetCardField      CommandType = "set_card_field" // ADR-017
+	CommandClose             CommandType = "close"
+	CommandCallStart         CommandType = "call_start"
+	CommandCallEnd           CommandType = "call_end"
+	CommandControlReport     CommandType = "control_report" // not implemented until slice 4/5
+	CommandAnswerIncoming    CommandType = "answer_incoming"
+	CommandEndIncoming       CommandType = "end_incoming"
+	CommandSaveIntakeDraft   CommandType = "save_intake_draft"
+	CommandDispatchIntake    CommandType = "dispatch_intake"
+	CommandCompleteIntake    CommandType = "complete_intake"
+	CommandMarkNoContact     CommandType = "mark_no_contact"
+	CommandMarkCallDropped   CommandType = "mark_call_dropped"
+	CommandAskIntakeQuestion CommandType = "ask_intake_question"
+	CommandHoldIncoming      CommandType = "hold_incoming"
+	CommandResumeIncoming    CommandType = "resume_incoming"
 )
 
 // Deadlines is items.deadlines: absolute server time, frozen once set.
@@ -137,12 +140,14 @@ type Item struct {
 	// Card is the item's own mutable card instance — a copy of the
 	// scenario's CardPreview projection taken when the item was offered.
 	// set_card_field (ADR-017) is the only command that changes it.
-	Card             content.CardPreview
-	IntakeCard       *IntakeCard
-	IntakeState      *IntakeState
-	IntakeScript     []string
-	IntakeRecipients []string
-	IntakeDispatch   *IntakeDispatch
+	Card               content.CardPreview
+	IntakeCard         *IntakeCard
+	IntakeState        *IntakeState
+	IntakeScript       []string
+	IntakeDialogue     *content.Intake112Dialogue
+	AvailableQuestions []IntakeQuestionOption
+	IntakeRecipients   []string
+	IntakeDispatch     *IntakeDispatch
 	// Workflow is the services.workflow snapshot taken at offer time
 	// (content.Workflow's shape) so a later edit to the service's
 	// workflow cannot retroactively change an already-issued card's
