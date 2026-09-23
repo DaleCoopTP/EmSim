@@ -1,0 +1,40 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "pilot-112-victims-01",
+  "version": 1,
+  "title": "112 — уточнение числа пострадавших",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1", "exercise_type": "operator112_intake", "difficulty": 1,
+    "intake112": {
+      "call": {"aon": "+79161313133", "local_time": "11:24", "time_zone": "Europe/Moscow"},
+      "dialogue": {
+        "facts": [
+          {"id": "complaint", "label": "Жалоба", "card_path": "/complaint", "knowledge": "initial", "value": "людям стало плохо"},
+          {"id": "applicant_status", "label": "Статус заявителя", "card_path": "/applicant_status", "knowledge": "initial", "value": "victim"},
+          {"id": "city", "label": "Город", "card_path": "/address/city", "knowledge": "on_question", "value": "Москва"},
+          {"id": "street", "label": "Улица", "card_path": "/address/street", "knowledge": "on_question", "value": "улица Лесная"},
+          {"id": "house", "label": "Дом", "card_path": "/address/house", "knowledge": "on_question", "value": "7"},
+          {"id": "building", "label": "Корпус", "card_path": "/address/building", "knowledge": "on_question", "value": "1"},
+          {"id": "landmark", "label": "Ориентир", "card_path": "/address/landmark", "knowledge": "on_question", "value": "вход со двора"},
+          {"id": "age", "label": "Возраст заявителя", "card_path": "/age", "knowledge": "on_question", "value": "27"},
+          {"id": "victims_count", "label": "Число пострадавших", "card_path": "/victims_count", "knowledge": "on_question", "value": "2"},
+          {"id": "flat", "label": "Квартира", "card_path": "/address/flat", "knowledge": "unknown"}
+        ],
+        "initial": {"id": "greeting", "text": "Здравствуйте. Мне и кому-то рядом стало плохо, нужна помощь. Я пока не знаю, сколько людей пострадало.", "reveals": ["complaint", "applicant_status"]},
+        "questions": [
+          {"id": "ask_victims", "text": "Сколько человек нуждается в помощи?", "topic_id": "victims", "answer": {"id": "victims_partial", "text": "Сейчас вижу нескольких человек, дайте уточнить.", "reveals": []}},
+          {"id": "clarify_victims", "text": "Уточните точное число пострадавших.", "topic_id": "victims", "available_after": ["ask_victims"], "answer": {"id": "victims_exact", "text": "Уточнил: нас двое.", "reveals": ["victims_count"]}},
+          {"id": "ask_address", "text": "Назовите адрес.", "topic_id": "address", "answer": {"id": "address_reply", "text": "Москва, улица Лесная, дом 7, корпус 1, вход со двора.", "reveals": ["city", "street", "house", "building", "landmark"]}},
+          {"id": "ask_age", "text": "Сколько вам лет?", "topic_id": "applicant", "answer": {"id": "age_reply", "text": "Мне 27 лет.", "reveals": ["age"]}},
+          {"id": "ask_flat", "text": "Какой номер квартиры?", "topic_id": "address", "answer": {"id": "flat_reply", "text": "Номер квартиры мне неизвестен.", "reveals": ["flat"]}}
+        ]
+      },
+      "recipient_services": ["pilot_ambulance"],
+      "reference": {"expected_card": {"applicant_status": "victim", "age": 27,
+        "address": {"city": "Москва", "street": "улица Лесная", "house": "7", "building": "1", "landmark": "вход со двора"},
+        "incident_type": "medical_assistance_request", "complaint": "людям стало плохо", "victims_count": 2},
+        "recipient_service": "pilot_ambulance"}
+    }
+  }
+}

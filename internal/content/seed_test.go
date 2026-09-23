@@ -79,7 +79,7 @@ func TestSeedFilesAreValid(t *testing.T) {
 		t.Fatalf("seed/scenarios has no files")
 	}
 
-	seenKeys := map[string]bool{}
+	seenKeys := map[string]map[int]bool{}
 	files := make(map[string]content.File, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -93,16 +93,23 @@ func TestSeedFilesAreValid(t *testing.T) {
 		if err := validator.ValidateFile(raw); err != nil {
 			t.Fatalf("%s: schema validation: %v", entry.Name(), err)
 		}
-		if seenKeys[file.Key] {
-			t.Fatalf("%s: duplicate scenario key %q in seed/scenarios", entry.Name(), file.Key)
+		if seenKeys[file.Key] == nil {
+			seenKeys[file.Key] = map[int]bool{}
 		}
-		seenKeys[file.Key] = true
-		if file.Version != 1 {
-			t.Fatalf("%s: seed files must start at version 1, got %d", entry.Name(), file.Version)
+		if seenKeys[file.Key][file.Version] {
+			t.Fatalf("%s: duplicate scenario version %q@%d in seed/scenarios", entry.Name(), file.Key, file.Version)
 		}
+		seenKeys[file.Key][file.Version] = true
 		files[entry.Name()] = file
 		catalog.versions[file.Key+"@"+strconv.Itoa(file.Version)] = content.ScenarioVersionReference{
 			Status: "approved", Published: true, ExerciseType: file.Body.ExerciseType, TargetService: file.Body.TargetService,
+		}
+	}
+	for key, versions := range seenKeys {
+		for version := 1; version <= len(versions); version++ {
+			if !versions[version] {
+				t.Fatalf("scenario %s has a version gap at %d", key, version)
+			}
 		}
 	}
 	for name, file := range files {

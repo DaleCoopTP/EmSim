@@ -1,0 +1,40 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "pilot-112-address-01",
+  "version": 1,
+  "title": "112 — уточнение адреса",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1", "exercise_type": "operator112_intake", "difficulty": 1,
+    "intake112": {
+      "call": {"aon": "+79161313132", "local_time": "10:12", "time_zone": "Europe/Moscow"},
+      "dialogue": {
+        "facts": [
+          {"id": "complaint", "label": "Жалоба", "card_path": "/complaint", "knowledge": "initial", "value": "сильное головокружение"},
+          {"id": "applicant_status", "label": "Статус заявителя", "card_path": "/applicant_status", "knowledge": "initial", "value": "victim"},
+          {"id": "age", "label": "Возраст", "card_path": "/age", "knowledge": "on_question", "value": "34"},
+          {"id": "city", "label": "Город", "card_path": "/address/city", "knowledge": "on_question", "value": "Москва"},
+          {"id": "street", "label": "Улица", "card_path": "/address/street", "knowledge": "on_question", "value": "улица Мира"},
+          {"id": "house", "label": "Дом", "card_path": "/address/house", "knowledge": "on_question", "value": "10"},
+          {"id": "building", "label": "Корпус", "card_path": "/address/building", "knowledge": "on_question", "value": "1"},
+          {"id": "landmark", "label": "Ориентир", "card_path": "/address/landmark", "knowledge": "on_question", "value": "остановка у парка"},
+          {"id": "victims_count", "label": "Число пострадавших", "card_path": "/victims_count", "knowledge": "on_question", "value": "1"},
+          {"id": "flat", "label": "Квартира", "card_path": "/address/flat", "knowledge": "unknown"}
+        ],
+        "initial": {"id": "greeting", "text": "Здравствуйте, мне плохо, сильное головокружение. Нужна помощь мне самому.", "reveals": ["complaint", "applicant_status"]},
+        "questions": [
+          {"id": "ask_address", "text": "Где вы находитесь?", "topic_id": "address", "answer": {"id": "address_partial", "text": "В Москве, на улице Мира, но номер дома сейчас не вижу.", "reveals": ["city", "street"]}},
+          {"id": "clarify_house", "text": "Уточните дом и ориентир.", "topic_id": "address", "available_after": ["ask_address"], "answer": {"id": "house_reply", "text": "Дом 10, корпус 1, у остановки рядом с парком.", "reveals": ["house", "building", "landmark"]}},
+          {"id": "ask_age", "text": "Сколько вам лет?", "topic_id": "applicant", "answer": {"id": "age_reply", "text": "Мне 34 года.", "reveals": ["age"]}},
+          {"id": "ask_victims", "text": "Сколько человек нуждается в помощи?", "topic_id": "victims", "answer": {"id": "victims_reply", "text": "Один, это я.", "reveals": ["victims_count"]}},
+          {"id": "ask_flat", "text": "Какой номер квартиры?", "topic_id": "address", "available_after": ["clarify_house"], "answer": {"id": "flat_reply", "text": "Номер квартиры мне неизвестен; сейчас я на улице.", "reveals": ["flat"]}}
+        ]
+      },
+      "recipient_services": ["pilot_ambulance"],
+      "reference": {"expected_card": {"applicant_status": "victim", "age": 34,
+        "address": {"city": "Москва", "street": "улица Мира", "house": "10", "building": "1", "landmark": "остановка у парка"},
+        "incident_type": "medical_assistance_request", "complaint": "сильное головокружение", "victims_count": 1},
+        "recipient_service": "pilot_ambulance"}
+    }
+  }
+}

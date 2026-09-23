@@ -1,0 +1,46 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "pilot-112-medical-01",
+  "version": 2,
+  "title": "Первый вызов 112 — обращение за медицинской помощью",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "exercise_type": "operator112_intake",
+    "difficulty": 1,
+    "intake112": {
+      "call": {"aon": "+79161313131", "local_time": "02:03", "time_zone": "Europe/Moscow"},
+      "dialogue": {
+        "facts": [
+          {"id": "complaint", "label": "Жалобы", "card_path": "/complaint", "knowledge": "initial", "value": "сильная диарея и обильная рвота"},
+          {"id": "applicant_status", "label": "Статус заявителя", "card_path": "/applicant_status", "knowledge": "initial", "value": "victim"},
+          {"id": "age", "label": "Возраст заявителя", "card_path": "/age", "knowledge": "on_question", "value": "19"},
+          {"id": "city", "label": "Город", "card_path": "/address/city", "knowledge": "on_question", "value": "Москва"},
+          {"id": "street", "label": "Улица", "card_path": "/address/street", "knowledge": "on_question", "value": "улица Космонавтов"},
+          {"id": "house", "label": "Дом", "card_path": "/address/house", "knowledge": "on_question", "value": "2"},
+          {"id": "building", "label": "Корпус", "card_path": "/address/building", "knowledge": "on_question", "value": "3"},
+          {"id": "landmark", "label": "Ориентир", "card_path": "/address/landmark", "knowledge": "on_question", "value": "метро ВДНХ"},
+          {"id": "victims_count", "label": "Число пострадавших", "card_path": "/victims_count", "knowledge": "on_question", "value": "1"},
+          {"id": "flat", "label": "Квартира", "card_path": "/address/flat", "knowledge": "unknown"}
+        ],
+        "initial": {"id": "greeting", "text": "Здравствуйте. Мне плохо: сильная диарея и обильная рвота. Помощь нужна мне.", "reveals": ["complaint", "applicant_status"]},
+        "questions": [
+          {"id": "ask_address", "text": "Назовите адрес, где вы находитесь.", "topic_id": "address", "answer": {"id": "address_partial", "text": "Я в Москве, на улице Космонавтов. Номер дома сейчас не вижу.", "reveals": ["city", "street"]}},
+          {"id": "clarify_house", "text": "Уточните номер дома, корпус и ориентир.", "topic_id": "address", "available_after": ["ask_address"], "answer": {"id": "house_answer", "text": "Дом 2, корпус 3, рядом с метро ВДНХ.", "reveals": ["house", "building", "landmark"]}},
+          {"id": "ask_age", "text": "Сколько вам лет?", "topic_id": "applicant", "answer": {"id": "age_answer", "text": "Мне 19 лет.", "reveals": ["age"]}},
+          {"id": "ask_victims", "text": "Сколько человек нуждается в помощи?", "topic_id": "victims", "answer": {"id": "victims_answer", "text": "Только я, один человек.", "reveals": ["victims_count"]}},
+          {"id": "ask_flat", "text": "Какой номер квартиры?", "topic_id": "address", "available_after": ["clarify_house"], "answer": {"id": "flat_unknown", "text": "Номер квартиры не знаю.", "reveals": ["flat"]}}
+        ]
+      },
+      "recipient_services": ["pilot_ambulance"],
+      "reference": {
+        "expected_card": {
+          "applicant_status": "victim", "age": 19,
+          "address": {"city": "Москва", "street": "улица Космонавтов", "house": "2", "building": "3", "landmark": "метро ВДНХ"},
+          "incident_type": "medical_assistance_request", "complaint": "сильная диарея и обильная рвота", "victims_count": 1
+        },
+        "recipient_service": "pilot_ambulance"
+      }
+    }
+  }
+}
