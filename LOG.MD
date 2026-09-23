@@ -976,7 +976,9 @@ Status: техническая проверка завершена.
 - `test/integration/operator112_profiles_test.go` валидирует реальные evidence
   всех трёх кейсов и остановленного задания по контрактной схеме, а также
   проверяет, что схема отклоняет некорректное состояние вызова и завершение
-  без выбора служб.
+  без выбора служб. Остановленное задание теперь закрывает реальный процесс
+  `emsim worker` через долговечную задачу `lesson.close`, а не прямой вызов
+  сервиса в тесте.
 
 Validation: `python3 design-docs/contracts/check.py`,
 `go test -tags integration -run '^TestOperator112ProfileCases$' -count=1

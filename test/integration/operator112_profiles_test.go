@@ -7,7 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"emsim/internal/auth"
 	authpg "emsim/internal/auth/postgres"
@@ -22,7 +25,8 @@ import (
 )
 
 func TestOperator112ProfileCases(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
 	databaseURL := openTestDatabase(t, ctx)
 	if err := pgstore.Up(ctx, databaseURL); err != nil {
 		t.Fatal(err)
@@ -262,6 +266,13 @@ func TestOperator112ProfileCases(t *testing.T) {
 			t.Fatalf("before stop: %+v, %v", receipt, err)
 		}
 	}
+	binary := filepath.Join(t.TempDir(), "emsim")
+	build := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/emsim")
+	build.Dir = "../.."
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build emsim worker: %v\n%s", err, output)
+	}
+	worker := startWorkerProcess(t, binary, databaseURL, "worker", "profile-close-worker")
 	stopped, err := trainingService.Stop(ctx, principal(actor, uuid.Nil), lesson.ID, nil, "profile-stop")
 	if err != nil || stopped.State != training.LessonStopped {
 		t.Fatalf("stop: %+v, %v", stopped, err)
@@ -272,17 +283,25 @@ func TestOperator112ProfileCases(t *testing.T) {
 	if err != nil || late.Outcome != training.OutcomeRejected || late.ErrorCode == nil || *late.ErrorCode != training.RejectLessonStopped {
 		t.Fatalf("late card-only command: %+v, %v", late, err)
 	}
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		var done bool
+		err := pool.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM tasks t JOIN evidence e ON e.item_id=$2
+			WHERE t.kind='lesson.close' AND t.scope_id=$1 AND t.status='done' AND t.terminal_worker='profile-close-worker'
+		)`, lesson.ID, stopItemID).Scan(&done)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("worker did not seal stopped card-only evidence")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if err := trainingService.CloseStoppedLesson(ctx, tx, lesson.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
+	worker.stop(t, false)
 	var stoppedEvidence []byte
 	if err := pool.QueryRow(ctx, `SELECT body FROM evidence WHERE item_id=$1`, stopItemID).Scan(&stoppedEvidence); err != nil {
 		t.Fatal(err)
