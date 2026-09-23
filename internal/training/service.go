@@ -967,6 +967,7 @@ func (s *Service) Execute(ctx context.Context, actor auth.Principal, itemID uuid
 			item.Contacts, item.CallPolicy = version.Body.Contacts, version.Body.Reference.Call
 			if version.Body.Intake112 != nil {
 				item.IntakeScript = version.Body.Intake112.Call.Script
+				item.IntakeDialogue = version.Body.Intake112.Dialogue
 				item.IntakeRecipients = version.Body.Intake112.RecipientServices
 			}
 			decision, err = exercise.Decide(item, cmd, now)
@@ -1902,6 +1903,10 @@ func (s *Service) ItemForTrainee(ctx context.Context, actor auth.Principal, item
 		item.Contacts, item.CallPolicy = version.Body.Contacts, version.Body.Reference.Call
 		if version.Body.Intake112 != nil {
 			item.IntakeRecipients = version.Body.Intake112.RecipientServices
+			item.IntakeDialogue = version.Body.Intake112.Dialogue
+			if projection, ok := s.exerciseTypes[item.ExerciseType].(IntakeQuestionProjector); ok {
+				item.AvailableQuestions = projection.AvailableQuestions(item)
+			}
 		}
 		if item.ExerciseType == content.ExerciseTypeOperator112Intake && item.IntakeState != nil && item.IntakeState.Dispatched {
 			d, err := s.store.IntakeDispatchByItem(ctx, tx, itemID)

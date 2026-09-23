@@ -536,7 +536,7 @@ func (h *Handlers) getItem(w http.ResponseWriter, r *http.Request) {
 			writeTrainingError(w, r, err)
 			return
 		}
-		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, nil, nil, now))
+		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, nil, nil, nil, now))
 	case auth.RoleInstructor:
 		item, actions, events, body, err := h.training.ItemForInstructor(r.Context(), principal, itemID)
 		if err != nil {
@@ -544,13 +544,15 @@ func (h *Handlers) getItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var intakeReference *content.Intake112Reference
+		var intakeDialogue *content.Intake112Dialogue
 		var ddsReference *content.Reference
 		if body.Intake112 != nil {
 			intakeReference = &body.Intake112.Reference
+			intakeDialogue = body.Intake112.Dialogue
 		} else {
 			ddsReference = &body.Reference
 		}
-		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, ddsReference, intakeReference, now))
+		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, ddsReference, intakeReference, intakeDialogue, now))
 	default:
 		httpapi.WriteError(w, r, httpapi.CodeForbidden, "insufficient role", nil)
 	}
@@ -958,19 +960,21 @@ func buildComments(actions []training.Action) []commentJSON {
 // place this package ever puts scenario reference data on the wire.
 type itemJSON struct {
 	itemSummaryJSON
-	Mode               string                      `json:"mode"`
-	Card               any                         `json:"card"`
-	IntakeState        *training.IntakeState       `json:"intake_state,omitempty"`
-	Dispatch           *training.IntakeDispatch    `json:"dispatch,omitempty"`
-	RecipientServices  []string                    `json:"recipient_services,omitempty"`
-	IntakeReference    *content.Intake112Reference `json:"intake_reference,omitempty"`
-	AllowedTransitions []string                    `json:"allowed_transitions"`
-	Actions            []actionJSON                `json:"actions"`
-	Events             []deliveredEventJSON        `json:"events"`
-	Calls              []callJSON                  `json:"calls"`
-	Comments           []commentJSON               `json:"comments,omitempty"`
-	Reference          *content.Reference          `json:"reference,omitempty"`
-	ServerTime         string                      `json:"server_time"`
+	Mode                    string                          `json:"mode"`
+	Card                    any                             `json:"card"`
+	IntakeState             *training.IntakeState           `json:"intake_state,omitempty"`
+	AvailableQuestions      []training.IntakeQuestionOption `json:"available_questions,omitempty"`
+	IntakeDialogueReference *content.Intake112Dialogue      `json:"intake_dialogue_reference,omitempty"`
+	Dispatch                *training.IntakeDispatch        `json:"dispatch,omitempty"`
+	RecipientServices       []string                        `json:"recipient_services,omitempty"`
+	IntakeReference         *content.Intake112Reference     `json:"intake_reference,omitempty"`
+	AllowedTransitions      []string                        `json:"allowed_transitions"`
+	Actions                 []actionJSON                    `json:"actions"`
+	Events                  []deliveredEventJSON            `json:"events"`
+	Calls                   []callJSON                      `json:"calls"`
+	Comments                []commentJSON                   `json:"comments,omitempty"`
+	Reference               *content.Reference              `json:"reference,omitempty"`
+	ServerTime              string                          `json:"server_time"`
 }
 
 type callJSON struct {
@@ -1031,7 +1035,7 @@ func toDeliveredEventsJSON(events []training.DeliveredEvent) []deliveredEventJSO
 	return out
 }
 
-func toItemJSON(item training.Item, actions []training.Action, events []training.DeliveredEvent, reference *content.Reference, intakeReference *content.Intake112Reference, now time.Time) itemJSON {
+func toItemJSON(item training.Item, actions []training.Action, events []training.DeliveredEvent, reference *content.Reference, intakeReference *content.Intake112Reference, intakeDialogue *content.Intake112Dialogue, now time.Time) itemJSON {
 	actionItems := make([]actionJSON, len(actions))
 	for i, a := range actions {
 		actionItems[i] = toActionJSON(a)
@@ -1045,6 +1049,7 @@ func toItemJSON(item training.Item, actions []training.Action, events []training
 		return itemJSON{itemSummaryJSON: toItemSummaryJSON(item), Mode: string(item.Mode),
 			Card: item.IntakeCard, IntakeState: item.IntakeState, Dispatch: item.IntakeDispatch,
 			RecipientServices: item.IntakeRecipients, IntakeReference: intakeReference,
+			AvailableQuestions: item.AvailableQuestions, IntakeDialogueReference: intakeDialogue,
 			AllowedTransitions: []string{}, Actions: actionItems, Events: []deliveredEventJSON{}, Calls: []callJSON{},
 			ServerTime: formatTime(now)}
 	}

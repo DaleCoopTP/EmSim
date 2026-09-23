@@ -299,6 +299,35 @@ func TestTraineeItemUsesScenarioContactsForPhonePanel(t *testing.T) {
 	}
 }
 
+func TestOperator112ItemProjectsOnlyAvailableQuestions(t *testing.T) {
+	svc := trainingFixture()
+	card := training.UnansweredIntakeCard("112-1", "+79161313131", "02:03", "Europe/Moscow")
+	svc.item.ExerciseType = content.ExerciseTypeOperator112Intake
+	svc.item.IntakeCard = &card
+	svc.item.IntakeState = &training.IntakeState{CallStatus: "connected", Transcript: []training.IntakeLine{}}
+	svc.item.AvailableQuestions = []training.IntakeQuestionOption{{ID: "address", Text: "Где вы?", TopicID: "address", Asked: false}}
+	svc.item.IntakeDialogue = &content.Intake112Dialogue{Questions: []content.Intake112Question{
+		{ID: "address", Text: "Где вы?", TopicID: "address", Answer: content.Intake112Utterance{ID: "hidden_answer", Text: "СЕКРЕТНЫЙ АДРЕС"}},
+		{ID: "locked", Text: "СЕКРЕТНЫЙ ВОПРОС", TopicID: "address", AvailableAfter: []string{"address"}},
+	}}
+	svc.reference.Intake112 = &content.Intake112{Dialogue: svc.item.IntakeDialogue}
+	response := httptest.NewRecorder()
+	trainingMux(svc, trainingPrincipal(auth.RoleTrainee)).ServeHTTP(response, trainingRequest("GET", "/api/v1/items/"+svc.item.ID.String(), nil, true))
+	if response.Code != 200 || !strings.Contains(response.Body.String(), "Где вы?") {
+		t.Fatalf("trainee question projection: %d %s", response.Code, response.Body.String())
+	}
+	for _, secret := range []string{"СЕКРЕТНЫЙ АДРЕС", "СЕКРЕТНЫЙ ВОПРОС", "intake_dialogue_reference", "hidden_answer"} {
+		if strings.Contains(response.Body.String(), secret) {
+			t.Fatalf("trainee leaked %q: %s", secret, response.Body.String())
+		}
+	}
+	response = httptest.NewRecorder()
+	trainingMux(svc, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("GET", "/api/v1/items/"+svc.item.ID.String(), nil, true))
+	if response.Code != 200 || !strings.Contains(response.Body.String(), "СЕКРЕТНЫЙ АДРЕС") {
+		t.Fatalf("instructor missing dialogue reference: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestCommandResponseStatusesAndErrors(t *testing.T) {
 	itemID := uuid.New()
 	base := training.Receipt{CommandID: uuid.New(), Seq: 1, Reaction: content.ReactionReceived, ItemState: training.ItemOpened, ActionID: uuid.New(), LogSeq: 1}

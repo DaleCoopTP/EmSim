@@ -18,6 +18,7 @@ func New() training.Exercise { return exercise{caller: preparedCaller{}} }
 // application service loads the immutable scenario before calling it.
 func (e exercise) AvailableQuestions(item training.Item) []training.IntakeQuestionOption {
 	if item.IntakeDialogue == nil || item.IntakeState == nil || item.IntakeState.CallStatus != "connected" ||
+		item.StopCutoffLogSeq != nil ||
 		item.State == training.ItemClosed || item.State == training.ItemInterrupted {
 		return []training.IntakeQuestionOption{}
 	}

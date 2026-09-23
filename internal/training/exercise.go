@@ -32,6 +32,13 @@ type Exercise interface {
 	Evidence(item Item, actions []Action, events []ItemEvent, cutoffLogSeq int64, closedAt time.Time) (Evidence, error)
 }
 
+// IntakeQuestionProjector is an optional read-only projection for exercises
+// with a caller dialogue. It receives the immutable scenario already loaded
+// by Service and returns only questions currently safe to show a trainee.
+type IntakeQuestionProjector interface {
+	AvailableQuestions(item Item) []IntakeQuestionOption
+}
+
 // Action is one actions row — both what Evidence needs (already
 // restricted to [1, cutoffLogSeq] and sorted by LogSeq ascending, a
 // filter and order only the application service can produce, since only
