@@ -19,10 +19,12 @@ export type IntakeCard = {
   incident_type: IntakeField; complaint: IntakeField; victims_present: IntakeField; victims_count: IntakeField; provided_phone: IntakeField;
   on_site_phone: IntakeField; channel: IntakeField; foreign_language: IntakeField; no_on_site: IntakeField; no_access: IntakeField;
 };
-type IntakeState = { call_status: "ringing" | "connected" | "ended"; transcript: Array<{ text: string; server_at: string }>;
+type IntakeLine = { id?: string; speaker?: "caller" | "operator"; text: string; server_at: string; topic_id?: string };
+type IntakeState = { call_status: "ringing" | "connected" | "held" | "ended"; transcript: IntakeLine[]; asked_question_ids?: string[];
   has_saved_draft: boolean; dispatched: boolean; selected_service?: string; answered_at?: string; ended_at?: string };
 type Dispatch = { service_code: string; sent_at: string; card_snapshot: IntakeCard };
-export type IntakeItem = Omit<Item, "card"> & { card: IntakeCard; intake_state: IntakeState; recipient_services: string[]; dispatch?: Dispatch };
+type IntakeQuestion = { id: string; text: string; topic_id: string; asked: boolean };
+export type IntakeItem = Omit<Item, "card"> & { card: IntakeCard; intake_state: IntakeState; available_questions?: IntakeQuestion[]; recipient_services: string[]; dispatch?: Dispatch };
 
 const addressKeys = ["country", "region", "city", "object", "okrug", "district", "street", "house", "building", "structure", "flat", "entrance", "floor", "code", "landmark", "descriptive"] as const;
 const unanswered: IntakeField = { state: "unanswered" };
@@ -104,10 +106,12 @@ export function Operator112Workplace({ me, item }: { me: Me; item: IntakeItem })
     <header className="intake-console">
       <section className="intake-console-call" aria-label="Входящий вызов">
         <span aria-hidden="true" className="intake-phone-icon">☎</span>
-        <div><strong>{state.call_status === "ringing" ? "Входящий вызов" : state.call_status === "connected" ? "На связи" : "Разговор завершён"}</strong>
+        <div><strong>{state.call_status === "ringing" ? "Входящий вызов" : state.call_status === "connected" ? "На связи" : state.call_status === "held" ? "На удержании" : "Разговор завершён"}</strong>
           {item.state === "offered" && <button type="button" disabled={!!pending} onClick={() => send("open", {})}>Открыть вызов</button>}
           {item.state === "opened" && state.call_status === "ringing" && <button type="button" disabled={!!pending} onClick={() => send("answer_incoming", {})}>Ответить</button>}
-          {state.call_status === "connected" && !terminal && <button type="button" disabled={!!pending} onClick={() => send("end_incoming", {})}>Завершить разговор</button>}
+          {state.call_status === "connected" && !terminal && <button type="button" disabled={!!pending} onClick={() => send("hold_incoming", {})}>Удержать</button>}
+          {state.call_status === "held" && !terminal && <button type="button" disabled={!!pending} onClick={() => send("resume_incoming", {})}>Вернуться к разговору</button>}
+          {(state.call_status === "connected" || state.call_status === "held") && !terminal && <button type="button" disabled={!!pending} onClick={() => send("end_incoming", {})}>Завершить разговор</button>}
         </div>
       </section>
       <div className="intake-console-number"><span>АОН</span><strong>{item.card.aon}</strong></div>
@@ -125,7 +129,7 @@ export function Operator112Workplace({ me, item }: { me: Me; item: IntakeItem })
     {item.interruptions.length > 0 && <p role="alert" className="notice">После перезапуска сервера состояние вызова и карточки восстановлено.</p>}
     {!terminal && <div className="intake-outcome-controls">
       <button type="button" disabled={!!pending || item.state !== "opened" || state.call_status !== "ringing"} onClick={() => setOutcomeIntent("no_contact")}>Нет контакта</button>
-      <button type="button" disabled={!!pending || state.call_status !== "connected" || state.dispatched} onClick={() => setOutcomeIntent("call_dropped")}>Срыв звонка</button>
+      <button type="button" disabled={!!pending || (state.call_status !== "connected" && state.call_status !== "held") || state.dispatched} onClick={() => setOutcomeIntent("call_dropped")}>Срыв звонка</button>
     </div>}
     {state.call_status === "ringing" ? <div className="intake-waiting">Примите вызов, чтобы открыть слова заявителя и карточку.</div> : <>
       <form id="intake-card-form" className="intake-main" onSubmit={save}>
@@ -178,7 +182,13 @@ export function Operator112Workplace({ me, item }: { me: Me; item: IntakeItem })
             <button type="button" aria-pressed={draft.no_access.state === "known"} disabled={locked} onClick={() => toggleFlag("no_access")}>Нет доступа / Заблокированные</button>
           </section>
           <section className="intake-victims intake-panel"><Field label="Число пострадавших" field={draft.victims_count} disabled={locked} numeric onChange={(v) => update("victims_count", v)} /></section>
-          <section className="intake-transcript intake-panel"><h3>Разговор с заявителем</h3><ol>{state.transcript.map((line, index) => <li key={index}>{line.text}</li>)}</ol></section>
+          <section className="intake-transcript intake-panel"><h3>Разговор с заявителем</h3>
+            <ol>{state.transcript.map((line, index) => <li key={line.id ?? index}><strong>{line.speaker === "operator" ? "Оператор" : "Заявитель"}:</strong> {line.text}</li>)}</ol>
+            {state.call_status === "held" && <p>Вызов на удержании. Вернитесь к разговору, чтобы задать вопрос.</p>}
+            {state.call_status === "connected" && !terminal && (item.available_questions?.length ?? 0) > 0 && <div className="intake-questions"><h4>Уточняющие вопросы</h4>
+              {item.available_questions?.map((question) => <button key={question.id} type="button" disabled={!!pending} onClick={() => send("ask_intake_question", { question_id: question.id })}>{question.text}{question.asked ? " · повторить" : ""}</button>)}
+            </div>}
+          </section>
         </div>
       </form>
       <footer className="intake-action-bar">

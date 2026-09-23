@@ -541,6 +541,11 @@ dd { margin: 0; }
 .intake-transcript { flex: 1; min-height: 0; overflow-y: auto; }
 .intake-transcript ol { padding-left: 22px; margin: 0; }
 .intake-transcript li { padding: 7px 0; border-bottom: 1px solid #c9d3d7; line-height: 1.4; }
+.intake-transcript li strong { color: #34546a; }
+.intake-questions { display: flex; flex-direction: column; align-items: stretch; gap: 5px; margin-top: 12px; }
+.intake-questions h4 { margin: 0 0 3px; font-size: 12px; color: #4b606b; }
+.intake-questions button { text-align: left; padding: 6px 8px; background: #e8f2f8; border-color: #adc7d6; }
+.intake-questions button:hover { background: #d9ebf5; }
 .intake-field { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
 .intake-field > span { color: #64727a; font-size: 11px; }
 .intake-field-control { display: flex; min-width: 0; align-items: stretch; gap: 3px; }

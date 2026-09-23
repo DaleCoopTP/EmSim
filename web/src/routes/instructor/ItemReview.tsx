@@ -11,8 +11,11 @@ type CriterionStatus = CriterionResult["status"];
 type Item = components["schemas"]["Item"];
 type IntakeField = { state: string; value?: string };
 type IntakeCard = { number: string; aon: string; call_local_time: string; call_time_zone: string; applicant_name: IntakeField; applicant_status: IntakeField; age: IntakeField; address: Record<string, IntakeField>; incident_type: IntakeField; complaint: IntakeField; victims_present: IntakeField; victims_count: IntakeField; provided_phone: IntakeField; on_site_phone?: IntakeField; channel?: IntakeField; foreign_language?: IntakeField; no_on_site?: IntakeField; no_access?: IntakeField };
-type IntakeReviewItem = Item & { card: IntakeCard; intake_reference?: unknown; intake_state?: { transcript?: Array<{ text: string; server_at: string }> }; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard } };
-type IntakeReviewEvidence = { final_card?: IntakeCard; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; intake_state?: { transcript?: Array<{ text: string; server_at: string }> } };
+type IntakeReviewLine = { id?: string; speaker?: "caller" | "operator"; text: string; server_at: string; reveals?: string[]; topic_id?: string };
+type IntakeReviewAction = { type: string; accepted: boolean; server_at: string; log_seq: number; payload?: { draft?: IntakeCard } };
+type DialogueFact = { id: string; label: string; card_path: string; knowledge: "initial" | "on_question" | "unknown"; value?: string };
+type IntakeReviewItem = Item & { card: IntakeCard; intake_reference?: unknown; intake_dialogue_reference?: { facts: DialogueFact[] }; intake_state?: { transcript?: IntakeReviewLine[] }; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard } };
+type IntakeReviewEvidence = { final_card?: IntakeCard; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; intake_state?: { transcript?: IntakeReviewLine[] }; actions?: IntakeReviewAction[] };
 const labels: Record<string, string> = { met: "выполнено", partial: "частично", not_met: "не выполнено", not_applicable: "не применимо", unavailable: "не проверено" };
 const manualStatuses: CriterionStatus[] = ["met", "partial", "not_met", "not_applicable"];
 
@@ -37,7 +40,7 @@ export function ItemReviewRoute() {
     <p><Link to="/instructor/lessons">← К занятиям</Link></p>
     <h1>Разбор карточки № {item.data.card_number}</h1>
 	<p>{isIntake ? "Оценка преподавателя" : `Автооценка: ${detail.automatic_state ?? "нет"}`}; итог: {detail.final ? `${detail.final.status}${detail.final.score == null ? "" : ` · ${detail.final.score.toFixed(1)}`}` : "ещё нет"}</p>
-	{isIntake ? <IntakeReviewPanel item={item.data as unknown as IntakeReviewItem} evidence={evidence as IntakeReviewEvidence} /> : <>
+	{isIntake ? <IntakeReviewPanel item={item.data as unknown as IntakeReviewItem} evidence={evidence as unknown as IntakeReviewEvidence} /> : <>
 		<h2>Карточка и эталон</h2>
 		<p>{(item.data.card as { applicant?: { name?: string }; address?: { text?: string } })?.applicant?.name ?? "Заявитель"} · {(item.data.card as { address?: { text?: string } })?.address?.text ?? "адрес не указан"}</p>
 		<details><summary>Эталон сценария</summary><pre>{JSON.stringify(item.data.reference ?? {}, null, 2)}</pre></details>
@@ -71,15 +74,56 @@ function CriteriaTable({ criteria }: { criteria: CriterionResult[] }) { if (crit
 function IntakeReviewPanel({ item, evidence }: { item: IntakeReviewItem; evidence: IntakeReviewEvidence }) {
   const card = evidence.final_card ?? item.card;
   const dispatch = evidence.dispatch ?? item.dispatch;
+  const transcript = evidence.intake_state?.transcript ?? item.intake_state?.transcript ?? [];
+  const facts = item.intake_dialogue_reference?.facts ?? [];
+  const revealed = new Set(transcript.flatMap((line) => line.reveals ?? []));
+  const saved = (evidence.actions ?? []).filter((action) => action.accepted && action.type === "save_intake_draft" && action.payload?.draft);
+  const saves = saved.map((action, index) => {
+    const draft = action.payload!.draft!;
+    const previous = index === 0 ? null : saved[index - 1].payload?.draft ?? null;
+    const changes = changedIntakeFields(previous, draft);
+    return { at: action.server_at, order: action.log_seq, text: `Карточка сохранена: ${changes.join(", ") || "без изменений"}` };
+  });
+  const timeline = [...transcript.map((line, index) => ({ at: line.server_at, order: index, text: `${line.speaker === "operator" ? "Оператор" : "Заявитель"}: ${line.text}` })), ...saves]
+    .sort((a, b) => a.at.localeCompare(b.at) || a.order - b.order);
   return <>
-    <h2>Разговор с заявителем</h2>
-    <ol>{(evidence.intake_state?.transcript ?? item.intake_state?.transcript ?? []).map((line, index) => <li key={index}>{line.text}</li>)}</ol>
+    <h2>Разговор и сохранения карточки</h2>
+    <ol>{timeline.map((event, index) => <li key={index}>{formatDateTime(event.at)} · {event.text}</li>)}</ol>
+    {facts.length > 0 && <><h3>Факты сценария</h3><table><thead><tr><th>Сведения</th><th>Выяснение</th><th>Сказано заявителем</th><th>В отправленной карточке</th></tr></thead>
+      <tbody>{facts.map((fact) => <tr key={fact.id}><td>{fact.label}</td><td>{revealed.has(fact.id) ? "Выяснено" : "Не выяснено"}</td>
+        <td>{fact.knowledge === "unknown" ? "Заявитель не знает" : fact.value}</td><td>{intakeFieldText(cardFieldAt(dispatch?.card_snapshot ?? card, fact.card_path))}</td></tr>)}</tbody>
+    </table></>}
     <h2>Итоговая карточка</h2>
     <IntakeCardView card={card} />
     <h2>Передача службе</h2>
     {dispatch ? <><p>Адресат: {dispatch.service_code === "pilot_ambulance" ? "03 · Скорая помощь" : dispatch.service_code} · отправлено {formatDateTime(dispatch.sent_at)}</p><p>Снимок на момент отправки:</p><IntakeCardView card={dispatch.card_snapshot} /></> : <p>Карточка не направлена.</p>}
     <details><summary>Эталон сценария</summary><pre>{JSON.stringify(item.intake_reference ?? {}, null, 2)}</pre></details>
   </>;
+}
+
+function cardFieldAt(card: IntakeCard, path: string): IntakeField | undefined {
+  const keys = path.split("/").filter(Boolean);
+  if (keys.length === 1) return (card as unknown as Record<string, IntakeField>)[keys[0]];
+  if (keys.length === 2 && keys[0] === "address") return card.address[keys[1]];
+  return undefined;
+}
+
+function intakeFieldText(field: IntakeField | undefined): string {
+  if (field?.state === "known") return field.value ?? "";
+  if (field?.state === "unknown") return "Не знает";
+  if (field?.state === "negative") return "Нет";
+  return "Не заполнено";
+}
+
+function changedIntakeFields(before: IntakeCard | null, after: IntakeCard): string[] {
+  const fields: Array<[string, IntakeField]> = [
+    ...Object.entries(after).filter((entry): entry is [string, IntakeField] => typeof entry[1] === "object" && entry[1] !== null && "state" in entry[1]),
+    ...Object.entries(after.address).map(([key, value]): [string, IntakeField] => [`address.${key}`, value]),
+  ];
+  return fields.filter(([path, value]) => {
+    const previous = before ? path.startsWith("address.") ? before.address[path.slice(8)] : (before as unknown as Record<string, IntakeField>)[path] : undefined;
+    return JSON.stringify(previous) !== JSON.stringify(value) && (before !== null || value.state !== "unanswered");
+  }).map(([path, value]) => `${path} → ${intakeFieldText(value)}`);
 }
 
 function IntakeCardView({ card }: { card: IntakeCard }) {
