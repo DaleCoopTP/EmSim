@@ -155,6 +155,7 @@ func resetSchema(t *testing.T, ctx context.Context, databaseURL string) {
 		DROP TABLE IF EXISTS control_reports;
 		DROP TABLE IF EXISTS item_events;
 		DROP TABLE IF EXISTS evidence;
+		DROP TABLE IF EXISTS intake_dispatches;
 		DROP TABLE IF EXISTS actions;
 		DROP TABLE IF EXISTS calls;
 		DROP TABLE IF EXISTS items;

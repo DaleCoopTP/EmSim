@@ -111,7 +111,7 @@ export function WorkplaceRoute() {
       )}
       {workstationMatches && selectedItemId && (
         <>
-		  <button type="button" className="back-to-queue" onClick={() => setSelectedItemId("")}>← К списку вызовов</button>
+		  <button type="button" className="back-to-queue" onClick={() => setSelectedItemId("")}>← К списку {run.data.exercise_type === "operator112_intake" ? "вызовов" : "происшествий"}</button>
           {item.isPending && <p>Загрузка карточки…</p>}
           {item.isError && <p className="error">{errorMessage(item.error)}</p>}
 		  {item.data && (item.data.exercise_type === "operator112_intake" ? <Operator112Workplace key={item.data.id} me={me} item={item.data as unknown as IntakeItem} /> : <ItemWorkplace key={item.data.id} me={me} item={item.data as DDSItem} />)}

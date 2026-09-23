@@ -162,24 +162,34 @@ func TestRealtimeListenerDeliversStopNotificationToTrainee(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 
-	events, _, resync := waitForEvents(t, hub, startCursor, 5*time.Second)
-	if resync {
-		t.Fatal("unexpected resync while waiting for Stop's own notification")
-	}
 	// Stop's own per-trainee notify (the fix under test) never carries
 	// an item_id (Service.Stop's own barrier touches no single item);
 	// requiring ItemID == nil rules out this assertion being satisfied
 	// by a leftover item-scoped event instead of the fix itself.
 	foundTrainee, foundLessonWide := false, false
-	for _, e := range events {
-		if e.LessonID == nil || *e.LessonID != lesson.ID {
-			continue
+	var events []realtime.Event
+	deadline := time.Now().Add(5 * time.Second)
+	for !foundTrainee || !foundLessonWide {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
 		}
-		if e.UserID != nil && *e.UserID == trainee.ID && e.ItemID == nil {
-			foundTrainee = true
+		batch, nextCursor, resync := waitForEvents(t, hub, startCursor, remaining)
+		if resync {
+			t.Fatal("unexpected resync while waiting for Stop's own notification")
 		}
-		if e.UserID == nil && e.ItemID == nil {
-			foundLessonWide = true
+		startCursor = nextCursor
+		events = append(events, batch...)
+		for _, e := range batch {
+			if e.LessonID == nil || *e.LessonID != lesson.ID {
+				continue
+			}
+			if e.UserID != nil && *e.UserID == trainee.ID && e.ItemID == nil {
+				foundTrainee = true
+			}
+			if e.UserID == nil && e.ItemID == nil {
+				foundLessonWide = true
+			}
 		}
 	}
 	if !foundTrainee {

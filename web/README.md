@@ -18,9 +18,9 @@ npm run test:e2e # isolated Chromium + compose browser acceptance test
 `go build` works without Node ever having run; `make web-build` (or the
 Dockerfile's Node stage) populates it.
 
-Visual styling follows ADR-009's ARM-112 pass, scheduled after slice 7
-(slice-planning.md §1) — this scaffold and slice 1's own screens are
-intentionally unstyled.
+The operator 112 intake has its own trainee workspace and instructor review
+screens. The first 112 slice includes its UI alongside the API and storage
+work; see [slice-112-1-plan.md](../slice-112-1-plan.md).
 
 `test:e2e` creates a uniquely named Compose project with its own volumes and
 free localhost ports, feeds Chromium `seed/voice-assets/crew_leader_greeting.wav`

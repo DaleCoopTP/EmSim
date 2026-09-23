@@ -1677,7 +1677,11 @@ func TestTrainingHardQueueOffersOneCardPerTickAfterLongOutage(t *testing.T) {
 	if runAfterFirstTick.NextOfferAt == nil {
 		t.Fatal("run.NextOfferAt is nil after the second offer, want a third card still pending")
 	}
-	if !runAfterFirstTick.NextOfferAt.After(time.Now().Add(-time.Second)) {
+	var databaseNow time.Time
+	if err := pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&databaseNow); err != nil {
+		t.Fatalf("read PostgreSQL time: %v", err)
+	}
+	if !runAfterFirstTick.NextOfferAt.After(databaseNow.Add(-time.Second)) {
 		t.Fatalf("next_offer_at = %s is already due, want it computed from the real offer time (~now+%ds), not the stale pre-outage deadline", runAfterFirstTick.NextOfferAt, interval)
 	}
 
@@ -2032,13 +2036,13 @@ func TestTrainingRejectsLegacyDuplicateSpawnCard(t *testing.T) {
 
 	const svc = "training_legacy_duplicate_svc"
 	pilotWorkflowService(t, ctx, pool, svc)
-	instructor := insertInstructor(t, ctx, pool, "training-legacy-duplicate-instructor-"+uuid.NewString())
+	instructor := insertInstructor(t, ctx, pool, "legacy-dup-i-"+uuid.NewString())
 	target := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "legacy-duplicate-target", nil)
 	source := pilotScenarioVersionWithEvents(t, ctx, pool, svc, "ЮАО", instructor.ID, "legacy-duplicate-source", []content.Event{{
 		Key: "e1", AtS: 0, Since: "offered", Delivery: "spawn_card",
 		Spawn: &content.EventSpawn{Kind: "duplicate", Variation: "legacy variation"},
 	}})
-	trainee := insertActiveTrainee(t, ctx, pool, "training-legacy-duplicate-trainee-"+uuid.NewString(), svc)
+	trainee := insertActiveTrainee(t, ctx, pool, "legacy-dup-t-"+uuid.NewString(), svc)
 	insertWorkstation(t, ctx, pool, 354)
 	actor := principal(instructor, uuid.Nil)
 	lesson, err := service.CreateLesson(ctx, actor, training.LessonCreate{

@@ -42,6 +42,17 @@ func TestOperator112IntakeTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	workstation := insertWorkstation(t, ctx, pool, 1)
+	otherData := newTrainee("112-other-"+uuid.NewString(), "")
+	otherData.ServiceCode = nil
+	var other auth.User
+	if err := store.WithTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		other, err = store.InsertUser(ctx, tx, otherData)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	otherWorkstation := insertWorkstation(t, ctx, pool, 2)
 	if _, err := pool.Exec(ctx, `INSERT INTO services (code, name, workflow) VALUES ('pilot_ambulance', 'Учебная скорая', '{}')`); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +87,8 @@ func TestOperator112IntakeTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := svc.ReplaceAssignments(ctx, instructor, lesson.ID, []training.AssignmentInput{{WorkstationNo: 1,
-		UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{versionID}}}, "112-assign"); err != nil {
+		UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{versionID}}, {WorkstationNo: 2,
+		UserID: other.ID, ScenarioVersionIDs: []uuid.UUID{versionID}}}, "112-assign"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Start(ctx, instructor, lesson.ID, "112-start"); err != nil {
@@ -91,6 +103,12 @@ func TestOperator112IntakeTransaction(t *testing.T) {
 	if item.IntakeCard == nil || item.IntakeCard.Address.City.State != "unanswered" || item.IntakeState.CallStatus != "ringing" {
 		t.Fatalf("initial item: %+v", item)
 	}
+	otherOperator := principal(other, otherWorkstation)
+	otherItems, err := svc.MyItems(ctx, otherOperator)
+	if err != nil || len(otherItems) != 1 || otherItems[0].ID == item.ID || otherItems[0].IntakeState.CallStatus != "ringing" {
+		t.Fatalf("independent item: %+v, %v", otherItems, err)
+	}
+	otherItem := otherItems[0]
 	command := func(typ training.CommandType, payload any, seq int64) training.Receipt {
 		t.Helper()
 		raw, err := json.Marshal(payload)
@@ -113,11 +131,20 @@ func TestOperator112IntakeTransaction(t *testing.T) {
 	if err != nil || len(loaded.IntakeState.Transcript) != 3 {
 		t.Fatalf("transcript: %+v, %v", loaded, err)
 	}
+	otherBefore, _, _, err := svc.ItemForTrainee(ctx, otherOperator, otherItem.ID)
+	if err != nil || len(otherBefore.IntakeState.Transcript) != 0 || otherBefore.IntakeCard.Address.City.State != "unanswered" {
+		t.Fatalf("other trainee saw first call: %+v, %v", otherBefore, err)
+	}
 	draft := *loaded.IntakeCard
 	draft.Age = training.IntakeField{State: "known", Value: "19"}
 	draft.Address.City = training.IntakeField{State: "known", Value: "Москва"}
 	if r := command(training.CommandSaveIntakeDraft, map[string]any{"draft": draft}, 2); r.Outcome != training.OutcomeApplied {
 		t.Fatalf("save: %+v", r)
+	}
+	stale, err := svc.Execute(ctx, operator, item.ID, training.Command{CommandID: uuid.New(), ExpectedSeq: 2,
+		Type: training.CommandDispatchIntake, Payload: []byte(`{"service_code":"pilot_ambulance"}`)}, "112-stale")
+	if err != nil || stale.Outcome != training.OutcomeRejected || stale.ErrorCode == nil || *stale.ErrorCode != training.RejectStaleSeq {
+		t.Fatalf("stale dispatch: %+v, %v", stale, err)
 	}
 	dispatchID := uuid.New()
 	dispatchCommand := training.Command{CommandID: dispatchID, ExpectedSeq: 3, Type: training.CommandDispatchIntake,
@@ -198,6 +225,79 @@ func TestOperator112IntakeTransaction(t *testing.T) {
 	progress, err := reports.ProgressFor(ctx, trainee.ID, content.ExerciseTypeOperator112Intake)
 	if err != nil || progress.CompletedItems != 1 || progress.AvgScore == nil || *progress.AvgScore != 80 {
 		t.Fatalf("112 progress: %+v, %v", progress, err)
+	}
+	otherCommand := func(typ training.CommandType, payload any, seq int64) training.Receipt {
+		t.Helper()
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := svc.Execute(ctx, otherOperator, otherItem.ID, training.Command{CommandID: uuid.New(), ExpectedSeq: seq,
+			Type: typ, Payload: raw}, "112-other-action")
+		if err != nil || r.Outcome != training.OutcomeApplied {
+			t.Fatalf("other command %s: %+v, %v", typ, r, err)
+		}
+		return r
+	}
+	otherCommand(training.CommandOpen, map[string]any{}, 0)
+	otherCommand(training.CommandAnswerIncoming, map[string]any{}, 1)
+	otherLoaded, _, _, err := svc.ItemForTrainee(ctx, otherOperator, otherItem.ID)
+	if err != nil || len(otherLoaded.IntakeState.Transcript) != 3 {
+		t.Fatalf("other transcript: %+v, %v", otherLoaded, err)
+	}
+	otherDraft := *otherLoaded.IntakeCard
+	otherDraft.Age = training.IntakeField{State: "known", Value: "20"}
+	otherCommand(training.CommandSaveIntakeDraft, map[string]any{"draft": otherDraft}, 2)
+	recoveryID := uuid.New()
+	affected, err := svc.Recover(ctx, recoveryID, "server_restart")
+	if err != nil || len(affected) != 1 || affected[0] != otherItem.ID {
+		t.Fatalf("recover 112 draft: %+v, %v", affected, err)
+	}
+	if repeated, err := svc.Recover(ctx, recoveryID, "server_restart"); err != nil || len(repeated) != 0 {
+		t.Fatalf("repeated recovery: %+v, %v", repeated, err)
+	}
+	otherAfterRecovery, _, _, err := svc.ItemForTrainee(ctx, otherOperator, otherItem.ID)
+	if err != nil || otherAfterRecovery.IntakeCard.Age.Value != "20" || len(otherAfterRecovery.IntakeState.Transcript) != 3 || len(otherAfterRecovery.Interruptions) != 1 {
+		t.Fatalf("112 draft after recovery: %+v, %v", otherAfterRecovery, err)
+	}
+	firstAfter, _, _, err := svc.ItemForTrainee(ctx, operator, item.ID)
+	if err != nil || firstAfter.IntakeCard.Age.Value != "19" {
+		t.Fatalf("second trainee changed first card: %+v, %v", firstAfter, err)
+	}
+	stopped, err := svc.Stop(ctx, instructor, lesson.ID, nil, "112-stop")
+	if err != nil || stopped.State != training.LessonStopped {
+		t.Fatalf("stop: %+v, %v", stopped, err)
+	}
+	late, err := svc.Execute(ctx, otherOperator, otherItem.ID, training.Command{CommandID: uuid.New(), ExpectedSeq: 3,
+		Type: training.CommandDispatchIntake, Payload: []byte(`{"service_code":"pilot_ambulance"}`)}, "112-after-stop")
+	if err != nil || late.Outcome != training.OutcomeRejected || late.ErrorCode == nil || *late.ErrorCode != training.RejectLessonStopped {
+		t.Fatalf("dispatch after stop: %+v, %v", late, err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := svc.CloseStoppedLesson(ctx, tx, lesson.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var otherEvidenceJSON []byte
+	if err := pool.QueryRow(ctx, `SELECT body FROM evidence WHERE item_id=$1`, otherItem.ID).Scan(&otherEvidenceJSON); err != nil {
+		t.Fatal(err)
+	}
+	var otherEvidence struct {
+		Schema    string                   `json:"schema"`
+		FinalCard training.IntakeCard      `json:"final_card"`
+		Dispatch  *training.IntakeDispatch `json:"dispatch"`
+	}
+	if err := json.Unmarshal(otherEvidenceJSON, &otherEvidence); err != nil {
+		t.Fatal(err)
+	}
+	if otherEvidence.Schema != "operator112_intake/v1" || otherEvidence.FinalCard.Age.Value != "20" || otherEvidence.Dispatch != nil {
+		t.Fatalf("stopped item evidence: %+v", otherEvidence)
 	}
 }
 

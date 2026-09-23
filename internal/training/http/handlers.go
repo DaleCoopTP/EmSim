@@ -836,10 +836,10 @@ func toItemSummaryJSON(item training.Item) itemSummaryJSON {
 			callStatus, dispatched = item.IntakeState.CallStatus, item.IntakeState.Dispatched
 		}
 		return itemSummaryJSON{ID: item.ID.String(), ExerciseType: string(item.ExerciseType),
-			State: string(item.State), Seq: item.Seq, CardNumber: item.IntakeCard.Number,
+			State: string(item.State), Reaction: string(item.Reaction), Seq: item.Seq, CardNumber: item.IntakeCard.Number,
 			CallStatus: callStatus, Dispatched: dispatched, OfferedAt: formatTime(item.OfferedAt),
 			OpenedAt: formatTimePtr(item.OpenedAt), ClosedAt: formatTimePtr(item.ClosedAt),
-			CloseReason: closeReason, Interruptions: toInterruptionsJSON(item.Interruptions)}
+			CloseReason: closeReason, Deadlines: toDeadlinesJSON(item.Deadlines), Interruptions: toInterruptionsJSON(item.Interruptions)}
 	}
 	return itemSummaryJSON{
 		ID: item.ID.String(), State: string(item.State), Reaction: string(item.Reaction), Seq: item.Seq,

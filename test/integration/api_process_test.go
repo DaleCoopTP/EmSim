@@ -446,8 +446,8 @@ func TestAPIProcessContentCatalogAccess(t *testing.T) {
 	// service_code) but not scenario content.
 	var services []map[string]any
 	response = jsonRequest(t, ctx, adminClient, baseURL, http.MethodGet, "/api/v1/services", nil, &services)
-	if response.StatusCode != http.StatusOK || len(services) != 3 {
-		t.Fatalf("admin GET /services status = %d, len = %d, want 200 and 3", response.StatusCode, len(services))
+	if response.StatusCode != http.StatusOK || len(services) != 4 {
+		t.Fatalf("admin GET /services status = %d, len = %d, want 200 and 4", response.StatusCode, len(services))
 	}
 	response = jsonRequest(t, ctx, adminClient, baseURL, http.MethodGet, "/api/v1/scenarios", nil, nil)
 	if response.StatusCode != http.StatusForbidden {
@@ -470,9 +470,9 @@ func TestAPIProcessContentCatalogAccess(t *testing.T) {
 		Total int `json:"total"`
 	}
 	response = jsonRequest(t, ctx, instructorClient, baseURL, http.MethodGet, "/api/v1/scenarios", nil, &scenarioList)
-	// The slice-4 event and slice-5 phone fixtures are part of the imported
-	// catalogue too; this access check asserts that the full offline seed loaded.
-	if response.StatusCode != http.StatusOK || scenarioList.Total != 4 || len(scenarioList.Items) != 4 {
+	// The slice-4 event, slice-5 phone, and 112 intake fixtures are part of
+	// the imported catalogue too; assert that the full offline seed loaded.
+	if response.StatusCode != http.StatusOK || scenarioList.Total != 5 || len(scenarioList.Items) != 5 {
 		t.Fatalf("instructor GET /scenarios status = %d, body = %+v", response.StatusCode, scenarioList)
 	}
 
