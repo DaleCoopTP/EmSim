@@ -750,8 +750,11 @@ dd { margin: 0; }
 .arm112 .arm112-modal-list button[aria-pressed="true"] { font-weight: 700; }
 .arm112-modal-reason { display: flex; flex-direction: column; gap: 4px; margin: 14px 14px 0; color: #666; font-size: 13px; }
 .arm112-modal-reason input { font-size: 15px; }
-.arm112 .arm112-modal-save { align-self: center; margin-top: 30px; padding: 10px 18px; color: var(--a112-orange); background: #fff; border: 1px solid var(--a112-orange); font-size: 22px; }
+.arm112-modal-actions { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 30px; }
+.arm112 .arm112-modal-save { padding: 10px 18px; color: var(--a112-orange); background: #fff; border: 1px solid var(--a112-orange); font-size: 22px; }
 .arm112 .arm112-modal-save:hover:not(:disabled) { color: #fff; background: var(--a112-orange); }
+.arm112 .arm112-modal-cancel { padding: 10px 18px; color: #666; background: #fff; border: 1px solid #ccc; font-size: 16px; }
+.arm112 .arm112-modal-cancel:hover { background: #f2f2f2; }
 
 @media (max-width: 1365px) {
   body::before {

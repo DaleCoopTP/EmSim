@@ -1250,3 +1250,47 @@ design-docs/contracts/check.py`, `internal/content.TestSeedFilesAreValid`,
 Next: UI — сначала card_only (шаг 4 плана: окно «оповестить и сохранить»
 в `Operator112ProfileCase.tsx`), затем перенос экрана входящего вызова на
 вёрстку карточки 112-3 для `full_case` (шаг 5).
+
+## 2026-09-24 — Срез 112-4, шаг 4: окно оповещения в card_only UI
+
+Status: реализовано и проверено e2e.
+
+- `web/src/routes/trainee/Operator112Workplace.tsx`: общие TS-типы
+  расширены под бэкенд шагов 2-3 — `IntakeState.mode` включает
+  `"full_case"`, добавлены `finale?`/`notified`; новый тип
+  `IntakeNotification`/`IntakeNotificationService`; `IntakeItem.notification`.
+- `web/src/api/commands.ts`: `Command["type"]` дополнен `notify_services`
+  (контракт уже нёс его с шага 2, клиентский union — нет).
+- `web/src/routes/trainee/Operator112ProfileCase.tsx`: для
+  `intake_state.finale === "notify"` окно служб («+») теперь называется
+  «Список оповещаемых служб», подтверждение — «оповестить и сохранить
+  карточку» (`notify_services`) вместо «Сохранить и закрыть»
+  (`review_service_selection`), добавлена кнопка «вернуться к заполнению»
+  (закрывает окно без команды). После `state.notified` карточка становится
+  read-only (новая переменная `opened` отделяет «кейс открыт» от
+  «поля редактируемы», иначе форма ошибочно схлопывалась обратно в экран
+  «Открыть кейс» — поймано первым прогоном e2e), кнопка «завершить»
+  остаётся доступной и вызывает `complete_intake` вместо
+  `complete_profile_case`. Полоса служб показывает «оповещено · время».
+  Старые items без `finale` (начатые до среза) не затронуты — используют
+  прежние `review_service_selection`/`complete_profile_case`.
+- `web/src/index.css`: `.arm112-modal-actions`/`.arm112-modal-cancel` для
+  новой кнопки возврата рядом с существующей `.arm112-modal-save`.
+- `web/e2e/operator112-profiles.spec.ts`: все три кейса (104, 101,
+  комбинированный) проходят через новое окно «Список оповещаемых служб» →
+  «оповестить и сохранить карточку»; добавлена проверка
+  `item.notification.services` на инструкторской выдаче item.
+
+Validation: `make verify`, `make verify-web`, `cd web && npm run lint`
+(единственное предупреждение — предсуществующий `set-state-in-effect` на
+несвязанной строке, проверено `git stash` до этой правки), `cd web && npm
+run test:e2e` (все 4 сценария, включая обновлённый) — все прошли.
+
+Remaining risk: экран входящего вызова (`Operator112Workplace.tsx`,
+`full_case`) всё ещё рендерится старой вёрсткой `incoming_call` (шаг 5 не
+начат) — там `dispatch_intake` будет отклонён сервером при попытке
+использовать старую кнопку отправки; ручного смоук-теста этого пути пока
+не делал, полагаюсь на серверный `transition_not_allowed`.
+
+Next: перенос экрана входящего вызова на вёрстку карточки 112-3 для
+`full_case` (шаг 5 плана по коммитам).

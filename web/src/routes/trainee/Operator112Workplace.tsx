@@ -27,13 +27,15 @@ export type IntakeCatalog = { version: number; types: { id: string; name: string
   profiles: { id: string; version: number; name: string; fields: { id: string; label: string; kind: "single" | "multiple" | "text" | "shared"; options?: string[]; shared?: "no_on_site" | "no_access" }[] }[];
   service_rules: { id: string; profile_id: string; field_id?: string; equals?: string; service_code: string; reason: string }[] };
 type IntakeLine = { id?: string; speaker?: "caller" | "operator"; text: string; server_at: string; topic_id?: string };
-export type IntakeState = { mode?: "card_only"; catalog?: IntakeCatalog; call_status: "ringing" | "connected" | "held" | "ended" | "not_applicable"; transcript: IntakeLine[]; asked_question_ids?: string[];
+export type IntakeState = { mode?: "card_only" | "full_case"; catalog?: IntakeCatalog; call_status: "ringing" | "connected" | "held" | "ended" | "not_applicable"; transcript: IntakeLine[]; asked_question_ids?: string[];
   suggested_services?: { service_code: string; reasons: string[] }[]; service_review?: { selected: string[]; reason?: string; reviewed_at: string };
-  has_saved_draft: boolean; dispatched: boolean; selected_service?: string; answered_at?: string; ended_at?: string };
+  has_saved_draft: boolean; dispatched: boolean; selected_service?: string; answered_at?: string; ended_at?: string; finale?: string; notified: boolean };
 type Dispatch = { service_code: string; sent_at: string; card_snapshot: IntakeCard };
+export type IntakeNotificationService = { service_code: string; suggested: boolean };
+export type IntakeNotification = { item_id: string; action_id: string; services: IntakeNotificationService[]; reason?: string; card_snapshot: IntakeCard; notified_at: string };
 type IntakeQuestion = { id: string; text: string; topic_id: string; asked: boolean };
 export type IntakeItem = Omit<Item, "card"> & { card: IntakeCard; intake_state: IntakeState; available_questions?: IntakeQuestion[];
-  available_service_codes?: string[]; recipient_services: string[]; dispatch?: Dispatch };
+  available_service_codes?: string[]; recipient_services: string[]; dispatch?: Dispatch; notification?: IntakeNotification };
 
 const addressKeys = ["country", "region", "city", "object", "okrug", "district", "street", "house", "building", "structure", "flat", "entrance", "floor", "code", "landmark", "descriptive"] as const;
 const unanswered: IntakeField = { state: "unanswered" };

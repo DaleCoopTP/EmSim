@@ -134,8 +134,8 @@ test("operator 112: three card-only cases show profiles only after type selectio
     await page.getByRole("button", { name: /Открыть карточку №/ }).click();
     await expect(page.locator(".intake-profile-panel")).toHaveCount(cases[index].profiles);
     await page.getByRole("button", { name: "Добавить службу" }).click();
-    await page.getByRole("dialog", { name: "Добавьте службы" }).getByRole("button", { name: "Сохранить и закрыть" }).click();
-    await expect(page.getByText(/Выбор служб зафиксирован/)).toBeVisible();
+    await page.getByRole("dialog", { name: "Список оповещаемых служб" }).getByRole("button", { name: "оповестить и сохранить карточку" }).click();
+    await expect(page.getByText(/Службы оповещены/)).toBeVisible();
     await page.getByRole("button", { name: "Завершить кейс" }).click();
     await expect(page.getByText(/Кейс завершён/)).toBeVisible();
     await page.getByRole("button", { name: "К списку вызовов" }).click();
@@ -160,6 +160,7 @@ test("operator 112: three card-only cases show profiles only after type selectio
   expect(reviewed.card.profiles["101"]).toBeTruthy();
   expect(reviewed.card.profiles["104"]).toBeTruthy();
   expect(reviewed.dispatch).toBeUndefined();
+  expect(reviewed.notification.services.map((entry: { service_code: string }) => entry.service_code).sort()).toEqual(["pilot_ambulance", "pilot_fire_101", "pilot_gas_104"]);
   await page.goto(`${baseURL}/instructor/items/${itemIDs[2]}/review`);
   await expect(page.getByRole("heading", { name: "Кейс без разговора" })).toBeVisible();
   await expect(page.getByText(/Добавил тип: Взрыв газа и ДТП с пламенем/)).toBeVisible();

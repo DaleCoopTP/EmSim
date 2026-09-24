@@ -87,10 +87,13 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
   const state = item.intake_state;
   const catalog = state.catalog;
   const terminal = item.state === "closed" || item.state === "interrupted";
-  const editable = !terminal && item.state !== "offered";
+  const notifyFlow = state.finale === "notify";
+  const notified = notifyFlow && state.notified;
+  const opened = !terminal && item.state !== "offered";
+  const editable = opened && !notified;
   const dirty = JSON.stringify(draft) !== JSON.stringify(item.card);
   const suggested = state.suggested_services ?? [];
-  const reviewed = state.service_review?.selected;
+  const reviewed = notifyFlow ? item.notification?.services.map((entry) => entry.service_code) : state.service_review?.selected;
   const serverNow = clock.server + clientNow - clock.client;
   const until = terminal && item.closed_at ? new Date(item.closed_at).getTime() : serverNow;
   const elapsed = Math.max(0, Math.floor((until - new Date(item.offered_at).getTime()) / 1000));
@@ -178,7 +181,7 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
       </div>
     </header>
     {item.interruptions.length > 0 && <p role="alert" className="notice">Состояние карточки восстановлено после перезапуска.</p>}
-    {!(editable || terminal) ? <div className="arm112-incoming" role="dialog" aria-label="Новая карточка">
+    {!(opened || terminal) ? <div className="arm112-incoming" role="dialog" aria-label="Новая карточка">
       <strong>Происшествие {item.card.number}</strong><p>Откройте кейс, чтобы выбрать тип происшествия.</p>
       <button type="button" disabled={!!pending} onClick={() => send("open", {})}>Открыть кейс</button>
     </div> : <>
@@ -283,8 +286,9 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
 
       <div className="arm112-feedback" aria-live="polite">
         {dirty && <p>Есть несохранённые изменения — нажмите «сохранить».</p>}
-        {!dirty && state.has_saved_draft && !state.service_review && !terminal && <p>Черновик сохранён. Проверьте службы (кнопка «+») и зафиксируйте выбор.</p>}
-        {!dirty && state.service_review && !terminal && <p>Выбор служб зафиксирован: {state.service_review.selected.map((code) => serviceNames[code] ?? code).join(", ") || "службы не выбраны"}.</p>}
+        {!dirty && state.has_saved_draft && !reviewed && !terminal && <p>Черновик сохранён. Проверьте службы (кнопка «+») и зафиксируйте выбор.</p>}
+        {!dirty && !notifyFlow && state.service_review && !terminal && <p>Выбор служб зафиксирован: {state.service_review.selected.map((code) => serviceNames[code] ?? code).join(", ") || "службы не выбраны"}.</p>}
+        {!dirty && notifyFlow && item.notification && !terminal && <p>Службы оповещены · {formatDateTime(item.notification.notified_at)}: {item.notification.services.map((entry) => serviceNames[entry.service_code] ?? entry.service_code).join(", ") || "службы не выбраны"}.</p>}
         {terminal && <p>{item.state === "interrupted" ? "Занятие остановлено." : "Кейс завершён. Результат появится после оценки преподавателя."}</p>}
         {!storage && <p role="alert" className="error">Локальное хранилище недоступно: автоматический повтор команды после сбоя не гарантируется.</p>}
         {pending && <p className="notice">Действие сохраняется…</p>}
@@ -296,7 +300,7 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
     </>}
 
     <footer className="arm112-bar">
-      <span className="arm112-bar-label">Службы:</span>
+      <span className="arm112-bar-label">Службы:{notified && item.notification ? ` оповещено · ${formatDateTime(item.notification.notified_at)}` : ""}</span>
       <ul className="arm112-services" aria-label="Службы на вызов">
         {barServices.map((code) => {
           const entry = suggested.find((candidate) => candidate.service_code === code);
@@ -311,8 +315,8 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
         onClick={() => setServicesOpen(true)}><PlusIcon size={26} /></button>
       <div className="arm112-bar-actions">
         {!terminal && editable && <button type="submit" form="profile-case-form" className="arm112-bar-text" aria-label="Сохранить карточку" disabled={!!pending || !dirty && state.has_saved_draft}>сохранить</button>}
-        {!terminal && editable && <button type="button" className="arm112-bar-text" aria-label="Завершить кейс" disabled={!!pending || dirty || !state.has_saved_draft || !state.service_review || !(draft.incident_types?.length)}
-          title="Доступно после сохранения карточки и фиксации служб" onClick={() => send("complete_profile_case", {})}>завершить</button>}
+        {opened && <button type="button" className="arm112-bar-text" aria-label="Завершить кейс" disabled={!!pending || dirty || !state.has_saved_draft || !(notifyFlow ? notified : state.service_review) || !(draft.incident_types?.length)}
+          title="Доступно после сохранения карточки и фиксации служб" onClick={() => send(notifyFlow ? "complete_intake" : "complete_profile_case", {})}>завершить</button>}
         <button type="button" className="arm112-bar-square" aria-label="Связать карточки" title={unavailable} disabled><LinkIcon size={24} /></button>
         <button type="button" className="arm112-bar-square" aria-label="Напоминание" title={unavailable} disabled><StopwatchIcon size={24} /></button>
         <button type="button" className="arm112-bar-square" aria-label="Важное происшествие" title={unavailable} disabled><BellIcon size={24} /></button>
@@ -322,9 +326,9 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
     </footer>
 
     {servicesOpen && <div className="arm112-modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) { resetSelection(); setServicesOpen(false); } }}>
-      <div className="arm112-modal" role="dialog" aria-modal="true" aria-label="Добавьте службы">
+      <div className="arm112-modal" role="dialog" aria-modal="true" aria-label={notifyFlow ? "Список оповещаемых служб" : "Добавьте службы"}>
         <button type="button" className="arm112-modal-close" aria-label="Закрыть без изменений" onClick={() => { resetSelection(); setServicesOpen(false); }}><CloseIcon size={18} /></button>
-        <h2>Добавьте службы</h2>
+        <h2>{notifyFlow ? "Список оповещаемых служб" : "Добавьте службы"}</h2>
         {suggested.length > 0 ? <p className="arm112-modal-hint">Предложено по типам и признакам: {suggested.map((entry) => `${serviceTiles[entry.service_code] ?? entry.service_code} (${entry.reasons.join("; ")})`).join(", ")}.</p>
           : <p className="arm112-modal-hint">Система пока не предложила служб.</p>}
         <ul className="arm112-modal-list">
@@ -333,8 +337,13 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
         </ul>
         {selectionChanged && <label className="arm112-modal-reason">Причина изменения предложения
           <input aria-label="Причина изменения предложения" value={reviewReason} maxLength={1000} onChange={(event) => setReviewReason(event.target.value)} /></label>}
-        <button type="button" className="arm112-modal-save" disabled={reviewBlocked || selectionChanged && !reviewReason.trim()}
-          onClick={() => { send("review_service_selection", { services: selectedServices, reason: reviewReason.trim() }); setServicesOpen(false); }}>Сохранить и закрыть</button>
+        <div className="arm112-modal-actions">
+          {notifyFlow && <button type="button" className="arm112-modal-cancel" onClick={() => { resetSelection(); setServicesOpen(false); }}>вернуться к заполнению</button>}
+          <button type="button" className="arm112-modal-save" disabled={reviewBlocked || (selectionChanged && !reviewReason.trim()) || (notifyFlow && selectedServices.length === 0)}
+            onClick={() => { send(notifyFlow ? "notify_services" : "review_service_selection", { services: selectedServices, reason: reviewReason.trim() }); setServicesOpen(false); }}>
+            {notifyFlow ? "оповестить и сохранить карточку" : "Сохранить и закрыть"}
+          </button>
+        </div>
       </div>
     </div>}
   </section>;
