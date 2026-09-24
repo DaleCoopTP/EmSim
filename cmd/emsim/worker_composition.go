@@ -11,7 +11,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
 	"time"
 
 	"emsim/internal/assessment"
@@ -21,7 +24,9 @@ import (
 	"emsim/internal/reporting"
 	reportingpg "emsim/internal/reporting/postgres"
 	"emsim/internal/training"
+	"emsim/internal/training/operator112"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -75,6 +80,21 @@ func registerKinds(registry *tasks.Registry) error {
 	}
 	// PDF generation must not occupy short workers used by lesson.close.
 	if err := registry.Register(tasks.Spec{Name: reporting.KindBuild, Pool: "report", MaxAttempts: 3, Lease: 2 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 20}); err != nil {
+		return err
+	}
+	// 112-5a/ADR-024: its own pool "caller" (never queued behind
+	// assessment.evaluate/scenario.generate's own "llm" pool, or behind
+	// lesson.close's "short" pool), priority 100 — an applicant waiting
+	// on a reply is as time-sensitive as either of those. Lease is
+	// comfortably longer than CALLER_REPLY_TIMEOUT (config.Worker),
+	// which bounds a single CallerReplier.Reply call, not this Spec's
+	// own lease; MaxAttempts=2 with a registered Finalizer (
+	// callerReplyFinalizer) turns exhaustion into CallerTurnFailed
+	// instead of dead_letter.
+	if err := registry.Register(tasks.Spec{
+		Name: training.KindCallerReply, Pool: "caller", MaxAttempts: 2,
+		Lease: 2 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 100,
+	}); err != nil {
 		return err
 	}
 	return nil
@@ -131,6 +151,144 @@ func lessonCloseHandler(pool *pgxpool.Pool, store *tasks.Store, trainingService 
 	})
 }
 
+// callerReplyPayload is training.KindCallerReply's own payload shape —
+// decoded from what training.Service.enqueueCallerReply marshals
+// (item_id/turn), used by both the handler below and
+// callerReplyFinalizer.
+type callerReplyPayload struct {
+	ItemID uuid.UUID `json:"item_id"`
+	Turn   int       `json:"turn"`
+}
+
+// callerReplyHandler is training.KindCallerReply's worker side
+// (112-5a/ADR-024): CallerReplier.Reply is called entirely outside any
+// transaction, bounded by timeout — the queue's first task kind to
+// actually call an external adapter with real latency (ADR-003/
+// ADR-024; assessment.evaluate's own rule evaluation, by contrast, runs
+// as pure Go inside its own transaction, since no LLM client exists yet
+// anywhere in this codebase). The reply is then applied and the task's
+// own terminal write committed together in one transaction, the same
+// atomicity lessonCloseHandler already demonstrates.
+//
+// Reply's own error (timeout or adapter failure) is the one expected,
+// routine failure this handler can hit — unlike a decode/transaction
+// error, which stays a plain error so Runner treats it as the
+// operational bug it would be (failure.go: "an unexpected error, which
+// the Runner treats as an operational failure and stops on"). Reply's
+// error must instead come back as a *tasks.HandlerFailure so
+// ResolveFailure requeues it (Spec.MaxAttempts=2, RetryBase) and, once
+// exhausted, delegates to callerReplyFinalizer instead of crashing the
+// whole worker process.
+func callerReplyHandler(pool *pgxpool.Pool, store *tasks.Store, trainingService *training.Service, replier operator112.CallerReplier, timeout time.Duration) tasks.Handler {
+	return tasks.HandlerFunc(func(ctx context.Context, lease tasks.Lease) error {
+		var payload callerReplyPayload
+		if err := json.Unmarshal(lease.Payload, &payload); err != nil {
+			return fmt.Errorf("caller.reply: decode payload: %w", err)
+		}
+		replyCtx, err := trainingService.CallerReplyContext(ctx, payload.ItemID)
+		if err != nil {
+			return err
+		}
+		callCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		reply, err := replier.Reply(callCtx, operator112.CallerReplyRequest{
+			Facts: replyCtx.Dialogue.Facts, Transcript: replyCtx.Transcript, Turn: payload.Turn,
+		})
+		if err != nil {
+			failure, ferr := tasks.NewHandlerFailure(tasks.Retryable, "caller_reply_unavailable")
+			if ferr != nil {
+				return ferr
+			}
+			return failure
+		}
+		tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+		if err != nil {
+			return errors.New("caller.reply transaction failed")
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := trainingService.ApplyCallerReply(ctx, tx, payload.ItemID, payload.Turn, reply.Text, replier.Adapter(), time.Now().UTC()); err != nil {
+			return err
+		}
+		if _, err := store.Terminal(ctx, tx, tasks.TerminalRequest{
+			Lease: lease, Now: time.Now().UTC(), Outcome: tasks.Done(nil),
+		}); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return errors.New("caller.reply commit failed")
+		}
+		return nil
+	})
+}
+
+// callerReplyFinalizer is training.KindCallerReply's tasks.Finalizer
+// (112-5a/ADR-024): once the task's own attempt budget is exhausted, the
+// pending IntakeCallerTurn becomes CallerTurnFailed — via
+// training.Service.FailCallerTurn, in the same transaction as the
+// task's own terminal write — instead of staying pending forever and
+// blocking every further message in that chat. The pattern (re-derive
+// scope from PeekPayload, apply the domain effect, then
+// FinalizeExpiredTx, all under one transaction) mirrors assessment.
+// Service.FinalizeExpired exactly.
+type callerReplyFinalizer struct {
+	pool            *pgxpool.Pool
+	store           *tasks.Store
+	trainingService *training.Service
+}
+
+func (f callerReplyFinalizer) FinalizeExpired(ctx context.Context, taskID uuid.UUID, workerID string, token uint64, terminalStatus tasks.TaskStatus, code tasks.ErrorCode) error {
+	scopeID, payloadRaw, err := f.store.PeekPayload(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if scopeID == nil {
+		return tasks.ErrLeaseLost
+	}
+	var payload callerReplyPayload
+	if err := json.Unmarshal(payloadRaw, &payload); err != nil {
+		return fmt.Errorf("caller.reply: decode exhausted task payload: %w", err)
+	}
+	tx, err := f.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return errors.New("caller.reply finalize transaction failed")
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := f.trainingService.FailCallerTurn(ctx, tx, *scopeID, payload.Turn, "reply_unavailable", time.Now().UTC()); err != nil {
+		return err
+	}
+	ok, err := f.store.FinalizeExpiredTx(ctx, tx, taskID, workerID, token, terminalStatus, code)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return tasks.ErrLeaseLost
+	}
+	return tx.Commit(ctx)
+}
+
+// callerStubDelay reads CALLER_STUB_DELAY the same direct way
+// cmd/emsim already reads other leaf, feature-specific settings outside
+// config.Worker's own validated surface (e.g. BLOB_ROOT in import.go/
+// internal/training/http) — a demo/dev tuning knob for
+// operator112.StubCallerReplier, not a structural concern like pool
+// sizing or lease duration. It defaults to one second (RFC-001's own
+// "заявитель отвечает не мгновенно" intent for 112-5a, see
+// slice-112-5a-plan.md) so the queued/async protocol is visibly
+// exercised even with no CALLER_STUB_DELAY set at all; e2e tests set it
+// low (or 0) to stay fast. An unparsable non-empty value is a
+// configuration mistake, not a silent fallback.
+func callerStubDelay() (time.Duration, error) {
+	raw := os.Getenv("CALLER_STUB_DELAY")
+	if raw == "" {
+		return time.Second, nil
+	}
+	delay, err := time.ParseDuration(raw)
+	if err != nil || delay < 0 {
+		return 0, fmt.Errorf("invalid CALLER_STUB_DELAY %q: %w", raw, err)
+	}
+	return delay, nil
+}
+
 func compose(processConfig config.Worker, pool *pgxpool.Pool, metrics *observability.Metrics, logger observability.Logger) (tasks.Components, error) {
 	policy := tasks.DefaultPolicy()
 	if processConfig.LocalTestPolicy == "e2e-fast-v1" {
@@ -154,10 +312,19 @@ func compose(processConfig config.Worker, pool *pgxpool.Pool, metrics *observabi
 	if err := recoveryStore.RegisterFinalizer(training.KindAssessmentEvaluate, assessmentService); err != nil {
 		return tasks.Components{}, errors.New("finalizer registration is invalid")
 	}
+	// trainingService is built here (not only inside composePools, once
+	// role includes worker) because the Reaper — composeMaintenance,
+	// which every role including a worker-less "maintenance" process
+	// runs — needs training.KindCallerReply's Finalizer registered
+	// regardless of whether this same process also claims its pool.
+	trainingService := newTrainingService(pool, store)
+	if err := recoveryStore.RegisterFinalizer(training.KindCallerReply, callerReplyFinalizer{pool: pool, store: store, trainingService: trainingService}); err != nil {
+		return tasks.Components{}, errors.New("finalizer registration is invalid")
+	}
 
 	components := tasks.Components{}
 	if processConfig.Role == tasks.RoleWorker || processConfig.Role == tasks.RoleAll {
-		components.Worker, err = composePools(processConfig, policy, pool, store, recoveryStore, registry, metrics, assessmentService)
+		components.Worker, err = composePools(processConfig, policy, pool, store, recoveryStore, registry, metrics, assessmentService, trainingService)
 		if err != nil {
 			return tasks.Components{}, err
 		}
@@ -174,13 +341,12 @@ func compose(processConfig config.Worker, pool *pgxpool.Pool, metrics *observabi
 func composePools(
 	processConfig config.Worker, policy tasks.Policy, pool *pgxpool.Pool,
 	store *tasks.Store, recoveryStore *tasks.Recovery, registry *tasks.Registry, metrics *observability.Metrics,
-	assessmentService *assessment.Service,
+	assessmentService *assessment.Service, trainingService *training.Service,
 ) (tasks.Supervisor, error) {
 	handlers := tasks.NewHandlerRegistry()
 	if err := handlers.Register(kindSystemNoop, noopHandler(pool, store)); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
-	trainingService := newTrainingService(pool, store)
 	if err := handlers.Register(training.KindLessonClose, lessonCloseHandler(pool, store, trainingService)); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
@@ -188,6 +354,17 @@ func composePools(
 		return nil, errors.New("handler configuration is invalid")
 	}
 	if err := handlers.Register(reporting.KindBuild, reporting.NewBuilderFromEnvironment(reportingpg.NewStore(pool), store)); err != nil {
+		return nil, errors.New("handler configuration is invalid")
+	}
+	// 112-5a/ADR-024: StubCallerReplier is the only CallerReplier this
+	// slice composes — 112-5b swaps it for a model adapter right here,
+	// nothing else in this function changes.
+	stubDelay, err := callerStubDelay()
+	if err != nil {
+		return nil, err
+	}
+	callerReplier := operator112.StubCallerReplier{Delay: stubDelay}
+	if err := handlers.Register(training.KindCallerReply, callerReplyHandler(pool, store, trainingService, callerReplier, processConfig.CallerReplyTimeout)); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
 
@@ -200,6 +377,7 @@ func composePools(
 		{"llm", processConfig.LLMConcurrency},
 		{"stt", processConfig.STTConcurrency},
 		{"report", processConfig.ReportConcurrency},
+		{"caller", processConfig.CallerConcurrency},
 	} {
 		kinds := registry.Pool(poolConfig.name)
 		if len(kinds) == 0 {

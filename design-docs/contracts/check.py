@@ -134,6 +134,7 @@ def main() -> int:
             {"kind": "scenario.generate", "scope_type": "scenario", "scope_id": None, "payload": {"service": "dds_district", "difficulty": 4, "requested_by": "0192309f-0000-7c0a-9a1f-000000000002", "prompt_version": "gen-v3"}},
             {"kind": "lesson.close", "scope_type": "lesson", "scope_id": "019230a3-0000-7c0a-9a1f-000000000001", "payload": {"lesson_id": "019230a3-0000-7c0a-9a1f-000000000001", "epoch": 1}},
             {"kind": "backup.run", "scope_type": "system", "scope_id": None, "payload": {}},
+            {"kind": "caller.reply", "scope_type": "item", "scope_id": "019230a4-6b1e-7c0a-9a1f-3f2a1b2c3d4e", "payload": {"item_id": "019230a4-6b1e-7c0a-9a1f-3f2a1b2c3d4e", "turn": 1}},
         ]
         if tasks:
             v = V(tasks)

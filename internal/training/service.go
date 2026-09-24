@@ -711,6 +711,191 @@ func (s *Service) enqueueEvaluateWaiting(ctx context.Context, tx pgx.Tx, lesson 
 	return err
 }
 
+// KindCallerReply is platform/tasks' kind for 112-5a/ADR-024's async
+// caller-chat reply: an accepted send_caller_message sets
+// Decision.CallerTurnRequested, and recordDecision enqueues this kind
+// in the very same transaction as the command itself — the same
+// pattern Stop uses for KindLessonClose. A worker resolves the pending
+// IntakeCallerTurn by calling a CallerReplier (internal/training/
+// operator112 — a stub in 112-5a, a model in 112-5b) entirely outside
+// any transaction, per ADR-003/ADR-024, then applies the result via
+// ApplyCallerReply. training only ever enqueues it; cmd/emsim's
+// composition registers its Spec, handler and Finalizer, exactly like
+// KindLessonClose's own doc comment describes.
+const KindCallerReply tasks.Kind = "caller.reply"
+
+// CallerReplyDedupKey is caller.reply's own dedup_key convention
+// (ADR-024): one task per (item, turn) — a replayed send_caller_message
+// (idempotent by command_id, ADR-004) never enqueues a second task for
+// the same turn, since recordDecision only runs for a command's first,
+// non-replayed attempt.
+func CallerReplyDedupKey(itemID uuid.UUID, turn int) string {
+	return fmt.Sprintf("caller.reply:%s:%d", itemID, turn)
+}
+
+func (s *Service) enqueueCallerReply(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, turn int, now time.Time) error {
+	payload, err := json.Marshal(map[string]any{"item_id": itemID, "turn": turn})
+	if err != nil {
+		return fmt.Errorf("training: marshal caller.reply payload: %w", err)
+	}
+	_, _, err = s.tasks.EnqueueTx(ctx, tx, tasks.EnqueueRequest{
+		TaskID: uuid.New(), Kind: KindCallerReply, ScopeType: "item", ScopeID: &itemID,
+		DedupKey: CallerReplyDedupKey(itemID, turn), Payload: payload, NextAttemptAt: now,
+	})
+	return err
+}
+
+// CallerReplyContext is the read-only projection a worker's caller.reply
+// handler needs to build a CallerReplier request (112-5a/ADR-024): the
+// scenario's dialogue facts (a future model's own knowledge input; the
+// 112-5a stub ignores them) and the transcript so far. It is read
+// without any lock — a plain peek, like tickEvent's own unlocked read
+// of a scenario version — because ApplyCallerReply re-reads and locks
+// everything again before writing anything, so a stale peek here only
+// risks calling a CallerReplier for a turn that no longer needs
+// answering, which ApplyCallerReply's own pending-turn check then
+// no-ops rather than misapplying.
+type CallerReplyContext struct {
+	Dialogue   content.Intake112Dialogue
+	Transcript []IntakeLine
+}
+
+func (s *Service) CallerReplyContext(ctx context.Context, itemID uuid.UUID) (CallerReplyContext, error) {
+	var result CallerReplyContext
+	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		item, err := s.store.ItemByID(ctx, tx, itemID, LockNone)
+		if err != nil {
+			return err
+		}
+		if item.IntakeState == nil {
+			return fmt.Errorf("training: item %s has no intake state", itemID)
+		}
+		version, err := s.scenarios.VersionByID(ctx, tx, item.ScenarioVersionID)
+		if err != nil {
+			return err
+		}
+		if version.Body.Intake112 == nil || version.Body.Intake112.Dialogue == nil {
+			return fmt.Errorf("training: item %s scenario has no intake112 dialogue", itemID)
+		}
+		result = CallerReplyContext{Dialogue: *version.Body.Intake112.Dialogue, Transcript: item.IntakeState.Transcript}
+		return nil
+	})
+	return result, err
+}
+
+// ApplyCallerReply resolves one free-text caller-chat turn (112-5a/
+// ADR-024): CallerTurnPending -> CallerTurnAnswered, appending the
+// applicant's reply to the transcript. It is a no-op — no error, no
+// write beyond the transaction the caller already opened — when the
+// turn can no longer be answered: already resolved (by a previous
+// attempt, or by hold/end/mark_call_dropped's own cancellation), the
+// call is no longer connected, the item is past stop's barrier, or the
+// lesson is no longer running. text/adapter are the CallerReplier's own
+// result, computed by the caller entirely outside this transaction —
+// this method's only job is the short, lock-ordered write ADR-024
+// specifies (lessons FOR SHARE -> items FOR UPDATE), matching
+// lockForCommand's own order for an ordinary command. Unlike an
+// ordinary command's ApplyItemDecision call, log_seq/seq are written
+// back unchanged: the applicant's reply is not the trainee's own
+// effect (ADR-024 — the same principle item_events already applies to
+// a scenario event's delivery).
+func (s *Service) ApplyCallerReply(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, turn int, text, adapter string, now time.Time) error {
+	item, state, idx, ok, err := s.lockPendingCallerTurn(ctx, tx, itemID, turn)
+	if err != nil || !ok {
+		return err
+	}
+	state.Transcript = append(make([]IntakeLine, 0, len(item.IntakeState.Transcript)), item.IntakeState.Transcript...)
+	state.Transcript = append(state.Transcript, IntakeLine{
+		ID: uuid.New().String(), Speaker: "caller", CallID: itemID.String(), Text: text, ServerAt: now,
+	})
+	resolvedAt := now
+	state.CallerTurns[idx].Status = CallerTurnAnswered
+	state.CallerTurns[idx].Adapter = adapter
+	state.CallerTurns[idx].ResolvedAt = &resolvedAt
+	return s.writeCallerTurnState(ctx, tx, item, state)
+}
+
+// FailCallerTurn is caller.reply's own Finalizer half (112-5a/ADR-024):
+// once the task's attempt budget is exhausted, the pending
+// IntakeCallerTurn becomes CallerTurnFailed with a short technical
+// reason (RFC-001 §9 — never the raw error) rather than staying pending
+// forever. Unlike ApplyCallerReply it adds no transcript line — the
+// applicant never actually answered. cmd/emsim's Finalizer
+// implementation calls this inside the same transaction as the task's
+// own terminal write, exactly like assessment's own FinalizeExpired
+// does for assessment.evaluate.
+func (s *Service) FailCallerTurn(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, turn int, reason string, now time.Time) error {
+	item, state, idx, ok, err := s.lockPendingCallerTurn(ctx, tx, itemID, turn)
+	if err != nil || !ok {
+		return err
+	}
+	resolvedAt := now
+	state.CallerTurns[idx].Status = CallerTurnFailed
+	state.CallerTurns[idx].Reason = reason
+	state.CallerTurns[idx].ResolvedAt = &resolvedAt
+	return s.writeCallerTurnState(ctx, tx, item, state)
+}
+
+// lockPendingCallerTurn is ApplyCallerReply/FailCallerTurn's own shared
+// lock-and-guard step (ADR-024): lessons FOR SHARE -> items FOR UPDATE
+// (lockForCommand's own order, minus the runs lock no caller-turn write
+// ever needs), then the same four conditions ADR-024 requires before
+// either resolution — lesson running, no stop cutoff, call still
+// connected, this exact turn still pending. ok=false (no error) means
+// "nothing to do", the caller's own no-op return; state is a defensive
+// copy of item.IntakeState (CallerTurns/Transcript included) the caller
+// mutates and passes to writeCallerTurnState.
+func (s *Service) lockPendingCallerTurn(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, turn int) (Item, IntakeState, int, bool, error) {
+	peek, err := s.store.ItemByID(ctx, tx, itemID, LockNone)
+	if err != nil {
+		return Item{}, IntakeState{}, 0, false, err
+	}
+	lesson, err := s.store.LessonByID(ctx, tx, peek.LessonID, LockShare)
+	if err != nil {
+		return Item{}, IntakeState{}, 0, false, err
+	}
+	item, err := s.store.ItemByID(ctx, tx, itemID, LockUpdate)
+	if err != nil {
+		return Item{}, IntakeState{}, 0, false, err
+	}
+	if lesson.State != LessonRunning || item.StopCutoffLogSeq != nil ||
+		item.State == ItemClosed || item.State == ItemInterrupted ||
+		item.IntakeState == nil || item.IntakeState.CallStatus != "connected" {
+		return Item{}, IntakeState{}, 0, false, nil
+	}
+	state := *item.IntakeState
+	state.CallerTurns = append(make([]IntakeCallerTurn, 0, len(item.IntakeState.CallerTurns)), item.IntakeState.CallerTurns...)
+	idx := -1
+	for i := range state.CallerTurns {
+		if state.CallerTurns[i].Turn == turn {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || state.CallerTurns[idx].Status != CallerTurnPending {
+		return Item{}, IntakeState{}, 0, false, nil
+	}
+	return item, state, idx, true, nil
+}
+
+// writeCallerTurnState persists a mutated IntakeState from
+// lockPendingCallerTurn, leaving every other item column exactly as it
+// already was — log_seq/seq unchanged (ADR-024: an applicant reply is
+// not the trainee's own effect), same Reaction/State/Card. Card is
+// still passed through IntakeCard: ApplyItemDecision writes items.card
+// from whichever of Card/IntakeCard is non-nil, so leaving it out here
+// would blank that column instead of leaving it untouched.
+func (s *Service) writeCallerTurnState(ctx context.Context, tx pgx.Tx, item Item, state IntakeState) error {
+	patch := ItemPatch{
+		LogSeq: item.LogSeq, Seq: item.Seq, Reaction: item.Reaction, State: item.State, Card: item.Card,
+		IntakeCard: item.IntakeCard, IntakeState: &state,
+	}
+	if err := s.store.ApplyItemDecision(ctx, tx, item.ID, patch); err != nil {
+		return err
+	}
+	return s.notify(ctx, tx, item.LessonID, item.UserID, item.ID)
+}
+
 func (s *Service) startOneAssignment(ctx context.Context, tx pgx.Tx, lesson Lesson, a Assignment, now time.Time) error {
 	trainee, err := s.users.UserByID(ctx, tx, a.UserID)
 	if err != nil {
@@ -1253,6 +1438,15 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	// carries identifiers only, the client always re-reads PostgreSQL).
 	if err := s.notify(ctx, tx, item.LessonID, actor.UserID, item.ID); err != nil {
 		return Receipt{}, err
+	}
+	// 112-5a/ADR-024: an accepted send_caller_message enqueues its own
+	// caller.reply in the same transaction as the command — the
+	// application service's job, since Decide (a pure function) never
+	// touches platform/tasks.
+	if decision.Accepted && decision.CallerTurnRequested != nil {
+		if err := s.enqueueCallerReply(ctx, tx, item.ID, *decision.CallerTurnRequested, now); err != nil {
+			return Receipt{}, err
+		}
 	}
 	if decision.Accepted && lesson.ExerciseType == content.ExerciseTypeDDSProcessing {
 		version, err := s.scenarios.VersionByID(ctx, tx, item.ScenarioVersionID)

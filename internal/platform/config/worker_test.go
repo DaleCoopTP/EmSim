@@ -11,6 +11,7 @@ func TestWorkerConfigurationIsRoleAwareAndExplicit(t *testing.T) {
 		"WORKER_POLL_INTERVAL": "250ms", "WORKER_DRAIN_TIMEOUT": "10s",
 		"WORKER_ADMIN_LISTEN_ADDR": "127.0.0.1:8082",
 		"SHORT_CONCURRENCY":        "4", "LLM_CONCURRENCY": "1", "STT_CONCURRENCY": "1", "REPORT_CONCURRENCY": "1",
+		"CALLER_CONCURRENCY": "1", "CALLER_REPLY_TIMEOUT": "10s",
 	}
 	lookup := func(name string) string { return values[name] }
 	for _, role := range []string{"worker", "maintenance", "all"} {
@@ -32,6 +33,20 @@ func TestWorkerConfigurationIsRoleAwareAndExplicit(t *testing.T) {
 		t.Fatalf("zero LLM concurrency error = %v", err)
 	}
 	values["LLM_CONCURRENCY"] = "1"
+	delete(values, "CALLER_CONCURRENCY")
+	if _, err := WorkerFromEnvironment(lookup, "maintenance"); !errors.Is(err, ErrInvalidWorkerConfiguration) {
+		t.Fatalf("missing caller concurrency error = %v", err)
+	}
+	values["CALLER_CONCURRENCY"] = "1"
+	delete(values, "CALLER_REPLY_TIMEOUT")
+	if _, err := WorkerFromEnvironment(lookup, "maintenance"); !errors.Is(err, ErrInvalidWorkerConfiguration) {
+		t.Fatalf("missing caller reply timeout error = %v", err)
+	}
+	values["CALLER_REPLY_TIMEOUT"] = "0s"
+	if _, err := WorkerFromEnvironment(lookup, "maintenance"); !errors.Is(err, ErrInvalidWorkerConfiguration) {
+		t.Fatalf("zero caller reply timeout error = %v", err)
+	}
+	values["CALLER_REPLY_TIMEOUT"] = "10s"
 	delete(values, "WORKER_ADMIN_LISTEN_ADDR")
 	if _, err := WorkerFromEnvironment(lookup, "maintenance"); !errors.Is(err, ErrInvalidWorkerConfiguration) {
 		t.Fatalf("missing worker admin address error = %v", err)

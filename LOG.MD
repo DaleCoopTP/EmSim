@@ -1563,3 +1563,127 @@ Next: коммит 2 — порт `CallerReplier`, заглушка на 6 фр�
 `CallerTurnRequested`), `ApplyCallerReply`, обработчик и `Finalizer` в
 `cmd/emsim/worker_composition.go`, конфиг `CALLER_*`,
 интеграционные тесты.
+
+## 2026-09-24 — Срез 112-5a, коммит 2: асинхронный ответ заявителя через worker
+
+Status: готово, три новых интеграционных теста зелёные, `make verify` и
+`python3 design-docs/contracts/check.py` зелёные. Реализует
+`slice-112-5a-plan.md` §2 «асинхронный ответ: порт, заглушка, задача
+worker» и ADR-024 целиком (первый протокол, доведённый до реального
+worker-процесса).
+
+- `internal/training/operator112/caller.go`: порт `CallerReplier`
+  (`Adapter() string` — провенанс в ход, `Reply(ctx, CallerReplyRequest)
+  (CallerReply, error)`), `CallerReplyRequest{Facts, Transcript, Turn}`.
+- `internal/training/operator112/stub_caller.go` (новый):
+  `StubCallerReplier{Delay}`, 6 фраз пользователя (см. коммит 0), номер
+  фразы = `Turn-1`, за пределами — повтор последней; `Reply` ждёт
+  `Delay`, уважая отмену контекста. `stub_caller_test.go`: 4 теста
+  (последовательность/повтор, `Turn<1`, отмена контекста, тайминг
+  задержки).
+- `internal/training/service.go`: `KindCallerReply tasks.Kind =
+  "caller.reply"`, `CallerReplyDedupKey`; `enqueueCallerReply` —
+  `EnqueueTx` в той же транзакции, что и команда (`recordDecision`,
+  после `notify`, только при `decision.CallerTurnRequested != nil`);
+  `CallerReplyContext` — снимок фактов/транскрипта без блокировок (для
+  worker); `ApplyCallerReply`/`FailCallerTurn` — оба через общий
+  `lockPendingCallerTurn` (item без лока → lessons FOR SHARE → items FOR
+  UPDATE; проверяет `lessons.state=running`, нет `stop_cutoff_log_seq`,
+  item не закрыт/не прерван, `call_status=connected`, ход с этим
+  номером всё ещё `pending`) и `writeCallerTurnState` (пишет только
+  `IntakeState`, `seq`/`log_seq`/`card`/`reaction` не трогает — ADR-024
+  «ответ не увеличивает seq»). `TestCallerChatHoldCancelsPendingTurnAndLateReplyIsANoOp`
+  проверяет это напрямую: `ApplyCallerReply` на уже отменённый (`hold`)
+  ход — чистый no-op, транскрипт и статус не меняются.
+- `internal/platform/config/worker.go`: `CallerConcurrency`,
+  `CallerReplyTimeout` (валидируются, `CALLER_CONCURRENCY`/
+  `CALLER_REPLY_TIMEOUT`); `CALLER_STUB_DELAY` сознательно вне этой
+  структуры — читается напрямую через `os.Getenv` в
+  `cmd/emsim/worker_composition.go` (по образцу уже существующих
+  `BLOB_ROOT`), так как это настройка конкретно заглушки, а не
+  структурный параметр воркера; по умолчанию 1с.
+- `cmd/emsim/worker_composition.go`: Spec `training.KindCallerReply`
+  (пул `caller`, `MaxAttempts=2`, `Lease=2м`, `RetryBase=200ms`,
+  `Priority=100`) в `registerKinds`; `callerReplyHandler` — вызывает
+  `CallerReplier.Reply` вне транзакции с таймаутом
+  `CallerReplyTimeout`, затем одной транзакцией `ApplyCallerReply` +
+  `store.Terminal`; `callerReplyFinalizer.FinalizeExpired` —
+  `FailCallerTurn` + `FinalizeExpiredTx` в одной транзакции (тот же
+  паттерн, что `assessment.Service.FinalizeExpired`);
+  `recoveryStore.RegisterFinalizer(training.KindCallerReply, …)`
+  регистрируется в `compose()` безусловно (не только внутри
+  `composePools`), так как Reaper обслуживающего процесса без роли
+  worker тоже должен уметь финализировать эту задачу; пул `caller`
+  добавлен в список пулов `composePools`.
+- `design-docs/contracts/tasks.schema.json`/`check.py`: пример
+  `caller.reply` (`payload.item_id`/`turn`).
+- `internal/platform/postgres/postgres.go`: **исправлена забытая с
+  коммита 1 регрессия** — `ExpectedSchemaVersion` оставался `15` после
+  добавления `migrations/00016_operator112_caller_message.sql`, из-за
+  чего `Ready()` после применения всех 16 миграций всегда возвращал
+  `false` и любой процесс `emsim` падал на старте с «database schema is
+  not ready». Значение исправлено на `16`. Обнаружено интеграционными
+  тестами этого коммита (первыми, что реально стартуют `emsim worker`
+  подпроцессом после коммита 1); не было замечено раньше, так как
+  `make verify` не поднимает БД, а `make test-integration` для коммита 1
+  не запускался (домен без интеграции с очередью).
+- `test/integration/operator112_caller_chat_test.go` (новый):
+  `TestCallerChatAsyncReplySequence` (реальный `emsim worker`
+  подпроцессом, 8 ходов подряд — 6 фраз по порядку, затем повтор
+  последней дважды; после каждого хода `items.seq` сверяется с тем, что
+  было сразу после **собственной** команды оператора
+  `send_caller_message`, а не с 0 — сама команда оператора seq
+  увеличивает как обычно принятая команда, ADR-024 запрещает только
+  дополнительный рост от асинхронного ответа заявителя),
+  `TestCallerChatHoldCancelsPendingTurnAndLateReplyIsANoOp` (без
+  worker — hold отменяет ход детерминированно, поздний прямой вызов
+  `ApplyCallerReply` — no-op), `TestCallerChatFinalizerFailsExhaustedTurn`
+  (таймаут короче задержки заглушки — обе попытки истекают, ход
+  становится `CallerTurnFailed`, чат принимает новое сообщение сразу
+  после).
+- `test/integration/training_service_test.go`: у теста свой локальный
+  `newTrainingService`/`mustTaskEnqueuer` с отдельным `tasks.Registry` —
+  добавлена регистрация `training.KindCallerReply`, иначе
+  `send_caller_message` там падал с «task kind is not registered».
+
+Два бага нашлись и исправлены только на интеграционных тестах с реальным
+worker-процессом (`go build ./cmd/emsim` + `exec.Command`), не на
+доменных unit-тестах:
+
+1. `callerReplyHandler` изначально возвращал ошибку `CallerReplier.Reply`
+   как есть. `internal/platform/tasks/runner.go` считает такую
+   («неклассифицированную») ошибку не бизнес-неполадкой, а
+   операционным багом и **останавливает весь процесс worker**
+   (`ErrOperational`) — это документированное поведение
+   (`failure.go`: «an unexpected error, which the Runner treats as an
+   operational failure and stops on»), а не баг очереди. Таймаут
+   заглушки — ожидаемый, штатно повторяемый отказ, поэтому исправлено:
+   ошибка от `Reply` оборачивается в
+   `tasks.NewHandlerFailure(tasks.Retryable, "caller_reply_unavailable")`.
+   Это первый обработчик в кодовой базе, вызывающий внешний адаптер с
+   реальной задержкой вне транзакции (docs/comment в
+   `callerReplyHandler`), поэтому и первый, где это разграничение вообще
+   имело значение — `noopHandler`/`lessonCloseHandler` его не делают
+   осознанно: их ошибки (сбой транзакции/БД) всегда операционные, для
+   них крах и рестарт процесса — верное поведение.
+2. Исчерпание `MaxAttempts=2` с классификацией `Retryable` доходит до
+   `finalizeResolvedFailure`, которая для `Retryable` считает терминальный
+   статус задачи `dead_letter`, а не `failed` (`failed` зарезервирован за
+   `Permanent`) — `callerReplyFinalizer` при этом отрабатывает одинаково
+   в обоих случаях. Тест ждал буквально `status='failed'`; поправлен на
+   `status IN ('failed','dead_letter')`.
+
+Validation: `gofmt -l` чисто; `make verify` зелёный; `python3
+design-docs/contracts/check.py` зелёный; `make test-integration`
+(весь пакет `test/integration`, не только новые тесты) — зелёный,
+164с.
+
+Riски/что дальше: `CALLER_STUB_DELAY` по умолчанию 1с — в
+`docker compose up` реальная задержка ответа будет заметна, это
+намеренно (RFC «заявитель отвечает не мгновенно»). Коммит 3 — тестовый
+сценарий `free_text` для сидирования (сейчас есть только одноразовая
+JSON-фикстура внутри теста коммита 2, не в `seed/`).
+
+Next: коммит 3 — `seed/scenarios/pilot-112-free-text-chat-01.json`
+(`full_case`/`caller_mode: free_text`, газ+ДТП → 104/101, как у
+`pilot-112-full-gas-road-traffic-fire-01`), `seed/README.md`.

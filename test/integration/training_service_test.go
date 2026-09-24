@@ -73,6 +73,15 @@ func mustTaskEnqueuer(pool *pgxpool.Pool) *tasks.Store {
 	}); err != nil {
 		panic("mustTaskEnqueuer: " + err.Error())
 	}
+	// caller.reply (112-5a/ADR-024): training.Service.Execute enqueues
+	// this on an accepted send_caller_message — the same Spec shape
+	// cmd/emsim's registerKinds registers (worker_composition.go).
+	if err := registry.Register(tasks.Spec{
+		Name: training.KindCallerReply, Pool: "caller", MaxAttempts: 2,
+		Lease: 2 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 100,
+	}); err != nil {
+		panic("mustTaskEnqueuer: " + err.Error())
+	}
 	return tasks.NewStore(pool, registry)
 }
 

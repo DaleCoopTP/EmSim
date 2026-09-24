@@ -656,6 +656,35 @@
           }
         }
       }
+    },
+    {
+      "title": "caller.reply",
+      "description": "112-5a/ADR-024: заявитель отвечает на одно сообщение оператора в окне чата (intake_state.caller_mode=free_text). Пул caller (не llm), priority 100, lease 2 мин, max_attempts 2, retry base 200 мс. Один task на (item_id, turn). CallerReplier вызывается вне транзакции; результат применяется отдельной короткой транзакцией и не увеличивает items.seq. Исчерпание попыток — Finalizer переводит ход в failed, а не dead_letter.",
+      "properties": {
+        "kind": {
+          "const": "caller.reply"
+        },
+        "scope_type": {
+          "const": "item"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "item_id",
+            "turn"
+          ],
+          "properties": {
+            "item_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "turn": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
     }
   ]
 }
