@@ -228,3 +228,96 @@ test("operator 112: no contact and dropped call close without dispatch", async (
     await page.getByRole("button", { name: "Выйти" }).click();
   }
 });
+
+test("operator 112: full case — call, questions, incident types, profile cards, notify and save", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const admin = await apiRequest.newContext({ baseURL });
+  await ok(await admin.post("/api/v1/auth/login", { data: { login: "admin", password: "local-only-admin-password" } }));
+  await ok(await admin.put("/api/v1/admin/workstations", { data: [{ number: 908, label: "112 full case" }] }));
+  const trainee = await (await ok(await admin.post("/api/v1/admin/users", { data: {
+    login: "e2e-112-full-case-trainee", password, full_name: "Обучаемый полного кейса 112", role: "trainee",
+  } }))).json();
+  await ok(await admin.post("/api/v1/admin/users", { data: {
+    login: "e2e-112-full-case-instructor", password, full_name: "Преподаватель полного кейса 112", role: "instructor",
+  } }));
+  await admin.dispose();
+
+  const instructorAPI = await apiRequest.newContext({ baseURL });
+  await ok(await instructorAPI.post("/api/v1/auth/login", { data: { login: "e2e-112-full-case-instructor", password } }));
+  const catalogue = await (await ok(await instructorAPI.get("/api/v1/scenarios?status=approved&exercise_type=operator112_intake&page=1&page_size=200"))).json();
+  const scenario = catalogue.items.find((candidate: { source_key?: string }) => candidate.source_key === "pilot-112-full-gas-road-traffic-fire-01");
+  expect(scenario).toBeTruthy();
+  await instructorAPI.dispose();
+
+  await page.goto(`${baseURL}/login`);
+  await page.getByLabel("Логин").fill("e2e-112-full-case-instructor");
+  await page.getByLabel("Пароль").fill(password);
+  await page.getByRole("button", { name: "Войти" }).click();
+  await expect(page.getByRole("heading", { name: "Занятия" })).toBeVisible();
+  await page.getByRole("button", { name: "Создать занятие" }).click();
+  await page.getByLabel("Название").fill("Полный кейс 112 E2E");
+  await page.getByLabel("Упражнение").selectOption("operator112_intake");
+  await page.getByRole("button", { name: "Создать", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Полный кейс 112 E2E" })).toBeVisible();
+  await page.getByLabel("Рабочее место").selectOption("908");
+  await page.getByLabel("Обучаемый").selectOption(trainee.id);
+  await page.locator(".queue-editor select").selectOption(scenario.id);
+  await page.getByRole("button", { name: "+ В очередь" }).click();
+  await page.getByRole("button", { name: "Сохранить назначения" }).click();
+  await expect(page.getByText("Назначения сохранены.")).toBeVisible();
+  await page.getByRole("button", { name: /Запустить занятие/ }).click();
+  await expect(page.locator(".lesson-heading .status-badge")).toHaveText("Идёт");
+  await page.getByRole("button", { name: "Выйти" }).click();
+
+  await page.getByLabel("Логин").fill("e2e-112-full-case-trainee");
+  await page.getByLabel("Пароль").fill(password);
+  await page.getByLabel("Номер рабочего места (для обучаемого)").fill("908");
+  await page.getByRole("button", { name: "Войти" }).click();
+  await expect(page.getByRole("heading", { name: "Полный кейс 112 E2E" })).toBeVisible();
+  const items = await (await ok(await page.request.get("/api/v1/my/items"))).json();
+  expect(items).toHaveLength(1);
+  const itemID = items[0].id;
+  const initial = await (await ok(await page.request.get(`/api/v1/items/${itemID}`))).json();
+  expect(initial.intake_state.mode).toBe("full_case");
+  expect(initial.intake_reference).toBeUndefined();
+
+  await page.getByRole("button", { name: /Открыть карточку №/ }).click();
+  await expect(page.getByText("Откройте кейс, чтобы выбрать тип происшествия.")).toBeVisible();
+  await page.getByRole("button", { name: "Открыть кейс" }).click();
+  await expect(page.getByText("Примите вызов, чтобы услышать заявителя и открыть карточку.")).toBeVisible();
+  await page.getByRole("button", { name: "ответить", exact: true }).click();
+  await expect(page.getByText(/Здравствуйте! Тут авария/)).toBeVisible();
+  await page.getByRole("button", { name: "Назовите адрес, где вы находитесь." }).click();
+  await expect(page.getByText(/у автозаправки/)).toBeVisible();
+  await page.getByRole("button", { name: "Уточните номер дома или ближайшее строение." }).click();
+  await expect(page.getByText("Рядом дом 5.")).toBeVisible();
+  await page.getByRole("button", { name: "Есть ли пострадавшие?" }).click();
+  await expect(page.getByText(/боятся взрыва/)).toBeVisible();
+
+  await page.getByLabel("Тип происшествия").fill("Взрыв газа и ДТП с пламенем");
+  await page.getByRole("option", { name: "Взрыв газа и ДТП с пламенем", exact: true }).click();
+  await expect(page.locator(".intake-profile-panel")).toHaveCount(2);
+  await page.getByRole("button", { name: "Сохранить карточку" }).click();
+  await expect(page.getByText(/Проверьте службы/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Добавить службу" }).click();
+  const dialog = page.getByRole("dialog", { name: "Список оповещаемых служб" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(/Служба 104/)).toBeVisible();
+  await expect(dialog.getByText(/Служба 101/)).toBeVisible();
+  await dialog.getByRole("button", { name: "оповестить и сохранить карточку" }).click();
+  await expect(page.getByText(/Службы оповещены/)).toBeVisible();
+  await expect(page.locator(".arm112-service-tile")).toHaveCount(2);
+
+  await page.getByRole("button", { name: "завершить разговор", exact: true }).click();
+  await page.getByRole("button", { name: "Завершить кейс" }).click();
+  await expect(page.getByText(/Кейс завершён/)).toBeVisible();
+
+  const finished = await (await ok(await page.request.get(`/api/v1/items/${itemID}`))).json();
+  expect(finished.dispatch).toBeUndefined();
+  expect(finished.notification.services.map((entry: { service_code: string }) => entry.service_code).sort()).toEqual(["pilot_fire_101", "pilot_gas_104"]);
+  expect(finished.card.profiles["104"]).toBeTruthy();
+  expect(finished.card.profiles["101"]).toBeTruthy();
+  await page.getByRole("button", { name: "Выйти" }).click();
+});

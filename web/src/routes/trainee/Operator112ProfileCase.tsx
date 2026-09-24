@@ -82,15 +82,19 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [reviewReason, setReviewReason] = useState("");
   const [servicesOpen, setServicesOpen] = useState(false);
+  const [outcomeIntent, setOutcomeIntent] = useState<"no_contact" | "call_dropped" | null>(null);
   const [clientNow, setClientNow] = useState(Date.now);
   const [clock] = useState(() => ({ client: Date.now(), server: new Date(item.server_time).getTime() }));
   const state = item.intake_state;
   const catalog = state.catalog;
   const terminal = item.state === "closed" || item.state === "interrupted";
+  const isCall = state.mode === "full_case";
   const notifyFlow = state.finale === "notify";
   const notified = notifyFlow && state.notified;
   const opened = !terminal && item.state !== "offered";
-  const editable = opened && !notified;
+  const ringingCall = isCall && state.call_status === "ringing";
+  const bodyReady = opened && !ringingCall;
+  const editable = bodyReady && !notified;
   const dirty = JSON.stringify(draft) !== JSON.stringify(item.card);
   const suggested = state.suggested_services ?? [];
   const reviewed = notifyFlow ? item.notification?.services.map((entry) => entry.service_code) : state.service_review?.selected;
@@ -162,9 +166,17 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
     <header className="arm112-top">
       <div className="arm112-line">
         <span className="arm112-hangup" aria-hidden="true"><HangupIcon size={26} /></span>
-        <div className="arm112-line-state"><span>не подключен</span>
+        {isCall ? <div className="arm112-line-state">
+          <span>{state.call_status === "ringing" ? "входящий вызов" : state.call_status === "connected" ? "разговор" : state.call_status === "held" ? "на удержании" : "разговор завершён"}</span>
+          <div>
+            {item.state === "opened" && state.call_status === "ringing" && <button type="button" disabled={!!pending} onClick={() => send("answer_incoming", {})}>ответить</button>}
+            {state.call_status === "connected" && !terminal && <button type="button" disabled={!!pending} onClick={() => send("hold_incoming", {})}>удержать</button>}
+            {state.call_status === "held" && !terminal && <button type="button" disabled={!!pending} onClick={() => send("resume_incoming", {})}>вернуться к разговору</button>}
+            {(state.call_status === "connected" || state.call_status === "held") && !terminal && <button type="button" disabled={!!pending} onClick={() => send("end_incoming", {})}>завершить разговор</button>}
+          </div>
+        </div> : <div className="arm112-line-state"><span>не подключен</span>
           <div><button type="button" disabled title={unavailable}>записи звонков</button><button type="button" disabled title={unavailable}>список SMS</button></div>
-        </div>
+        </div>}
       </div>
       <PhoneBox label="АОН" aon={item.card.aon} disabled icons={<><HelpIcon size={15} /><PinIcon size={15} /><GlobeIcon size={15} /></>} />
       <PhoneBox label="предоставленный" field={draft.provided_phone} aon={item.card.aon} disabled={!editable} copyAon icons={<GlobeIcon size={15} />} onChange={(value) => update("provided_phone", value)} />
@@ -173,17 +185,23 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
         <strong title={`Происшествие ${item.card.number}`}>Происшествие {item.card.number}</strong>
         <span>Зарег. {formatDateTime(item.offered_at)}</span>
         <span>Опер. {operator}</span>
-        <span className="arm112-incident-note">Учебная карточка без разговора</span>
+        {!isCall && <span className="arm112-incident-note">Учебная карточка без разговора</span>}
       </div>
       <div className={`arm112-timer${elapsed >= timerAlertSeconds && !terminal ? " is-alert" : ""}`} role="timer" aria-label="Время обработки">
         <strong>{String(Math.floor(elapsed / 60)).padStart(2, "0")}:{String(elapsed % 60).padStart(2, "0")}</strong>
         <span><span>минут</span><span>секунд</span></span>
       </div>
+      {isCall && !terminal && <div className="intake-outcome-controls">
+        <button type="button" disabled={!!pending || item.state !== "opened" || state.call_status !== "ringing"} onClick={() => setOutcomeIntent("no_contact")}>Нет контакта</button>
+        <button type="button" disabled={!!pending || (state.call_status !== "connected" && state.call_status !== "held") || notified} onClick={() => setOutcomeIntent("call_dropped")}>Срыв звонка</button>
+      </div>}
     </header>
     {item.interruptions.length > 0 && <p role="alert" className="notice">Состояние карточки восстановлено после перезапуска.</p>}
     {!(opened || terminal) ? <div className="arm112-incoming" role="dialog" aria-label="Новая карточка">
       <strong>Происшествие {item.card.number}</strong><p>Откройте кейс, чтобы выбрать тип происшествия.</p>
       <button type="button" disabled={!!pending} onClick={() => send("open", {})}>Открыть кейс</button>
+    </div> : ringingCall ? <div className="arm112-incoming" role="dialog" aria-label="Входящий вызов">
+      <strong>Происшествие {item.card.number}</strong><p>Примите вызов, чтобы услышать заявителя и открыть карточку.</p>
     </div> : <>
       <form id="profile-case-form" className="arm112-body" onSubmit={save}>
         <div className="arm112-strip arm112-applicant">
@@ -219,10 +237,10 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
           <button type="button" aria-pressed={draft.no_on_site?.state === "known"} disabled={!editable} onClick={() => toggleFlag("no_on_site")}>Нет на месте/<br />Отказ от скорой</button>
           <button type="button" aria-pressed={draft.no_access?.state === "known"} disabled={!editable} onClick={() => toggleFlag("no_access")}>Нет доступа/<br />Заблокированные</button>
         </div>
-        <div className="arm112-strip arm112-outcomes">
+        {!isCall && <div className="arm112-strip arm112-outcomes">
           <button type="button" disabled title="В учебной карточке без разговора не используется">нет контакта</button>
           <button type="button" disabled title="В учебной карточке без разговора не используется">срыв звонка</button>
-        </div>
+        </div>}
 
         <div className="arm112-left">
           <section className="arm112-panel arm112-address" aria-label="Адрес">
@@ -263,6 +281,14 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
                 value={knownValue(draft.complaint)} onChange={(event) => update("complaint", fromText(event.target.value))} /></label>
             <span className="arm112-counter">{knownValue(draft.complaint).length} / 1999</span>
           </section>
+          {isCall && <section className="arm112-panel">
+            <h3>Разговор с заявителем</h3>
+            <div className="intake-transcript"><ol>{state.transcript.map((line, index) => <li key={line.id ?? index}><strong>{line.speaker === "operator" ? "Оператор" : "Заявитель"}:</strong> {line.text}</li>)}</ol></div>
+            {state.call_status === "held" && <p>Вызов на удержании. Вернитесь к разговору, чтобы задать вопрос.</p>}
+            {state.call_status === "connected" && !terminal && (item.available_questions?.length ?? 0) > 0 && <div className="intake-questions"><h4>Уточняющие вопросы</h4>
+              {item.available_questions?.map((question) => <button key={question.id} type="button" disabled={!!pending} onClick={() => send("ask_intake_question", { question_id: question.id })}>{question.text}{question.asked ? " · повторить" : ""}</button>)}
+            </div>}
+          </section>}
         </div>
 
         <div className="arm112-right">
@@ -289,7 +315,7 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
         {!dirty && state.has_saved_draft && !reviewed && !terminal && <p>Черновик сохранён. Проверьте службы (кнопка «+») и зафиксируйте выбор.</p>}
         {!dirty && !notifyFlow && state.service_review && !terminal && <p>Выбор служб зафиксирован: {state.service_review.selected.map((code) => serviceNames[code] ?? code).join(", ") || "службы не выбраны"}.</p>}
         {!dirty && notifyFlow && item.notification && !terminal && <p>Службы оповещены · {formatDateTime(item.notification.notified_at)}: {item.notification.services.map((entry) => serviceNames[entry.service_code] ?? entry.service_code).join(", ") || "службы не выбраны"}.</p>}
-        {terminal && <p>{item.state === "interrupted" ? "Занятие остановлено." : "Кейс завершён. Результат появится после оценки преподавателя."}</p>}
+        {terminal && <p>{item.state === "interrupted" ? "Занятие остановлено." : item.close_reason === "no_contact" ? "Карточка закрыта: нет контакта с заявителем." : item.close_reason === "call_dropped" ? "Карточка закрыта: срыв звонка." : "Кейс завершён. Результат появится после оценки преподавателя."}</p>}
         {!storage && <p role="alert" className="error">Локальное хранилище недоступно: автоматический повтор команды после сбоя не гарантируется.</p>}
         {pending && <p className="notice">Действие сохраняется…</p>}
         {pending && error && <button type="button" onClick={() => void deliver(pending)}>Повторить отправку</button>}
@@ -315,7 +341,7 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
         onClick={() => setServicesOpen(true)}><PlusIcon size={26} /></button>
       <div className="arm112-bar-actions">
         {!terminal && editable && <button type="submit" form="profile-case-form" className="arm112-bar-text" aria-label="Сохранить карточку" disabled={!!pending || !dirty && state.has_saved_draft}>сохранить</button>}
-        {opened && <button type="button" className="arm112-bar-text" aria-label="Завершить кейс" disabled={!!pending || dirty || !state.has_saved_draft || !(notifyFlow ? notified : state.service_review) || !(draft.incident_types?.length)}
+        {opened && <button type="button" className="arm112-bar-text" aria-label="Завершить кейс" disabled={!!pending || dirty || !state.has_saved_draft || !(notifyFlow ? notified : state.service_review) || !(draft.incident_types?.length) || (isCall && state.call_status !== "ended")}
           title="Доступно после сохранения карточки и фиксации служб" onClick={() => send(notifyFlow ? "complete_intake" : "complete_profile_case", {})}>завершить</button>}
         <button type="button" className="arm112-bar-square" aria-label="Связать карточки" title={unavailable} disabled><LinkIcon size={24} /></button>
         <button type="button" className="arm112-bar-square" aria-label="Напоминание" title={unavailable} disabled><StopwatchIcon size={24} /></button>
@@ -346,6 +372,13 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
         </div>
       </div>
     </div>}
+
+    {outcomeIntent && <div className="intake-outcome-backdrop"><div className="intake-outcome-dialog" role="dialog" aria-modal="true" aria-label="Завершение вызова">
+      <h3>{outcomeIntent === "no_contact" ? "Нет контакта с заявителем" : "Срыв звонка"}</h3>
+      <p>Карточка закроется без направления в службы. Действие сохранится в журнале.</p>
+      <div><button type="button" onClick={() => setOutcomeIntent(null)}>Вернуться к карточке</button>
+        <button type="button" className="arm-primary-action" disabled={!!pending} onClick={() => { send(outcomeIntent === "no_contact" ? "mark_no_contact" : "mark_call_dropped", {}); setOutcomeIntent(null); }}>Закрыть карточку</button></div>
+    </div></div>}
   </section>;
 }
 

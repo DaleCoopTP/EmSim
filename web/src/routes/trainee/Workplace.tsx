@@ -144,9 +144,10 @@ export function WorkplaceRoute() {
   );
 }
 
-// A card-only 112 case closes through the × of its own bottom bar, as in ARM-112.
+// A card_only/full_case 112 item closes through the × of its own bottom bar, as in ARM-112.
 function isCardOnly(item: unknown): boolean {
-  return (item as Partial<IntakeItem> | undefined)?.intake_state?.mode === "card_only";
+  const mode = (item as Partial<IntakeItem> | undefined)?.intake_state?.mode;
+  return mode === "card_only" || mode === "full_case";
 }
 
 function Waiting({ me }: { me: Me }) {
