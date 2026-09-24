@@ -5,7 +5,7 @@ import { executeCommand, type Command, type Receipt } from "../../api/commands";
 import { errorMessage } from "../../api/errors";
 import { useEventStream } from "../../api/realtime";
 import type { Me } from "../../api/useMe";
-import { itemQueryKey, myItemsQueryKey, myRunQueryKey, useItem, useMyItems, useMyRun, type CardView, type Item } from "../../api/workplace";
+import { itemQueryKey, myItemsQueryKey, myRunQueryKey, useItem, useMyItems, useMyRun, type CardView, type Item, type ItemSummary, type MyRun } from "../../api/workplace";
 import { availableLocalStorage, clearPending, loadPending, savePending, type PendingCommand } from "../../commands/pending";
 import { IncidentCard } from "../../components/IncidentCard";
 import { formatDateTime } from "../../format";
@@ -46,11 +46,19 @@ export function WorkplaceRoute() {
   // this mount only — a reload starts over with nothing to show, which
   // is explicitly out of scope until a later slice's history screen.
   const [lastItemId, setLastItemId] = useState("");
+  // Keep the completed 112 queue visible for this mount after the last
+  // case finishes and /my/run correctly stops returning an active run.
+  const [completedQueue, setCompletedQueue] = useState<{ run: MyRun; items: ItemSummary[] } | null>(null);
   // An assigned trainee lands on the queue, not directly inside a card.
   // selectedItemId is therefore deliberately empty until they open a row.
   // lastItemId only supports the post-close control report described below.
   const itemId = selectedItemId || lastItemId;
-  const item = useItem(itemId, (workstationMatches && !!run.data && !!selectedItemId) || (!run.data && itemId === lastItemId));
+  const item = useItem(itemId, (workstationMatches && !!run.data && !!selectedItemId) || (!run.data && !!itemId && completedQueue?.items.some((candidate) => candidate.id === itemId) === true));
+
+  if (run.data?.exercise_type === "operator112_intake" && items.data?.length &&
+      (completedQueue?.run.run_id !== run.data.run_id || completedQueue.items !== items.data)) {
+    setCompletedQueue({ run: run.data, items: items.data });
+  }
 
   // Remember the most recent real item id across a render, without an
   // effect: React's documented pattern for deriving state from a
@@ -72,6 +80,20 @@ export function WorkplaceRoute() {
   if (run.isError) return <p className="error">{errorMessage(run.error)}</p>;
 
   if (!run.data) {
+    if (completedQueue) {
+      const { run: previousRun, items: previousItems } = completedQueue;
+      const queueItems = previousItems.map((candidate) => candidate.id === item.data?.id ? { ...candidate, state: item.data.state } : candidate);
+      return <section className="trainee-workplace">
+        <header className="workplace-header"><div><p className="workplace-kicker">Рабочее место 112 · РМ-{previousRun.workstation_no}</p>
+          <h1>{selectedItemId ? "Обработанный кейс" : previousRun.lesson.title}</h1></div></header>
+        {selectedItemId ? <>
+          {!isCardOnly(item.data) && <button type="button" className="back-to-queue intake-back-to-queue" onClick={() => setSelectedItemId("")}>← К списку вызовов</button>}
+          {item.isPending && <p>Загрузка карточки…</p>}
+          {item.isError && <p className="error">{errorMessage(item.error)}</p>}
+          {item.data && <Operator112Workplace key={item.data.id} me={me} item={item.data as unknown as IntakeItem} onClose={() => setSelectedItemId("")} />}
+        </> : <IncidentQueue items={queueItems} search={queueSearch} onSearch={setQueueSearch} onOpen={setSelectedItemId} exerciseType="operator112_intake" />}
+      </section>;
+    }
     if (!lastItemId) return <Waiting me={me} />;
     return (
       <section>
@@ -107,18 +129,24 @@ export function WorkplaceRoute() {
           search={queueSearch}
           onSearch={setQueueSearch}
           onOpen={setSelectedItemId}
+          exerciseType={run.data.exercise_type}
         />
       )}
       {workstationMatches && selectedItemId && (
         <>
-		  <button type="button" className={`back-to-queue${run.data.exercise_type === "operator112_intake" ? " intake-back-to-queue" : ""}`} onClick={() => setSelectedItemId("")}>← К списку {run.data.exercise_type === "operator112_intake" ? "вызовов" : "происшествий"}</button>
+		  {!isCardOnly(item.data) && <button type="button" className={`back-to-queue${run.data.exercise_type === "operator112_intake" ? " intake-back-to-queue" : ""}`} onClick={() => setSelectedItemId("")}>← К списку {run.data.exercise_type === "operator112_intake" ? "вызовов" : "происшествий"}</button>}
           {item.isPending && <p>Загрузка карточки…</p>}
           {item.isError && <p className="error">{errorMessage(item.error)}</p>}
-		  {item.data && (item.data.exercise_type === "operator112_intake" ? <Operator112Workplace key={item.data.id} me={me} item={item.data as unknown as IntakeItem} /> : <ItemWorkplace key={item.data.id} me={me} item={item.data as DDSItem} />)}
+		  {item.data && (item.data.exercise_type === "operator112_intake" ? <Operator112Workplace key={item.data.id} me={me} item={item.data as unknown as IntakeItem} onClose={() => setSelectedItemId("")} /> : <ItemWorkplace key={item.data.id} me={me} item={item.data as DDSItem} />)}
         </>
       )}
     </section>
   );
+}
+
+// A card-only 112 case closes through the × of its own bottom bar, as in ARM-112.
+function isCardOnly(item: unknown): boolean {
+  return (item as Partial<IntakeItem> | undefined)?.intake_state?.mode === "card_only";
 }
 
 function Waiting({ me }: { me: Me }) {
@@ -140,11 +168,13 @@ function IncidentQueue({
   search,
   onSearch,
   onOpen,
+  exerciseType,
 }: {
   items: NonNullable<ReturnType<typeof useMyItems>["data"]>;
   search: string;
   onSearch: (value: string) => void;
   onOpen: (id: string) => void;
+  exerciseType: string;
 }) {
   const needle = search.trim().toLocaleLowerCase("ru-RU");
   const visibleItems = needle === ""
@@ -157,11 +187,11 @@ function IncidentQueue({
     <section className="incident-queue" aria-labelledby="queue-title">
       <header className="incident-queue-header">
         <div>
-          <h2 id="queue-title">Список происшествий</h2>
-          <p>{items.length === 0 ? "Новых карточек пока нет." : `Показано: ${visibleItems.length} из ${items.length}`}</p>
+          <h2 id="queue-title">Список {exerciseType === "operator112_intake" ? "входящих кейсов" : "происшествий"}</h2>
+          <p>{items.length === 0 ? exerciseType === "operator112_intake" ? "Входящих кейсов пока нет." : "Новых карточек пока нет." : `Показано: ${visibleItems.length} из ${items.length}`}</p>
         </div>
         <label className="queue-search">
-          <span>Поиск происшествий</span>
+          <span>Поиск {exerciseType === "operator112_intake" ? "кейсов" : "происшествий"}</span>
           <input
             type="search"
             value={search}
@@ -194,7 +224,7 @@ function IncidentQueue({
               </tr>
             ))}
             {visibleItems.length === 0 && (
-              <tr><td colSpan={6} className="queue-empty">По этому запросу происшествий нет.</td></tr>
+              <tr><td colSpan={6} className="queue-empty">По этому запросу {exerciseType === "operator112_intake" ? "кейсов" : "происшествий"} нет.</td></tr>
             )}
           </tbody>
         </table>

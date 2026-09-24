@@ -31,9 +31,9 @@ test("operator 112: three card-only cases show profiles only after type selectio
   await ok(await instructorAPI.post("/api/v1/auth/login", { data: { login: "e2e-112-profile-instructor", password } }));
   const catalogue = await (await ok(await instructorAPI.get("/api/v1/scenarios?status=approved&exercise_type=operator112_intake&page=1&page_size=200"))).json();
   const cases = [
-    { key: "pilot-112-gas-explosion-01", type: "gas_explosion", profiles: 1, services: 1 },
-    { key: "pilot-112-road-traffic-fire-01", type: "road_traffic_fire", profiles: 1, services: 2 },
-    { key: "pilot-112-gas-road-traffic-fire-01", type: "gas_explosion_road_traffic_fire", profiles: 2, services: 3 },
+    { key: "pilot-112-gas-explosion-01", type: "gas_explosion", name: "Взрыв газа", profiles: 1, services: 1 },
+    { key: "pilot-112-road-traffic-fire-01", type: "road_traffic_fire", name: "ДТП с пламенем", profiles: 1, services: 2 },
+    { key: "pilot-112-gas-road-traffic-fire-01", type: "gas_explosion_road_traffic_fire", name: "Взрыв газа и ДТП с пламенем", profiles: 2, services: 3 },
   ];
   const scenarios = cases.map((entry) => catalogue.items.find((candidate: { source_key?: string }) => candidate.source_key === entry.key));
   for (const scenario of scenarios) expect(scenario).toBeTruthy();
@@ -57,9 +57,23 @@ test("operator 112: three card-only cases show profiles only after type selectio
     await row.getByLabel("Обучаемый").selectOption(trainees[index].id);
     await row.locator(".queue-editor select").selectOption(scenarios[index].id);
     await row.getByRole("button", { name: "+ В очередь" }).click();
+    if (index === 0) {
+      await expect(row.locator(".queue-editor select")).not.toHaveValue("");
+      await expect(row.getByRole("button", { name: "+ В очередь" })).toBeEnabled();
+      await row.locator(".queue-editor select").selectOption(scenarios[1].id);
+      await row.getByRole("button", { name: "+ В очередь" }).click();
+      await expect(row.locator(".queue-editor li")).toHaveCount(2);
+    }
   }
   await page.getByRole("button", { name: "Сохранить назначения" }).click();
   await expect(page.getByText("Назначения сохранены.")).toBeVisible();
+  await expect(rows.first().getByText(/Сохранено кейсов: 2/)).toBeVisible();
+  await rows.first().locator(".queue-editor select").selectOption(scenarios[2].id);
+  await rows.first().getByRole("button", { name: "+ В очередь" }).click();
+  await page.getByRole("button", { name: "Сохранить назначения" }).click();
+  await expect(rows.first().getByText(/Сохранено кейсов: 3/)).toBeVisible();
+  const savedAssignments = await (await ok(await instructorAPI.get(`/api/v1/lessons/${new URL(page.url()).pathname.split("/").at(-1)}`))).json();
+  expect(savedAssignments.assignments[0].scenario_version_ids).toHaveLength(3);
   await page.getByRole("button", { name: /Запустить занятие/ }).click();
   await expect(page.locator(".lesson-heading .status-badge")).toHaveText("Идёт");
   await page.getByRole("button", { name: "Выйти" }).click();
@@ -89,12 +103,14 @@ test("operator 112: three card-only cases show profiles only after type selectio
     await expect(page.getByRole("heading", { name: /Происшествие 10[14]/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Ответить" })).toHaveCount(0);
     await page.getByRole("button", { name: "Открыть кейс" }).click();
-    await page.getByLabel("Тип происшествия").selectOption(cases[index].type);
-    await page.getByRole("button", { name: "Добавить", exact: true }).click();
+    await page.getByLabel("Тип происшествия").fill(cases[index].name);
+    await page.getByRole("option", { name: cases[index].name, exact: true }).click();
     await expect(page.locator(".intake-profile-panel")).toHaveCount(cases[index].profiles);
     const active = await (await ok(await page.request.get(`/api/v1/items/${items[0].id}`))).json();
     expect(active.intake_state.catalog.profiles.map((profile: { id: string }) => profile.id)).toEqual(index === 0 ? ["104"] : index === 1 ? ["101"] : ["104", "101"]);
     expect(active.intake_state.catalog.service_rules).toEqual([]);
+    expect(active.card.incident_types).toEqual([cases[index].type]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
     await expect(page.locator(".intake-profile-options button[aria-pressed='true']")).toHaveCount(0);
     if (index === 0 || index === 2) {
       await page.getByRole("button", { name: "Вне помещения (на улице)" }).click();
@@ -103,23 +119,35 @@ test("operator 112: three card-only cases show profiles only after type selectio
       await page.locator(".intake-profile-row").filter({ hasText: "Медицинская помощь" }).getByRole("button", { name: "Да", exact: true }).click();
     }
     await page.getByRole("button", { name: "Сохранить карточку" }).click();
-    await expect(page.locator(".intake-services ul li")).toHaveCount(cases[index].services);
+    await expect(page.locator(".arm112-service-tile")).toHaveCount(cases[index].services);
     if (index === 2) await page.screenshot({ path: testInfo.outputPath("operator112-profiles.png"), fullPage: true });
     if (index === 0) {
       page.once("dialog", (dialog) => void dialog.accept());
-      await page.getByRole("button", { name: "Убрать", exact: true }).click();
+      await page.getByRole("button", { name: `Убрать тип ${cases[index].name}`, exact: true }).click();
       await expect(page.locator(".intake-profile-panel")).toHaveCount(0);
-      await page.getByLabel("Тип происшествия").selectOption(cases[index].type);
-      await page.getByRole("button", { name: "Добавить", exact: true }).click();
+      await page.getByLabel("Тип происшествия").fill(cases[index].name);
+      await page.getByRole("option", { name: cases[index].name, exact: true }).click();
       await expect(page.getByRole("button", { name: "Вне помещения (на улице)" })).toHaveAttribute("aria-pressed", "true");
       await page.getByRole("button", { name: "Сохранить карточку" }).click();
     }
     await page.reload();
     await page.getByRole("button", { name: /Открыть карточку №/ }).click();
     await expect(page.locator(".intake-profile-panel")).toHaveCount(cases[index].profiles);
-    await page.getByRole("button", { name: "Зафиксировать выбор служб" }).click();
+    await page.getByRole("button", { name: "Добавить службу" }).click();
+    await page.getByRole("dialog", { name: "Добавьте службы" }).getByRole("button", { name: "Сохранить и закрыть" }).click();
+    await expect(page.getByText(/Выбор служб зафиксирован/)).toBeVisible();
     await page.getByRole("button", { name: "Завершить кейс" }).click();
     await expect(page.getByText(/Кейс завершён/)).toBeVisible();
+    await page.getByRole("button", { name: "К списку вызовов" }).click();
+    await expect(page.getByRole("heading", { name: "Список входящих кейсов" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Открыть карточку №/ })).toHaveCount(index === 0 ? 2 : 1);
+    if (index === 0) {
+      const queued = await (await ok(await page.request.get("/api/v1/my/items"))).json();
+      expect(queued).toHaveLength(2);
+      expect(queued[1].state).toBe("offered");
+      await page.getByRole("button", { name: `Открыть карточку № ${queued[1].card_number}` }).click();
+      await expect(page.getByRole("button", { name: "Открыть кейс" })).toBeVisible();
+    }
     await page.getByRole("button", { name: "Выйти" }).click();
   }
 

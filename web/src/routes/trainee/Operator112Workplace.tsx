@@ -62,8 +62,8 @@ const errorLabels: Record<string, string> = {
   lesson_stopped: "Занятие остановлено преподавателем.",
 };
 
-export function Operator112Workplace({ me, item }: { me: Me; item: IntakeItem }) {
-  return item.intake_state.mode === "card_only" ? <Operator112ProfileCase me={me} item={item} /> : <Operator112IncomingWorkplace me={me} item={item} />;
+export function Operator112Workplace({ me, item, onClose }: { me: Me; item: IntakeItem; onClose?: () => void }) {
+  return item.intake_state.mode === "card_only" ? <Operator112ProfileCase me={me} item={item} onClose={onClose} /> : <Operator112IncomingWorkplace me={me} item={item} />;
 }
 
 function Operator112IncomingWorkplace({ me, item }: { me: Me; item: IntakeItem }) {

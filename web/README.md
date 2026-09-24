@@ -28,6 +28,19 @@ an incident type adds profile 104, profile 101, or both, with blank answers.
 The trainee saves the draft and reviews suggested training services; an
 override requires a reason. This route has no caller simulation or dispatch.
 See [slice-112-3-plan.md](../slice-112-3-plan.md).
+The card-only screen follows the ARM-112 layout from the operator instruction
+(`docs/reference-ui/112-instruction/image37.png`): phone strip with the
+elapsed timer, applicant row, address and description on the left, incident
+type search with the per-service maps on the right, and the orange services
+bar. The bar's «+» opens «Добавьте службы», where the trainee fixes the final
+service selection; × on the bar returns to the case list. Controls the
+simulator does not model (SMS, call records, reminders, links, no contact)
+are shown disabled.
+An assignment can contain several ordered 112 cases. The next case is offered
+when the current one closes, and the trainee can return to the case list after
+finishing the last case while the workplace remains open.
+The assignment editor preselects the next available case after an addition and
+can append cases to an already saved queue before the lesson starts.
 The compact applicant row contains name, applicant status, and editable
 telecom provider/channel. The entire address panel grows with its fields,
 while short screens scroll the page. The card's training availability

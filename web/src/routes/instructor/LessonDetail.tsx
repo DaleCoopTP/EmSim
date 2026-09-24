@@ -18,18 +18,16 @@ interface RowState {
   workstationNo: string;
   userId: string;
   queue: string[]; // scenario ids, in order
+  savedVersionIds: string[]; // already saved queue prefix, in order
 }
 
 function rowsFromAssignments(assignments: Assignment[] | undefined): RowState[] {
-  if (!assignments || assignments.length === 0) return [{ key: crypto.randomUUID(), workstationNo: "", userId: "", queue: [] }];
-  // scenario_version_ids are version ids, not scenario ids — the editor
-  // cannot re-derive which scenario a version belongs to without another
-  // lookup, so an already-saved queue is shown by count only and can be
-  // replaced wholesale, not edited entry-by-entry. Good enough for the
-  // slice's minimal-UI bar (slice-planning.md §1); a full round-trip
-  // editor is not required here.
+  if (!assignments || assignments.length === 0) return [{ key: crypto.randomUUID(), workstationNo: "", userId: "", queue: [], savedVersionIds: [] }];
+  // The API returns pinned version ids. Preserve them when appending cases;
+  // a scenario id from the catalogue may now point at a newer version.
   return assignments.map((a) => ({
-    key: crypto.randomUUID(), workstationNo: String(a.workstation_no), userId: a.user_id, queue: [],
+    key: crypto.randomUUID(), workstationNo: String(a.workstation_no), userId: a.user_id,
+    queue: [], savedVersionIds: a.scenario_version_ids,
   }));
 }
 
@@ -64,7 +62,7 @@ export function LessonDetailRoute() {
   const updateRow = (key: string, patch: Partial<RowState>) => {
     setRows(effectiveRows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   };
-  const addRow = () => setRows([...effectiveRows, { key: crypto.randomUUID(), workstationNo: "", userId: "", queue: [] }]);
+  const addRow = () => setRows([...effectiveRows, { key: crypto.randomUUID(), workstationNo: "", userId: "", queue: [], savedVersionIds: [] }]);
   const removeRow = (key: string) => setRows(effectiveRows.filter((r) => r.key !== key));
   const addToQueue = (key: string, scenarioId: string) => updateRow(key, { queue: [...(effectiveRows.find((r) => r.key === key)?.queue ?? []), scenarioId] });
   const removeFromQueue = (key: string, index: number) => {
@@ -87,7 +85,7 @@ export function LessonDetailRoute() {
       const assignments: Assignment[] = effectiveRows.map((row) => ({
         workstation_no: Number(row.workstationNo),
         user_id: row.userId,
-        scenario_version_ids: row.queue.map((id) => versionByScenario.get(id)).filter((v): v is string => !!v),
+        scenario_version_ids: [...row.savedVersionIds, ...row.queue.map((id) => versionByScenario.get(id)).filter((v): v is string => !!v)],
       }));
       return replaceAssignments(lessonId, assignments);
     },
@@ -115,14 +113,11 @@ export function LessonDetailRoute() {
   const current = lesson.data;
 
   const rowsValid = effectiveRows.length > 0 && effectiveRows.every((r) =>
-    r.workstationNo !== "" && r.userId !== "" && r.queue.length > 0 &&
-	(current.exercise_type !== "operator112_intake" || r.queue.length === 1) &&
-    (current.level !== "hard" || r.queue.length === 1 || (current.timing?.spawn_every_s ?? 0) > 0));
+    r.workstationNo !== "" && r.userId !== "" && r.savedVersionIds.length + r.queue.length > 0 &&
+    (current.level !== "hard" || r.savedVersionIds.length + r.queue.length === 1 || (current.timing?.spawn_every_s ?? 0) > 0));
   const canSave = isDraft && rowsValid && !versionsLoading;
   // Start reflects what the server actually has saved, not the editor's
-  // own in-progress (and, right after a successful save, deliberately
-  // queue-less — see rowsFromAssignments) local state: rowsValid would
-  // otherwise disable Start immediately after a perfectly good save.
+  // own in-progress local state.
   const hasSavedAssignments = (current.assignments?.length ?? 0) > 0;
 
   return (
@@ -160,7 +155,7 @@ export function LessonDetailRoute() {
             />
           ))}
           <p><button type="button" className="arm-secondary-action" onClick={addRow}>+ Добавить рабочее место</button></p>
-          {current.level === "hard" && effectiveRows.some((r) => r.queue.length > 1) && !((current.timing?.spawn_every_s ?? 0) > 0) && (
+          {current.level === "hard" && effectiveRows.some((r) => r.savedVersionIds.length + r.queue.length > 1) && !((current.timing?.spawn_every_s ?? 0) > 0) && (
             <p role="alert" className="error">У занятия не задан интервал новых карточек — очередь длиннее одной версии недопустима.</p>
           )}
           {save.isError && <p role="alert" className="error">{errorMessage(save.error)}</p>}
@@ -233,7 +228,7 @@ function AssignmentRow({
         </select>
       </label>
       <label>Обучаемый
-        <select required value={row.userId} onChange={(event) => onChange({ userId: event.target.value, queue: [] })}>
+        <select required value={row.userId} onChange={(event) => onChange({ userId: event.target.value, queue: [], savedVersionIds: [] })}>
           <option value="">Выберите обучаемого</option>
           {options?.trainees.map((t) => (
             <option key={t.id} value={t.id} disabled={usedUsers.has(t.id) && row.userId !== t.id}>
@@ -244,7 +239,8 @@ function AssignmentRow({
       </label>
       <div className="queue-editor">
         <span>Очередь:</span>
-        {row.queue.length === 0 && <span className="notice"> пусто</span>}
+        {row.savedVersionIds.length > 0 && <p className="notice">Сохранено кейсов: {row.savedVersionIds.length}. Новые кейсы добавятся после них. <button type="button" onClick={() => onChange({ savedVersionIds: [] })}>Очистить сохранённую очередь</button></p>}
+        {row.queue.length === 0 && row.savedVersionIds.length === 0 && <span className="notice"> пусто</span>}
         <ol>
           {row.queue.map((scenarioId, index) => (
             <li key={`${scenarioId}-${index}`}>
@@ -255,11 +251,15 @@ function AssignmentRow({
             </li>
           ))}
         </ol>
-		<select value={scenarioToAdd} disabled={!row.userId || (exerciseType === "operator112_intake" && row.queue.length >= 1)} onChange={(event) => setScenarioToAdd(event.target.value)}>
+		<select aria-label="Следующий кейс" value={scenarioToAdd} disabled={!row.userId} onChange={(event) => setScenarioToAdd(event.target.value)}>
           <option value="">Добавить сценарий в очередь</option>
           {compatible.map((s) => <option key={s.id} value={s.id}>{s.title} · версия {s.version}</option>)}
         </select>
-		<button type="button" disabled={!scenarioToAdd || (exerciseType === "operator112_intake" && row.queue.length >= 1)} onClick={() => { onAddToQueue(scenarioToAdd); setScenarioToAdd(""); }}>+ В очередь</button>
+		<button type="button" disabled={!scenarioToAdd} onClick={() => {
+          onAddToQueue(scenarioToAdd);
+          const next = compatible.find((scenario) => scenario.id !== scenarioToAdd && !row.queue.includes(scenario.id));
+          setScenarioToAdd(next?.id ?? scenarioToAdd);
+        }}>+ В очередь</button>
       </div>
       {onRemove && <p><button type="button" onClick={onRemove}>Удалить строку</button></p>}
     </fieldset>
