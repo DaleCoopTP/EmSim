@@ -1687,3 +1687,44 @@ JSON-фикстура внутри теста коммита 2, не в `seed/`)
 Next: коммит 3 — `seed/scenarios/pilot-112-free-text-chat-01.json`
 (`full_case`/`caller_mode: free_text`, газ+ДТП → 104/101, как у
 `pilot-112-full-gas-road-traffic-fire-01`), `seed/README.md`.
+
+## 2026-09-24 — Срез 112-5a, коммит 3: сидируемый сценарий для чата
+
+Status: готово. Реализует `slice-112-5a-plan.md` §3 «Сценарий для чата».
+
+- `seed/scenarios/pilot-112-free-text-chat-01.json` (новый): та же
+  карточка/эталон, что у `pilot-112-full-gas-road-traffic-fire-01.json`
+  (запах газа рядом с ДТП, `expected_types:
+  ["gas_explosion_road_traffic_fire"]`, `expected_services:
+  ["pilot_gas_104","pilot_fire_101"]`), но `intake112.caller_mode:
+  "free_text"` и `dialogue` содержит только `facts` — без
+  `initial`/`questions` (запрещено `validateIntake112FreeTextDialogue`,
+  `internal/content/validate.go:169`). `reference.case_description`
+  явно объясняет, что фразы заглушки `StubCallerReplier` не связаны с
+  фактами этого кейса и учебной ценности разговором пока не несут — она
+  появится в 112-5b с настоящей моделью.
+- `seed/README.md`: описание нового файла рядом с описанием
+  `pilot-112-full-gas-road-traffic-fire-01.json`.
+- Три места хардкодили число сидируемых сценариев/версий и потребовали
+  правки вместе с добавлением тринадцатого файла (12-й ключ):
+  `test/integration/content_import_test.go` (`ImportScenarios`:
+  `NewScenarios 11→12`, `NewVersions 12→13`, повторный импорт `Unchanged
+  12→13`; `ListScenarios{}`: `total/len 11→12`; `ListScenarios{ExerciseType:
+  operator112_intake}`: `total/len 7→8`), `test/integration/api_process_test.go`
+  (`GET /api/v1/scenarios`: `Total/len(Items) 11→12`).
+
+Validation: новый файл сначала проверен доменным unit-тестом
+`internal/content.TestSeedFilesAreValid` (валидирует каждый файл в
+`seed/scenarios` через `content.Validate`, без БД) — прошёл сразу;
+`python3 design-docs/contracts/check.py` — зелёный; `make verify` —
+зелёный; `make test-integration` — весь пакет `test/integration`
+целиком (не только import-тесты), зелёный, ~163с — подтверждает, что
+все три поправленных хардкода теперь совпадают с фактическим числом
+сидируемых сценариев и версий.
+
+Next: коммит 4 — trainee UI, плавающее окно чата
+(`web/src/routes/trainee/CallerChat.tsx`), кнопка «Чат с заявителем» в
+`Operator112ProfileCase.tsx`, замена секции «Разговор с заявителем» на
+окно для `free_text`-кейсов, и попутное исправление сброса
+несохранённого черновика карточки (`useEffect(..., [item.seq])` →
+`[item.card]`), которое иначе стирает текст, набранный в чате.

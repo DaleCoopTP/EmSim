@@ -70,6 +70,18 @@
   `reference.expected_types`/`expected_services`
   (`["pilot_gas_104","pilot_fire_101"]`), без `recipient_services` —
   это поле относится только к прежнему `incoming_call`.
+- `scenarios/pilot-112-free-text-chat-01.json` — срез 112-5a
+  (`slice-112-5a-plan.md`, ADR-024), `intake112.caller_mode="free_text"`:
+  та же карточка и тот же эталон, что у
+  `pilot-112-full-gas-road-traffic-fire-01`, но без сценарного
+  `dialogue.initial`/`questions` — оператор открывает отдельное окно чата
+  и пишет заявителю свободным текстом. Заявитель отвечает заглушкой
+  `operator112.StubCallerReplier` — шестью фиксированными фразами по
+  кругу, не связанными с фактами этого кейса (сама заглушка их
+  игнорирует; `dialogue.facts` здесь предназначены будущей модели
+  112-5b). Учебной ценности содержанием разговора кейс не несёт —
+  проверяется асинхронный протокол хода (задача `caller.reply`,
+  отмена при удержании/завершении вызова, stop, таймаут).
 - `voice-assets/manifest.json` и два PCM WAV-файла — greeting/ack этого
   контакта (mono, 16-bit, 16 kHz). `import seed` после сценариев импортирует
   их идемпотентно в content-addressed `BLOB_ROOT`.

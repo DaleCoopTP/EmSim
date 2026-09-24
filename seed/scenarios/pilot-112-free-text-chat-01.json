@@ -1,0 +1,33 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "pilot-112-free-text-chat-01",
+  "version": 1,
+  "title": "Свободный чат с заявителем: запах газа рядом с ДТП",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "exercise_type": "operator112_intake",
+    "difficulty": 3,
+    "intake112": {
+      "mode": "full_case",
+      "caller_mode": "free_text",
+      "call": {"aon": "+79161313131", "local_time": "02:03", "time_zone": "Europe/Moscow"},
+      "dialogue": {
+        "facts": [
+          {"id": "complaint", "label": "Жалобы", "card_path": "/complaint", "knowledge": "initial", "value": "сильно пахнет газом и рядом горит машина после столкновения"},
+          {"id": "applicant_status", "label": "Статус заявителя", "card_path": "/applicant_status", "knowledge": "initial", "value": "witness"},
+          {"id": "city", "label": "Город", "card_path": "/address/city", "knowledge": "on_question", "value": "Москва"},
+          {"id": "street", "label": "Улица", "card_path": "/address/street", "knowledge": "on_question", "value": "улица Гаражная"},
+          {"id": "house", "label": "Дом", "card_path": "/address/house", "knowledge": "on_question", "value": "5"},
+          {"id": "landmark", "label": "Ориентир", "card_path": "/address/landmark", "knowledge": "on_question", "value": "у автозаправки"},
+          {"id": "victims_count", "label": "Число пострадавших", "card_path": "/victims_count", "knowledge": "on_question", "value": "0"}
+        ]
+      },
+      "reference": {
+        "expected_types": ["gas_explosion_road_traffic_fire"],
+        "case_description": "Технический пилот для окна свободного чата с заявителем (112-5a). Карточка и эталон те же, что у pilot-112-full-gas-road-traffic-fire-01: запах газа рядом с местом ДТП с возгоранием, карты 104 и 101, оповещение одним действием. Заявитель отвечает заглушкой из шести фиксированных фраз по кругу (ADR-024) — они не связаны с фактами этого кейса и не подсказывают правильные ответы; учебная ценность разговора появится только в 112-5b с настоящим ИИ-заявителем.",
+        "expected_services": ["pilot_gas_104", "pilot_fire_101"]
+      }
+    }
+  }
+}
