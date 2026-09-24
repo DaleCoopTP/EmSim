@@ -16,8 +16,9 @@ type IntakeReviewAction = { type: string; accepted: boolean; server_at: string; 
 type DialogueFact = { id: string; label: string; card_path: string; knowledge: "initial" | "on_question" | "unknown"; value?: string };
 type ReviewCatalog = { version: number; types: { id: string; name: string }[]; profiles: { id: string; name: string; fields: { id: string; label: string; kind: string; shared?: string }[] }[] };
 type ReviewServiceState = { suggested_services?: { service_code: string; reasons: string[] }[]; service_review?: { suggested: { service_code: string; reasons: string[] }[]; selected: string[]; reason?: string; reviewed_at: string } };
-type IntakeReviewItem = Item & { card: IntakeCard; intake_reference?: unknown; intake_dialogue_reference?: { facts: DialogueFact[] }; intake_state?: { mode?: string; catalog?: ReviewCatalog; transcript?: IntakeReviewLine[] } & ReviewServiceState; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard } };
-type IntakeReviewEvidence = { final_card?: IntakeCard; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; intake_state?: { mode?: string; catalog?: ReviewCatalog; transcript?: IntakeReviewLine[] } & ReviewServiceState; actions?: IntakeReviewAction[] };
+type IntakeNotification = { item_id: string; action_id: string; services: { service_code: string; suggested: boolean }[]; reason?: string; card_snapshot: IntakeCard; notified_at: string };
+type IntakeReviewItem = Item & { card: IntakeCard; intake_reference?: unknown; intake_dialogue_reference?: { facts: DialogueFact[] }; intake_state?: { mode?: string; catalog?: ReviewCatalog; transcript?: IntakeReviewLine[] } & ReviewServiceState; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; notification?: IntakeNotification };
+type IntakeReviewEvidence = { final_card?: IntakeCard; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; notification?: IntakeNotification; intake_state?: { mode?: string; catalog?: ReviewCatalog; transcript?: IntakeReviewLine[] } & ReviewServiceState; actions?: IntakeReviewAction[] };
 const labels: Record<string, string> = { met: "выполнено", partial: "частично", not_met: "не выполнено", not_applicable: "не применимо", unavailable: "не проверено" };
 const manualStatuses: CriterionStatus[] = ["met", "partial", "not_met", "not_applicable"];
 
@@ -74,7 +75,8 @@ function useItem(itemId: string) { return useQuery({ queryKey: ["training", "ite
 function CriteriaTable({ criteria }: { criteria: CriterionResult[] }) { if (criteria.length === 0) return <p>Автооценка ещё не готова.</p>; return <table><thead><tr><th>Критерий</th><th>Статус</th><th>Основание</th></tr></thead><tbody>{criteria.map((criterion) => <tr key={criterion.id}><td>{criterion.id}{criterion.critical ? " · критичный" : ""}</td><td>{labels[criterion.status]}</td><td>{criterion.explanation || "—"}{criterion.evidence_refs?.length ? ` (${criterion.evidence_refs.join(", ")})` : ""}</td></tr>)}</tbody></table>; }
 
 function IntakeReviewPanel({ item, evidence }: { item: IntakeReviewItem; evidence: IntakeReviewEvidence }) {
-  if (item.intake_state?.mode === "card_only" || evidence.intake_state?.mode === "card_only") return <IntakeProfileReviewPanel item={item} evidence={evidence} />;
+  const mode = item.intake_state?.mode ?? evidence.intake_state?.mode;
+  if (mode === "card_only" || mode === "full_case") return <IntakeProfileReviewPanel item={item} evidence={evidence} />;
   const card = evidence.final_card ?? item.card;
   const dispatch = evidence.dispatch ?? item.dispatch;
   const transcript = evidence.intake_state?.transcript ?? item.intake_state?.transcript ?? [];
@@ -108,22 +110,36 @@ function IntakeProfileReviewPanel({ item, evidence }: { item: IntakeReviewItem; 
   const card = evidence.final_card ?? item.card;
   const state = evidence.intake_state ?? item.intake_state;
   const catalog = state?.catalog;
+  const notification = evidence.notification ?? item.notification;
+  const isCall = state?.mode === "full_case";
+  const transcript = state?.transcript ?? [];
   const typeName = (id: string) => catalog?.types.find((type) => type.id === id)?.name ?? id;
   const actions = (evidence.actions ?? []).filter((action) => action.accepted);
   const actionText = (action: IntakeReviewAction) => {
     switch (action.type) {
       case "open": return "Открыл кейс";
+      case "answer_incoming": return "Ответил на вызов";
+      case "hold_incoming": return "Поставил на удержание";
+      case "resume_incoming": return "Вернулся к разговору";
+      case "end_incoming": return "Завершил разговор";
+      case "ask_intake_question": return "Задал уточняющий вопрос";
       case "add_incident_type": return `Добавил тип: ${typeName(action.payload?.type_id ?? "")}`;
       case "remove_incident_type": return `Убрал тип: ${typeName(action.payload?.type_id ?? "")}`;
       case "save_intake_draft": return "Сохранил карточку";
       case "review_service_selection": return `Исходное предложение: ${(action.effect?.suggested ?? []).map((entry) => `${entry.service_code} (${entry.reasons.join("; ")})`).join(", ") || "без служб"}; итоговый выбор: ${(action.payload?.services ?? []).join(", ") || "без служб"}${action.payload?.reason ? `; причина: ${action.payload.reason}` : ""}`;
-      case "complete_profile_case": return "Завершил кейс";
+      case "notify_services": return `Оповестил службы: ${(action.payload?.services ?? []).join(", ") || "без служб"}${action.payload?.reason ? `; причина: ${action.payload.reason}` : ""}`;
+      case "complete_profile_case": case "complete_intake": return "Завершил обработку";
+      case "mark_no_contact": return "Закрыл: нет контакта";
+      case "mark_call_dropped": return "Закрыл: срыв звонка";
       default: return action.type;
     }
   };
   const answerText = (answer: { state: string; value?: string; values?: string[] } | undefined) => answer?.state === "known" ? answer.values?.join(", ") ?? answer.value ?? "" : answer?.state === "unknown" ? "неизвестно" : "не заполнено";
   return <>
-    <h2>Кейс без разговора</h2><p>Каталог профилей: версия {catalog?.version ?? "—"}. Отправка карточки в службу для этого режима не выполняется.</p>
+    <h2>{isCall ? "Кейс с разговором" : "Кейс без разговора"}</h2>
+    <p>Каталог профилей: версия {catalog?.version ?? "—"}.{!isCall && " Отправка карточки в службу для этого режима не выполняется."}</p>
+    {isCall && <><h3>Разговор с заявителем</h3>
+      <ol>{transcript.map((line, index) => <li key={line.id ?? index}>{formatDateTime(line.server_at)} · {line.speaker === "operator" ? "Оператор" : "Заявитель"}: {line.text}</li>)}</ol></>}
     <h3>Последовательность действий</h3><ol>{actions.map((action) => <li key={action.log_seq}>{formatDateTime(action.server_at)} · {actionText(action)}</li>)}</ol>
     <h3>Итоговая общая карточка</h3><IntakeCardView card={card} />
     <h3>Выбранные типы</h3><ul>{(card.incident_types ?? []).map((id) => <li key={id}>{typeName(id)}</li>)}</ul>
@@ -132,7 +148,11 @@ function IntakeProfileReviewPanel({ item, evidence }: { item: IntakeReviewItem; 
     </dl></section>)}
     <h3>Предложение и итоговый выбор служб</h3>
     <ul>{state?.service_review?.suggested.map((service) => <li key={service.service_code}>{service.service_code}: {service.reasons.join("; ")}</li>) ?? state?.suggested_services?.map((service) => <li key={service.service_code}>{service.service_code}: {service.reasons.join("; ")}</li>)}</ul>
-    <p>Выбрано: {state?.service_review?.selected.join(", ") || "—"}{state?.service_review?.reason ? ` · Причина изменения: ${state.service_review.reason}` : ""}</p>
+    {notification
+      ? <p>Оповещены: {notification.services.map((entry) => `${entry.service_code}${entry.suggested ? "" : " (добавлена вручную)"}`).join(", ") || "—"} · {formatDateTime(notification.notified_at)}{notification.reason ? ` · Причина изменения: ${notification.reason}` : ""}</p>
+      : state?.service_review
+        ? <p>Выбрано: {state.service_review.selected.join(", ") || "—"}{state.service_review.reason ? ` · Причина изменения: ${state.service_review.reason}` : ""}</p>
+        : <p>Оповещение ещё не выполнено.</p>}
     <details><summary>Эталон кейса</summary><pre>{JSON.stringify(item.intake_reference ?? {}, null, 2)}</pre></details>
   </>;
 }

@@ -320,4 +320,16 @@ test("operator 112: full case — call, questions, incident types, profile cards
   expect(finished.card.profiles["104"]).toBeTruthy();
   expect(finished.card.profiles["101"]).toBeTruthy();
   await page.getByRole("button", { name: "Выйти" }).click();
+
+  await page.getByLabel("Логин").fill("e2e-112-full-case-instructor");
+  await page.getByLabel("Пароль").fill(password);
+  await page.getByRole("button", { name: "Войти" }).click();
+  await expect(page.getByRole("heading", { name: "Занятия" })).toBeVisible();
+  await page.goto(`${baseURL}/instructor/items/${itemID}/review`);
+  await expect(page.getByRole("heading", { name: "Кейс с разговором" })).toBeVisible();
+  await expect(page.getByText(/Заявитель: Здравствуйте! Тут авария/)).toBeVisible();
+  const notifiedLine = page.locator("p", { hasText: "Оповещены:" });
+  await expect(notifiedLine).toBeVisible();
+  await expect(notifiedLine).toContainText("pilot_gas_104");
+  await expect(notifiedLine).toContainText("pilot_fire_101");
 });

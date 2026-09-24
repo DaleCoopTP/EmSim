@@ -22,6 +22,12 @@ const commandLabels: Record<string, string> = {
   complete_profile_case: "Завершил кейс",
   dispatch_intake: "Направил карточку",
   complete_intake: "Завершил обработку",
+  notify_services: "Оповестил службы",
+  hold_incoming: "Поставил на удержание",
+  resume_incoming: "Вернулся к разговору",
+  ask_intake_question: "Задал уточняющий вопрос",
+  mark_no_contact: "Закрыл: нет контакта",
+  mark_call_dropped: "Закрыл: срыв звонка",
 };
 
 // RFC-001 §7.7's monitor: SSE (lessons/{id}/stream) is an invalidation
@@ -74,7 +80,7 @@ function MonitorRowView({ row }: { row: MonitorRow }) {
         {row.active_items.length === 0 && "—"}
         {row.active_items.map((item) => (
           <div key={item.id}>
-			№ {item.card_number} · {item.exercise_type === "operator112_intake" ? item.call_status === "not_applicable" ? `кейс без разговора${item.incident_type ? ` · ${item.incident_type}` : " · тип не выбран"}` : `вызов ${item.call_status === "ringing" ? "ожидает" : item.call_status === "connected" ? "идёт разговор" : "разговор завершён"}${item.dispatched ? " · направлена" : ""}` : reactionLabel(item.reaction)}
+			№ {item.card_number} · {item.exercise_type === "operator112_intake" ? item.call_status === "not_applicable" ? `кейс без разговора${item.incident_type ? ` · ${item.incident_type}` : " · тип не выбран"}${item.notified ? " · оповещено" : ""}` : `вызов ${item.call_status === "ringing" ? "ожидает" : item.call_status === "connected" ? "идёт разговор" : item.call_status === "held" ? "на удержании" : "разговор завершён"}${item.incident_type ? ` · ${item.incident_type}` : ""}${item.notified ? " · оповещено" : item.dispatched ? " · направлена" : ""}` : reactionLabel(item.reaction)}
             {item.interruptions.length > 0 && <span role="alert" className="error"> · прервана рестартом сервера</span>}
           </div>
         ))}

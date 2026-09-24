@@ -1347,3 +1347,46 @@ Remaining risk: визуальная проработка минимальна �
 Next: экран преподавателя — показать запись оповещения (`item.notification`)
 в мониторе и разборе `instructor/LessonDetail.tsx` (шаг 6 плана по
 коммитам).
+
+## 2026-09-24 — Срез 112-4, шаг 6: оповещение служб в мониторе и разборе
+
+Status: реализовано и проверено e2e.
+
+- `web/src/routes/instructor/Monitor.tsx`: строка карточки в мониторе
+  теперь добавляет тип происшествия и «· оповещено» и для `card_only`, и
+  для звонковых режимов (было только `dispatched`/«· направлена», что для
+  нового финала всегда false); заодно исправлен пропущенный статус
+  `held` в тексте («на удержании» раньше показывался как «разговор
+  завершён»). `commandLabels` дополнен `notify_services` и уже
+  существовавшими, но не подписанными командами звонка/опроса
+  (`hold_incoming`, `resume_incoming`, `ask_intake_question`,
+  `mark_no_contact`, `mark_call_dropped`) — они появляются в «последнем
+  действии» строки монитора для `full_case`.
+- `web/src/routes/instructor/ItemReview.tsx`: `full_case` теперь тоже
+  маршрутизируется в `IntakeProfileReviewPanel` (раньше туда шёл только
+  `card_only`, а `full_case` без изменений попал бы в ветку для
+  `incoming_call`, рассчитанную на одиночный `dispatch`). Панель получила
+  `isCall`-развилку: заголовок «Кейс с разговором»/«Кейс без разговора»,
+  секция «Разговор с заявителем» (транскрипт) при `isCall`, подписи для
+  звонковых команд и `notify_services`/`complete_intake`/
+  `mark_no_contact`/`mark_call_dropped` в логе действий. Раздел «Предложение
+  и итоговый выбор служб» показывает `evidence.notification ??
+  item.notification` (адресаты, предложенные/добавленные вручную,
+  причина, время), если он есть — старый `service_review` остаётся
+  фоллбэком для незавершённых до этого среза `card_only`-прохождений.
+- Контракты не менялись: `Item.notification`/`ItemSummary.notified` уже
+  были добавлены в openapi.yaml шагом 2.
+- `web/e2e/operator112-profiles.spec.ts`: разбор комбинированного кейса
+  дополнен проверкой строки «Оповещены: …» (все три службы, порядок не
+  фиксируется). `web/e2e/operator112.spec.ts`: новый тест шага 5 дополнен
+  входом преподавателя на `/instructor/items/{id}/review` — заголовок
+  «Кейс с разговором», первая реплика заявителя, строка «Оповещены:
+  pilot_gas_104, pilot_fire_101».
+
+Validation: `make verify`, `make verify-web`, `cd web && npm run lint`
+(тот же предсуществующий `set-state-in-effect`), `cd web && npm run
+test:e2e` — все 5 сценариев прошли.
+
+Next: документация среза 112-4 — README.md, web/README.md,
+seed/README.md, статус в slice-planning-112.md/CLAUDE.md (шаг 7 плана по
+коммитам).

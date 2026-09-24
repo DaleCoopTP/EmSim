@@ -167,5 +167,10 @@ test("operator 112: three card-only cases show profiles only after type selectio
   await expect(page.getByRole("heading", { name: "Активные профильные карты" })).toBeVisible();
   await expect(page.getByText(/pilot_gas_104: Добавлена карта 104/)).toBeVisible();
   await expect(page.getByText(/pilot_fire_101: Добавлена карта 101/)).toBeVisible();
+  const notifiedLine = page.locator("p", { hasText: "Оповещены:" });
+  await expect(notifiedLine).toBeVisible();
+  await expect(notifiedLine).toContainText("pilot_gas_104");
+  await expect(notifiedLine).toContainText("pilot_fire_101");
+  await expect(notifiedLine).toContainText("pilot_ambulance");
   await instructorAPI.dispose();
 });
