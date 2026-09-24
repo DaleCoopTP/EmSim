@@ -1438,3 +1438,51 @@ card_only, UI full_case, инструкторский UI, документаци
 на вёрстке 112-3 минимальна (см. запись шага 5). Следующий шаг по плану
 112 — 112-5 (ИИ-заявитель), с обязательным новым ADR вместо ограничения
 ADR-003 и замером W0.
+
+## 2026-09-24 — Срез 112-5a, коммит 0: план, ADR-024, разделение 112-5
+
+Status: начало реализации 112-5a (§8 slice-planning-112.md, план
+`/Users/lucifer/.claude/plans/playful-snacking-quiche.md`). По решению
+пользователя срез 112-5 разделён на 112-5a (чат с заявителем, свободный
+текст, детерминированная заглушка) и 112-5b (замена заглушки на ИИ,
+которую блокирует ещё не сделанный выбор модели и замер W0). Разделение
+целесообразно только если заглушка ведёт себя как будущая модель —
+отвечает асинхронно, вне транзакции команды, с возможным отказом/таймаутом
+— иначе 112-5b пришлось бы заново проектировать протокол хода.
+
+- `design-docs/adr/024-operator112-async-caller-reply.md` (новый):
+  асинхронный протокол хода `send_caller_message` → задача `caller.reply`
+  в отдельном пуле worker → `ApplyCallerReply` в короткой транзакции.
+  Явно фиксирует: ответ заявителя **не увеличивает `items.seq`** (это не
+  эффект команды оператора, а отдельный субъект — тот же принцип, что и у
+  `item_events` в ДДС); отмену ожидающего хода при
+  hold/end/mark_call_dropped/complete_intake; барьер stop (ход остаётся
+  `pending` в evidence, ответ после барьера не применяется); отказ через
+  общий `Finalizer` при исчерпании попыток; запись `adapter` в каждом
+  применённом ходе. Уточняет ADR-022 (синхронный порт `CallerSimulator`
+  для `prepared`-диалога остаётся без изменений).
+- `slice-112-5a-plan.md` (новый): пользовательский результат, модель и
+  правила (`caller_mode`, `send_caller_message`, `caller.reply`, отмена и
+  отказ хода, хранение внутри существующего `items.intake_state`),
+  Definition of Done, объём вне среза.
+- `slice-planning-112.md`: §1 (рабочие допущения), §3 (карта поставки —
+  строка 112-5 заменена на 112-5a/112-5b с зависимостями и ссылкой на
+  ADR-024, обновлены зависимости 112-6/112-8 на 112-5b), §8 (заголовок и
+  вступление объясняют разделение и то, что 112-5b меняет только
+  реализацию `CallerReplier`, не протокол).
+
+Validation: перечитаны ADR-022/003, `internal/training/operator112/*`
+(caller.go, rules.go, profile_rules.go, evidence.go), `internal/training/
+service.go` (Execute/recordDecision/lockForCommand/tickEvent — как
+существующий код меняет seq/log_seq без блокировки lessons FOR UPDATE, по
+образцу для caller.reply), `platform/tasks` (Spec/Registry/Finalizer),
+`cmd/emsim/worker_composition.go` (lessonCloseHandler как образец для
+будущего обработчика caller.reply), схема БД (`actions_type_check`,
+`items_intake_state_shape`), seed-сценарии (`pilot-112-medical-01-v2`,
+`pilot-112-full-gas-road-traffic-fire-01`), `intake-catalog.json`. Только
+документация в этом коммите — код не менялся, `make verify` не требуется
+для чистого diff в `.md`; будет прогнан вместе с шагом 1.
+
+Next: коммит 1 — домен (`caller_mode`, `send_caller_message`,
+`IntakeCallerTurn`, миграция `actions_type_check`, контракты, тесты
+правил) без ещё постановки задачи `caller.reply`.
