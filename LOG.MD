@@ -1128,3 +1128,64 @@ Validation: только документация, тесты не запуск�
 
 Next: миграция и доменные правила `notify_services` для `card_only`
 (шаг 2 плана по коммитам), затем `full_case` (шаг 3).
+
+## 2026-09-24 — Срез 112-4, шаг 2: notify_services для card_only
+
+Status: реализовано и проверено; `full_case` (шаг 3) ещё не начат.
+
+- `migrations/00015_operator112_notifications.sql`: таблица
+  `intake_notifications` (по образцу `intake_dispatches`, неизменяема) и
+  `notify_services` в `actions_type_check`. Обновил
+  `internal/platform/postgres/postgres.go`'s `ExpectedSchemaVersion` 14→15 —
+  без этого `/readyz` и `migrate ready` никогда не становятся `true` после
+  новой миграции (нашёл через ручной прогон `emsim migrate up`/`ready`
+  против контейнера postgres, когда интеграционный тест падал на
+  "worker exited before readiness" без объяснения причины).
+- `internal/training`: `IntakeState.Finale`/`Notified`, `IntakeNotification`,
+  `CommandNotifyServices`; `Store.InsertIntakeNotification`/
+  `IntakeNotificationByItem` + реализация в `postgres/store.go`; `service.go`
+  создаёт card_only item с `Finale="notify"` и читает/пишет notification
+  везде, где раньше читался/писался dispatch (Execute, stop-close,
+  ItemForTrainee/Instructor).
+- `internal/training/operator112/profile_rules.go`: общая
+  `validServiceSelection` (вынесена из `review_service_selection`, повторно
+  используется `notify_services`); `notify_services`/`complete_intake` для
+  `Finale=="notify"`; `review_service_selection`/`complete_profile_case`
+  теперь отклоняются для `Finale=="notify"`; `save_intake_draft`/
+  `add_incident_type`/`remove_incident_type` отклоняются после `Notified`.
+  Уже идущие/закрытые card_only items без ключа `finale` в сохранённом
+  `intake_state` (создан до этой миграции) продолжают старым маршрутом без
+  какой-либо отдельной миграции данных — отсутствие ключа в jsonb декодируется
+  как пустая строка.
+- `evidence.go`: поле `Notification` рядом с `Dispatch`.
+  `evidence.operator112.schema.json`: `notification` в required, условное
+  `service_review` только для `finale!="notify"`, условное `notification`
+  для `finale=="notify"`, `dispatch` обязан быть `null` для `card_only`/
+  `full_case`. `openapi.yaml`: команда `notify_services`, `Intake112State.
+  finale/notified`, схема `Intake112Notification`, `Item.notification`,
+  `ItemSummary.notified`.
+- Тесты: `profile_rules_test.go` — `TestProfileNotifyServicesFinale` (пустой
+  список, служба вне правил, изменение без причины, повтор, правка после
+  оповещения, `review_service_selection`/`complete_profile_case` отклонены).
+  `test/integration/operator112_profiles_test.go` переписан на новый финал
+  (старый `review_service_selection`/`complete_profile_case` явно проверяется
+  как отклонённый для новых items) с проверкой `intake_notifications` и
+  негативным JSON Schema кейсом без `notification`. `test/integration/
+  harness_test.go`: новая таблица добавлена в golden-списки
+  `TestPlatformSchema`/`assertApplicationTablesAbsent` и в `resetSchema`
+  (иначе `DROP TABLE actions` падает на FK от `intake_notifications`).
+
+Validation: `gofmt`, `make verify`, `make verify-web`,
+`python3 design-docs/contracts/check.py`, `go test -tags=integration
+./test/integration/...` (полный пакет, включая ДДС/112/worker/recovery) —
+все прошли.
+
+Remaining risk: `design-docs/contracts/schema.sql` не обновлён — этот файл
+уже отставал от миграций 00012–00014 до начала этой работы (последний раз
+трогался на 00011); не стал наверстывать три слоя старого долга внутри
+этого среза, чтобы не размывать изменение. `full_case` (объединённый
+разговор + профильные карты, шаг 3 плана) ещё не реализован.
+
+Next: `full_case` — режим сценария, объединяющий диалог 112-2 и профильные
+карты 112-3, с тем же финалом `notify_services` (шаг 3 плана по коммитам,
+`slice-112-4-plan.md`).

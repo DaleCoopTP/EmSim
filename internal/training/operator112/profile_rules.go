@@ -197,7 +197,7 @@ func decideProfileCase(item training.Item, cmd training.Command, now time.Time) 
 		}
 		d.State, d.OpenedAt = training.ItemOpened, &now
 	case training.CommandAddIncidentType:
-		if item.State != training.ItemOpened && item.State != training.ItemInProgress {
+		if (item.State != training.ItemOpened && item.State != training.ItemInProgress) || state.Notified {
 			return reject(item, training.RejectTransitionNotAllowed), nil
 		}
 		var p struct {
@@ -233,7 +233,7 @@ func decideProfileCase(item training.Item, cmd training.Command, now time.Time) 
 		d.Effect = map[string]any{"type_id": p.TypeID, "active_profiles": activeProfileIDs(state.Catalog, card.IncidentTypes)}
 		d.State = training.ItemInProgress
 	case training.CommandRemoveIncidentType:
-		if item.State != training.ItemOpened && item.State != training.ItemInProgress {
+		if (item.State != training.ItemOpened && item.State != training.ItemInProgress) || state.Notified {
 			return reject(item, training.RejectTransitionNotAllowed), nil
 		}
 		var p struct {
@@ -266,7 +266,7 @@ func decideProfileCase(item training.Item, cmd training.Command, now time.Time) 
 		state.SuggestedServices = serviceSuggestions(card, state.Catalog)
 		d.Effect = map[string]any{"type_id": p.TypeID, "active_profiles": active}
 	case training.CommandSaveIntakeDraft:
-		if item.State != training.ItemOpened && item.State != training.ItemInProgress {
+		if (item.State != training.ItemOpened && item.State != training.ItemInProgress) || state.Notified {
 			return reject(item, training.RejectTransitionNotAllowed), nil
 		}
 		var p struct {
@@ -282,6 +282,9 @@ func decideProfileCase(item training.Item, cmd training.Command, now time.Time) 
 		state.HasSavedDraft, state.ServiceReview = true, nil
 		state.SuggestedServices = serviceSuggestions(card, state.Catalog)
 	case training.CommandReviewServices:
+		if state.Finale == "notify" {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
 		if !state.HasSavedDraft {
 			return reject(item, training.RejectTransitionNotAllowed), nil
 		}
@@ -289,41 +292,55 @@ func decideProfileCase(item training.Item, cmd training.Command, now time.Time) 
 			Services []string `json:"services"`
 			Reason   string   `json:"reason"`
 		}
-		if !payload(cmd.Payload, &p) {
-			return reject(item, training.RejectInvalidPayload), nil
-		}
-		allowed := map[string]bool{}
-		for _, rule := range state.Catalog.ServiceRules {
-			allowed[rule.ServiceCode] = true
-		}
-		selected := map[string]bool{}
-		for _, code := range p.Services {
-			if !allowed[code] || selected[code] {
-				return reject(item, training.RejectInvalidPayload), nil
-			}
-			selected[code] = true
-		}
-		suggested := map[string]bool{}
-		for _, s := range state.SuggestedServices {
-			suggested[s.ServiceCode] = true
-		}
-		changed := len(selected) != len(suggested)
-		for code := range selected {
-			if !suggested[code] {
-				changed = true
-			}
-		}
-		if changed && strings.TrimSpace(p.Reason) == "" {
-			return reject(item, training.RejectInvalidPayload), nil
-		}
-		if len(p.Reason) > 1000 || strings.TrimSpace(p.Reason) != p.Reason {
+		if !payload(cmd.Payload, &p) || !validServiceSelection(state.Catalog, state.SuggestedServices, p.Services, p.Reason, false) {
 			return reject(item, training.RejectInvalidPayload), nil
 		}
 		state.ServiceReview = &training.IntakeServiceReview{Suggested: append([]training.IntakeServiceSuggestion(nil), state.SuggestedServices...),
 			Selected: append([]string{}, p.Services...), Reason: p.Reason, ReviewedAt: now}
 		d.Effect = map[string]any{"suggested": state.ServiceReview.Suggested, "selected": state.ServiceReview.Selected, "reason": state.ServiceReview.Reason}
 	case training.CommandCompleteProfileCase:
+		if state.Finale == "notify" {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
 		if len(card.IncidentTypes) == 0 || !state.HasSavedDraft || state.ServiceReview == nil ||
+			(item.State != training.ItemOpened && item.State != training.ItemInProgress) {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		var p struct{}
+		if !payload(cmd.Payload, &p) {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		reason := training.CloseCompleted
+		d.Close, d.State = &reason, training.ItemClosed
+	case training.CommandNotifyServices:
+		// ADR-023: "Сохранить → оповестить и сохранить карточку" — one
+		// action that notifies the whole service list and, unlike the
+		// legacy review_service_selection, closes the draft for edits
+		// immediately (save_intake_draft/add_incident_type/
+		// remove_incident_type all reject once state.Notified is true).
+		if state.Finale != "notify" || len(card.IncidentTypes) == 0 || !state.HasSavedDraft || state.Notified {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		var p struct {
+			Services []string `json:"services"`
+			Reason   string   `json:"reason"`
+		}
+		if !payload(cmd.Payload, &p) || !validServiceSelection(state.Catalog, state.SuggestedServices, p.Services, p.Reason, true) {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		suggested := map[string]bool{}
+		for _, s := range state.SuggestedServices {
+			suggested[s.ServiceCode] = true
+		}
+		services := make([]training.IntakeNotificationService, len(p.Services))
+		for i, code := range p.Services {
+			services[i] = training.IntakeNotificationService{ServiceCode: code, Suggested: suggested[code]}
+		}
+		state.Notified = true
+		d.IntakeNotification = &training.IntakeNotification{Services: services, Reason: p.Reason, CardSnapshot: card, NotifiedAt: now}
+		d.Effect = map[string]any{"services": p.Services, "reason": p.Reason}
+	case training.CommandCompleteIntake:
+		if state.Finale != "notify" || !state.Notified || state.CallStatus != "not_applicable" ||
 			(item.State != training.ItemOpened && item.State != training.ItemInProgress) {
 			return reject(item, training.RejectTransitionNotAllowed), nil
 		}
@@ -338,4 +355,46 @@ func decideProfileCase(item training.Item, cmd training.Command, now time.Time) 
 	}
 	d.IntakeCard, d.IntakeState = &card, &state
 	return d, nil
+}
+
+// validServiceSelection is the shared "final service list" check for
+// both review_service_selection (kept for pre-ADR-023 card_only items)
+// and notify_services: every code must be one the catalog's rules can
+// produce, without duplicates, and a selection that differs from
+// state.SuggestedServices needs a non-empty reason (RFC-001's "изменение
+// сохраняет исходное предложение и итоговый выбор"). requireNonEmpty is
+// false for review_service_selection (its existing contract allows an
+// empty list) and true for notify_services (ADR-023: "непустой список").
+func validServiceSelection(catalog *content.IntakeCatalog, suggested []training.IntakeServiceSuggestion, services []string, reason string, requireNonEmpty bool) bool {
+	if catalog == nil {
+		return false
+	}
+	if requireNonEmpty && len(services) == 0 {
+		return false
+	}
+	allowed := map[string]bool{}
+	for _, rule := range catalog.ServiceRules {
+		allowed[rule.ServiceCode] = true
+	}
+	selected := map[string]bool{}
+	for _, code := range services {
+		if !allowed[code] || selected[code] {
+			return false
+		}
+		selected[code] = true
+	}
+	suggestedSet := map[string]bool{}
+	for _, s := range suggested {
+		suggestedSet[s.ServiceCode] = true
+	}
+	changed := len(selected) != len(suggestedSet)
+	for code := range selected {
+		if !suggestedSet[code] {
+			changed = true
+		}
+	}
+	if changed && strings.TrimSpace(reason) == "" {
+		return false
+	}
+	return len(reason) <= 1000 && strings.TrimSpace(reason) == reason
 }

@@ -791,6 +791,7 @@ type itemSummaryJSON struct {
 	ExerciseType  string             `json:"exercise_type,omitempty"`
 	CallStatus    string             `json:"call_status,omitempty"`
 	Dispatched    bool               `json:"dispatched,omitempty"`
+	Notified      bool               `json:"notified,omitempty"`
 	State         string             `json:"state"`
 	Reaction      string             `json:"reaction"`
 	Seq           int64              `json:"seq"`
@@ -833,10 +834,10 @@ func toItemSummaryJSON(item training.Item) itemSummaryJSON {
 		closeReason = &s
 	}
 	if item.IntakeCard != nil {
-		callStatus, dispatched := "", false
+		callStatus, dispatched, notified := "", false, false
 		incidentType := ""
 		if item.IntakeState != nil {
-			callStatus, dispatched = item.IntakeState.CallStatus, item.IntakeState.Dispatched
+			callStatus, dispatched, notified = item.IntakeState.CallStatus, item.IntakeState.Dispatched, item.IntakeState.Notified
 			if item.IntakeState.Mode == "card_only" && item.IntakeState.Catalog != nil {
 				var names []string
 				for _, id := range item.IntakeCard.IncidentTypes {
@@ -852,7 +853,7 @@ func toItemSummaryJSON(item training.Item) itemSummaryJSON {
 		}
 		return itemSummaryJSON{ID: item.ID.String(), ExerciseType: string(item.ExerciseType),
 			State: string(item.State), Reaction: string(item.Reaction), Seq: item.Seq, CardNumber: item.IntakeCard.Number,
-			CallStatus: callStatus, Dispatched: dispatched, IncidentType: incidentType, OfferedAt: formatTime(item.OfferedAt),
+			CallStatus: callStatus, Dispatched: dispatched, Notified: notified, IncidentType: incidentType, OfferedAt: formatTime(item.OfferedAt),
 			OpenedAt: formatTimePtr(item.OpenedAt), ClosedAt: formatTimePtr(item.ClosedAt),
 			CloseReason: closeReason, Deadlines: toDeadlinesJSON(item.Deadlines), Interruptions: toInterruptionsJSON(item.Interruptions)}
 	}
@@ -980,6 +981,7 @@ type itemJSON struct {
 	AvailableQuestions      []training.IntakeQuestionOption `json:"available_questions,omitempty"`
 	IntakeDialogueReference *content.Intake112Dialogue      `json:"intake_dialogue_reference,omitempty"`
 	Dispatch                *training.IntakeDispatch        `json:"dispatch,omitempty"`
+	Notification            *training.IntakeNotification    `json:"notification,omitempty"`
 	RecipientServices       []string                        `json:"recipient_services,omitempty"`
 	IntakeReference         *content.Intake112Reference     `json:"intake_reference,omitempty"`
 	AllowedTransitions      []string                        `json:"allowed_transitions"`
@@ -1101,6 +1103,7 @@ func toItemJSON(item training.Item, actions []training.Action, events []training
 		}
 		return itemJSON{itemSummaryJSON: toItemSummaryJSON(item), Mode: string(item.Mode),
 			Card: item.IntakeCard, IntakeState: state, AvailableServiceCodes: availableServices, Dispatch: item.IntakeDispatch,
+			Notification:      item.IntakeNotification,
 			RecipientServices: item.IntakeRecipients, IntakeReference: intakeReference,
 			AvailableQuestions: item.AvailableQuestions, IntakeDialogueReference: intakeDialogue,
 			AllowedTransitions: []string{}, Actions: actionItems, Events: []deliveredEventJSON{}, Calls: []callJSON{},

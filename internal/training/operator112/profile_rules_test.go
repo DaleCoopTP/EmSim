@@ -102,6 +102,82 @@ func TestProfileCasesAndServiceSuggestions(t *testing.T) {
 	}
 }
 
+// TestProfileNotifyServicesFinale is ADR-023's card_only route: save,
+// notify_services, complete_intake — replacing review_service_selection
+// and complete_profile_case for items created with Finale="notify".
+func TestProfileNotifyServicesFinale(t *testing.T) {
+	catalog := pilotCatalog(t)
+
+	t.Run("happy path", func(t *testing.T) {
+		card := training.UnansweredIntakeCard("112-test", "", "", "")
+		card.Profiles = map[string]training.IntakeProfile{}
+		state := training.IntakeState{Mode: "card_only", Finale: "notify", CallStatus: "not_applicable", Catalog: &catalog, Transcript: []training.IntakeLine{}}
+		item := training.Item{ID: uuid.New(), State: training.ItemOffered, IntakeCard: &card, IntakeState: &state}
+		run := func(typ training.CommandType, p any) training.Decision {
+			t.Helper()
+			data, err := json.Marshal(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d, err := New().Decide(item, training.Command{Type: typ, Payload: data}, time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d.Accepted {
+				item.State, item.IntakeCard, item.IntakeState = d.State, d.IntakeCard, d.IntakeState
+			}
+			return d
+		}
+		if d := run(training.CommandNotifyServices, map[string]any{"services": []string{"pilot_gas_104"}, "reason": ""}); d.Accepted {
+			t.Fatal("notify without a saved draft")
+		}
+		run(training.CommandOpen, map[string]any{})
+		if d := run(training.CommandAddIncidentType, map[string]string{"type_id": "gas_explosion"}); !d.Accepted {
+			t.Fatalf("add: %+v", d)
+		}
+		if d := run(training.CommandReviewServices, map[string]any{"services": []string{"pilot_gas_104"}, "reason": ""}); d.Accepted {
+			t.Fatal("legacy review_service_selection must reject once finale is notify")
+		}
+		if d := run(training.CommandSaveIntakeDraft, map[string]any{"draft": item.IntakeCard}); !d.Accepted {
+			t.Fatalf("save: %+v", d)
+		}
+		if d := run(training.CommandNotifyServices, map[string]any{"services": []string{}, "reason": ""}); d.Accepted {
+			t.Fatal("notify with an empty service list")
+		}
+		if d := run(training.CommandNotifyServices, map[string]any{"services": []string{"pilot_gas_104", "unknown_service"}, "reason": ""}); d.Accepted {
+			t.Fatal("notify with a service outside the catalog's rules")
+		}
+		if d := run(training.CommandNotifyServices, map[string]any{"services": []string{"pilot_gas_104", "pilot_fire_101"}, "reason": ""}); d.Accepted {
+			t.Fatal("notify adding a service beyond the suggestion without a reason")
+		}
+		d := run(training.CommandNotifyServices, map[string]any{"services": []string{"pilot_gas_104", "pilot_fire_101"}, "reason": "Учебное решение"})
+		if !d.Accepted || d.IntakeNotification == nil || len(d.IntakeNotification.Services) != 2 {
+			t.Fatalf("notify: %+v", d)
+		}
+		if !d.IntakeNotification.Services[0].Suggested || d.IntakeNotification.Services[1].Suggested {
+			t.Fatalf("suggested flags: %+v", d.IntakeNotification.Services)
+		}
+		if !item.IntakeState.Notified {
+			t.Fatal("state not marked notified")
+		}
+		if d := run(training.CommandNotifyServices, map[string]any{"services": []string{"pilot_gas_104"}, "reason": ""}); d.Accepted {
+			t.Fatal("second notify must be rejected")
+		}
+		if d := run(training.CommandSaveIntakeDraft, map[string]any{"draft": item.IntakeCard}); d.Accepted {
+			t.Fatal("draft edit after notify must be rejected")
+		}
+		if d := run(training.CommandAddIncidentType, map[string]string{"type_id": "road_traffic_fire"}); d.Accepted {
+			t.Fatal("incident type edit after notify must be rejected")
+		}
+		if d := run(training.CommandCompleteProfileCase, map[string]any{}); d.Accepted {
+			t.Fatal("legacy complete_profile_case must reject once finale is notify")
+		}
+		if d := run(training.CommandCompleteIntake, map[string]any{}); !d.Accepted || d.State != training.ItemClosed {
+			t.Fatalf("complete_intake: %+v", d)
+		}
+	})
+}
+
 func TestProfileMedicalHelpAndRemovalRestore(t *testing.T) {
 	catalog := pilotCatalog(t)
 	card := training.UnansweredIntakeCard("112-test", "", "", "")

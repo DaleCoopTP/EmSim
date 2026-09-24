@@ -3,24 +3,40 @@
   "$id": "https://emsim.local/schemas/evidence/operator112/v1",
   "title": "Operator112IntakeEvidence v1",
   "type": "object",
-  "required": ["schema", "exercise_type", "item_id", "run_id", "lesson_id", "trainee_id", "workstation_no", "scenario_version_id", "scenario_digest", "offered_at", "opened_at", "closed_at", "close_reason", "mode", "final_card", "intake_state", "dispatch", "actions", "cutoff_log_seq", "interruptions"],
+  "required": ["schema", "exercise_type", "item_id", "run_id", "lesson_id", "trainee_id", "workstation_no", "scenario_version_id", "scenario_digest", "offered_at", "opened_at", "closed_at", "close_reason", "mode", "final_card", "intake_state", "dispatch", "notification", "actions", "cutoff_log_seq", "interruptions"],
   "allOf": [
+    {
+      "if": {"properties": {"intake_state": {"properties": {"mode": {"enum": ["card_only", "full_case"]}}, "required": ["mode"]}}},
+      "then": {"properties": {"dispatch": {"type": "null"}}},
+      "description": "ADR-023: card_only and full_case items never write a per-service intake_dispatches row — they use the single notification record instead (either route)."
+    },
     {
       "if": {"properties": {"intake_state": {"properties": {"mode": {"const": "card_only"}}, "required": ["mode"]}}},
       "then": {"properties": {
-        "dispatch": {"type": "null"},
         "intake_state": {"properties": {"call_status": {"const": "not_applicable"}, "transcript": {"maxItems": 0}}}
       }}
     },
     {
       "if": {"properties": {
         "close_reason": {"const": "completed"},
-        "intake_state": {"properties": {"mode": {"const": "card_only"}}, "required": ["mode"]}
+        "intake_state": {"properties": {"mode": {"const": "card_only"}, "finale": {"not": {"const": "notify"}}}, "required": ["mode"]}
       }},
       "then": {"properties": {
         "final_card": {"required": ["incident_types", "profiles"], "properties": {"incident_types": {"minItems": 1}}},
         "intake_state": {"required": ["service_review"]}
-      }}
+      }},
+      "description": "Pre-ADR-023 card_only items (no intake_state.finale) still finish through review_service_selection/complete_profile_case."
+    },
+    {
+      "if": {"properties": {
+        "close_reason": {"const": "completed"},
+        "intake_state": {"properties": {"mode": {"enum": ["card_only", "full_case"]}, "finale": {"const": "notify"}}, "required": ["mode", "finale"]}
+      }},
+      "then": {"properties": {
+        "final_card": {"required": ["incident_types", "profiles"], "properties": {"incident_types": {"minItems": 1}}},
+        "notification": {"type": "object", "required": ["item_id", "action_id", "services", "card_snapshot", "notified_at"]}
+      }},
+      "description": "ADR-023's notify_services finale: a completed card_only or full_case item must carry the single notification record instead of service_review."
     }
   ],
   "properties": {
@@ -44,6 +60,8 @@
     }},
     "intake_state": {"type": "object", "required": ["call_status", "transcript", "has_saved_draft", "dispatched"], "properties": {
       "mode": {"const": "card_only"},
+      "finale": {"enum": ["", "notify"], "description": "ADR-023: absent/\"\" keeps the pre-slice-112-4 dispatch_intake/review_service_selection routes; \"notify\" is the single notify_services route."},
+      "notified": {"type": "boolean"},
       "catalog": {"type": "object", "required": ["version", "types", "profiles", "service_rules"]},
       "suggested_services": {"type": "array", "items": {"type": "object"}},
       "service_review": {"type": "object", "required": ["suggested", "selected", "reviewed_at"]},
@@ -61,6 +79,14 @@
       "oneOf": [
         {"type": "null"},
         {"type": "object", "required": ["item_id", "action_id", "service_code", "card_snapshot", "sent_at"]}
+      ]
+    },
+    "notification": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "object", "required": ["item_id", "action_id", "services", "card_snapshot", "notified_at"], "properties": {
+          "services": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["service_code", "suggested"]}}
+        }}
       ]
     },
     "actions": {"type": "array", "items": {"type": "object", "required": ["action_id", "log_seq", "seq", "type", "accepted", "server_at"]}},

@@ -85,6 +85,7 @@ const (
 	CommandEndIncoming         CommandType = "end_incoming"
 	CommandSaveIntakeDraft     CommandType = "save_intake_draft"
 	CommandDispatchIntake      CommandType = "dispatch_intake"
+	CommandNotifyServices      CommandType = "notify_services" // ADR-023
 	CommandCompleteIntake      CommandType = "complete_intake"
 	CommandMarkNoContact       CommandType = "mark_no_contact"
 	CommandMarkCallDropped     CommandType = "mark_call_dropped"
@@ -152,6 +153,7 @@ type Item struct {
 	AvailableQuestions []IntakeQuestionOption
 	IntakeRecipients   []string
 	IntakeDispatch     *IntakeDispatch
+	IntakeNotification *IntakeNotification
 	// Workflow is the services.workflow snapshot taken at offer time
 	// (content.Workflow's shape) so a later edit to the service's
 	// workflow cannot retroactively change an already-issued card's

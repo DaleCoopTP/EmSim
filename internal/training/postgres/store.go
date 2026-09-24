@@ -558,6 +558,37 @@ func (s *Store) IntakeDispatchByItem(ctx context.Context, tx pgx.Tx, itemID uuid
 	return d, nil
 }
 
+func (s *Store) InsertIntakeNotification(ctx context.Context, tx pgx.Tx, n training.IntakeNotification) error {
+	servicesJSON, err := json.Marshal(n.Services)
+	if err != nil {
+		return fmt.Errorf("training/postgres: marshal notification services: %w", err)
+	}
+	cardJSON, err := json.Marshal(n.CardSnapshot)
+	if err != nil {
+		return fmt.Errorf("training/postgres: marshal notification card: %w", err)
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO intake_notifications (item_id, action_id, services, reason, card_snapshot, notified_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`, n.ItemID, n.ActionID, servicesJSON, n.Reason, cardJSON, n.NotifiedAt)
+	return mapErr(err)
+}
+
+func (s *Store) IntakeNotificationByItem(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) (training.IntakeNotification, error) {
+	var n training.IntakeNotification
+	var servicesJSON, cardJSON []byte
+	err := tx.QueryRow(ctx, `SELECT item_id, action_id, services, reason, card_snapshot, notified_at FROM intake_notifications WHERE item_id = $1`, itemID).
+		Scan(&n.ItemID, &n.ActionID, &servicesJSON, &n.Reason, &cardJSON, &n.NotifiedAt)
+	if err != nil {
+		return training.IntakeNotification{}, mapErr(err)
+	}
+	if err := json.Unmarshal(servicesJSON, &n.Services); err != nil {
+		return training.IntakeNotification{}, training.ErrStorage
+	}
+	if err := json.Unmarshal(cardJSON, &n.CardSnapshot); err != nil {
+		return training.IntakeNotification{}, training.ErrStorage
+	}
+	return n, nil
+}
+
 func (s *Store) ItemByID(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock training.Lock) (training.Item, error) {
 	query := `SELECT ` + itemSelectColumns + ` ` + itemFrom + ` WHERE i.id = $1` + lockSuffix(lock, "i")
 	return scanItem(tx.QueryRow(ctx, query, id))

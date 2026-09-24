@@ -173,7 +173,14 @@ type IntakeQuestionOption struct {
 }
 
 type IntakeState struct {
-	Mode              string                    `json:"mode,omitempty"`
+	Mode string `json:"mode,omitempty"`
+	// Finale selects the item's completion route: "" (absent, including
+	// every item created before ADR-023) keeps the pre-112-4 routes —
+	// dispatch_intake for incoming_call, review_service_selection then
+	// complete_profile_case for card_only. "notify" is the single
+	// "Сохранить → оповестить и сохранить карточку" route ADR-023 adds
+	// for card_only and full_case items created from this slice on.
+	Finale            string                    `json:"finale,omitempty"`
 	Catalog           *content.IntakeCatalog    `json:"catalog,omitempty"`
 	InactiveProfiles  map[string]IntakeProfile  `json:"inactive_profiles,omitempty"`
 	SuggestedServices []IntakeServiceSuggestion `json:"suggested_services,omitempty"`
@@ -184,8 +191,12 @@ type IntakeState struct {
 	HasSavedDraft     bool                      `json:"has_saved_draft"`
 	Dispatched        bool                      `json:"dispatched"`
 	SelectedService   string                    `json:"selected_service,omitempty"`
-	AnsweredAt        *time.Time                `json:"answered_at,omitempty"`
-	EndedAt           *time.Time                `json:"ended_at,omitempty"`
+	// Notified is Finale="notify"'s own completion gate, parallel to
+	// Dispatched: set by notify_services, required by complete_intake,
+	// and — once true — blocks every further draft/type/service edit.
+	Notified   bool       `json:"notified"`
+	AnsweredAt *time.Time `json:"answered_at,omitempty"`
+	EndedAt    *time.Time `json:"ended_at,omitempty"`
 }
 
 type IntakeDispatch struct {
@@ -194,4 +205,28 @@ type IntakeDispatch struct {
 	ServiceCode  string     `json:"service_code"`
 	CardSnapshot IntakeCard `json:"card_snapshot"`
 	SentAt       time.Time  `json:"sent_at"`
+}
+
+// IntakeNotificationService is one service in an IntakeNotification's
+// list — Suggested distinguishes what the catalog's rules proposed from
+// what the operator added by hand (RFC-001's "исходное предложение" is
+// state.SuggestedServices at the time of the command, not re-derived
+// later from the current draft).
+type IntakeNotificationService struct {
+	ServiceCode string `json:"service_code"`
+	Suggested   bool   `json:"suggested"`
+}
+
+// IntakeNotification is ADR-023's single immutable "оповестить и
+// сохранить карточку" record — one per item, replacing per-service
+// IntakeDispatch rows for card_only and full_case. Unlike IntakeDispatch
+// it carries the whole notified service list and, when the operator
+// changed it from what the catalog suggested, the required reason.
+type IntakeNotification struct {
+	ItemID       uuid.UUID                   `json:"item_id"`
+	ActionID     uuid.UUID                   `json:"action_id"`
+	Services     []IntakeNotificationService `json:"services"`
+	Reason       string                      `json:"reason,omitempty"`
+	CardSnapshot IntakeCard                  `json:"card_snapshot"`
+	NotifiedAt   time.Time                   `json:"notified_at"`
 }

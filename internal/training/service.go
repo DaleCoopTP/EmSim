@@ -659,6 +659,13 @@ func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise 
 		}
 		closedItem.IntakeDispatch = &d
 	}
+	if item.ExerciseType == content.ExerciseTypeOperator112Intake && item.IntakeState != nil && item.IntakeState.Notified {
+		n, err := s.store.IntakeNotificationByItem(ctx, tx, item.ID)
+		if err != nil {
+			return err
+		}
+		closedItem.IntakeNotification = &n
+	}
 
 	evidence, err := exercise.Evidence(closedItem, actions, events, cutoff, stoppedAt)
 	if err != nil {
@@ -799,6 +806,11 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 				return fmt.Errorf("training: intake catalog missing: %w", err)
 			}
 			intakeState.Mode, intakeState.CallStatus, intakeState.Catalog = "card_only", "not_applicable", &catalog
+			// ADR-023: every card_only item created from this slice on
+			// uses the single notify_services finale; an item already in
+			// progress when this code shipped has no "finale" key in its
+			// stored intake_state and keeps the pre-ADR-023 route.
+			intakeState.Finale = "notify"
 			card.IncidentTypes = []string{}
 			card.Profiles = map[string]IntakeProfile{}
 		}
@@ -1153,6 +1165,13 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 			return Receipt{}, err
 		}
 	}
+	if decision.Accepted && decision.IntakeNotification != nil {
+		decision.IntakeNotification.ItemID = item.ID
+		decision.IntakeNotification.ActionID = actionID
+		if err := s.store.InsertIntakeNotification(ctx, tx, *decision.IntakeNotification); err != nil {
+			return Receipt{}, err
+		}
+	}
 	if decision.Accepted && decision.StartCall != nil {
 		if _, err := s.store.InsertCall(ctx, tx, *decision.StartCall); err != nil {
 			return Receipt{}, err
@@ -1254,12 +1273,22 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	if decision.IntakeDispatch != nil {
 		closedItem.IntakeDispatch = decision.IntakeDispatch
 	}
+	if decision.IntakeNotification != nil {
+		closedItem.IntakeNotification = decision.IntakeNotification
+	}
 	if lesson.ExerciseType == content.ExerciseTypeOperator112Intake && closedItem.IntakeState != nil && closedItem.IntakeState.Dispatched && closedItem.IntakeDispatch == nil {
 		d, err := s.store.IntakeDispatchByItem(ctx, tx, item.ID)
 		if err != nil {
 			return Receipt{}, err
 		}
 		closedItem.IntakeDispatch = &d
+	}
+	if lesson.ExerciseType == content.ExerciseTypeOperator112Intake && closedItem.IntakeState != nil && closedItem.IntakeState.Notified && closedItem.IntakeNotification == nil {
+		n, err := s.store.IntakeNotificationByItem(ctx, tx, item.ID)
+		if err != nil {
+			return Receipt{}, err
+		}
+		closedItem.IntakeNotification = &n
 	}
 	if decision.PrimaryAt != nil {
 		closedItem.PrimaryAt = decision.PrimaryAt
@@ -1951,6 +1980,13 @@ func (s *Service) ItemForTrainee(ctx context.Context, actor auth.Principal, item
 			}
 			item.IntakeDispatch = &d
 		}
+		if item.ExerciseType == content.ExerciseTypeOperator112Intake && item.IntakeState != nil && item.IntakeState.Notified {
+			n, err := s.store.IntakeNotificationByItem(ctx, tx, itemID)
+			if err != nil {
+				return err
+			}
+			item.IntakeNotification = &n
+		}
 		events, err = s.deliveredEventsForItem(ctx, tx, itemID, item.ScenarioVersionID)
 		return err
 	})
@@ -1998,6 +2034,13 @@ func (s *Service) ItemForInstructor(ctx context.Context, actor auth.Principal, i
 				return err
 			}
 			item.IntakeDispatch = &d
+		}
+		if item.ExerciseType == content.ExerciseTypeOperator112Intake && item.IntakeState != nil && item.IntakeState.Notified {
+			n, err := s.store.IntakeNotificationByItem(ctx, tx, itemID)
+			if err != nil {
+				return err
+			}
+			item.IntakeNotification = &n
 		}
 		actions, err = s.store.ActionsByItem(ctx, tx, itemID)
 		if err != nil {

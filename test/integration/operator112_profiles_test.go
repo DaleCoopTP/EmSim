@@ -209,11 +209,29 @@ func TestOperator112ProfileCases(t *testing.T) {
 			for _, suggestion := range item.IntakeState.SuggestedServices {
 				selected = append(selected, suggestion.ServiceCode)
 			}
-			send(training.CommandReviewServices, map[string]any{"services": selected, "reason": ""})
-			send(training.CommandCompleteProfileCase, map[string]any{})
+			// ADR-023: every card_only item offered from this slice on
+			// uses the single "оповестить и сохранить карточку" finale —
+			// the legacy review_service_selection/complete_profile_case
+			// pair is rejected once IntakeState.Finale is "notify".
+			if item.IntakeState.Finale != "notify" {
+				t.Fatalf("expected the notify finale on a freshly offered card_only item: %+v", item.IntakeState)
+			}
+			legacyData, _ := json.Marshal(map[string]any{"services": selected, "reason": ""})
+			legacyReview, err := trainingService.Execute(ctx, operator, itemID, training.Command{
+				CommandID: uuid.New(), ExpectedSeq: seq, Type: training.CommandReviewServices, Payload: legacyData,
+			}, "profile-legacy-review")
+			if err != nil || legacyReview.Outcome != training.OutcomeRejected || legacyReview.ErrorCode == nil || *legacyReview.ErrorCode != training.RejectTransitionNotAllowed {
+				t.Fatalf("legacy review_service_selection must reject once finale is notify: %+v, %v", legacyReview, err)
+			}
+			send(training.CommandNotifyServices, map[string]any{"services": selected, "reason": ""})
+			send(training.CommandCompleteIntake, map[string]any{})
 			var dispatchCount int
 			if err := pool.QueryRow(ctx, `SELECT count(*) FROM intake_dispatches WHERE item_id=$1`, itemID).Scan(&dispatchCount); err != nil || dispatchCount != 0 {
 				t.Fatalf("dispatch count: %d, %v", dispatchCount, err)
+			}
+			var notificationCount int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM intake_notifications WHERE item_id=$1`, itemID).Scan(&notificationCount); err != nil || notificationCount != 1 {
+				t.Fatalf("notification count: %d, %v", notificationCount, err)
 			}
 			var evidenceJSON []byte
 			if err := pool.QueryRow(ctx, `SELECT body FROM evidence WHERE item_id=$1`, itemID).Scan(&evidenceJSON); err != nil {
@@ -233,20 +251,22 @@ func TestOperator112ProfileCases(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				delete(invalidDoc.(map[string]any)["intake_state"].(map[string]any), "service_review")
+				delete(invalidDoc.(map[string]any), "notification")
 				if err := evidenceSchema.Validate(invalidDoc); err == nil {
-					t.Fatal("schema accepted completed card_only evidence without service review")
+					t.Fatal("schema accepted completed notify-finale card_only evidence without a notification record")
 				}
 			}
 			var evidence struct {
-				FinalCard   training.IntakeCard      `json:"final_card"`
-				IntakeState training.IntakeState     `json:"intake_state"`
-				Dispatch    *training.IntakeDispatch `json:"dispatch"`
+				FinalCard    training.IntakeCard          `json:"final_card"`
+				IntakeState  training.IntakeState         `json:"intake_state"`
+				Dispatch     *training.IntakeDispatch     `json:"dispatch"`
+				Notification *training.IntakeNotification `json:"notification"`
 			}
 			if err := json.Unmarshal(evidenceJSON, &evidence); err != nil {
 				t.Fatal(err)
 			}
-			if len(evidence.FinalCard.Profiles) != tc.profileCount || evidence.Dispatch != nil || len(evidence.IntakeState.ServiceReview.Selected) != tc.serviceCount {
+			if len(evidence.FinalCard.Profiles) != tc.profileCount || evidence.Dispatch != nil ||
+				evidence.Notification == nil || len(evidence.Notification.Services) != tc.serviceCount {
 				t.Fatalf("evidence: %+v", evidence)
 			}
 			if i == 0 {

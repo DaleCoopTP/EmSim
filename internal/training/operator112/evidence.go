@@ -12,26 +12,27 @@ import (
 // EvidenceBody is a separate immutable close-time projection. In particular
 // it includes what was actually sent, rather than only the final draft.
 type EvidenceBody struct {
-	Schema            string                    `json:"schema"`
-	ExerciseType      content.ExerciseType      `json:"exercise_type"`
-	ItemID            uuid.UUID                 `json:"item_id"`
-	RunID             uuid.UUID                 `json:"run_id"`
-	LessonID          uuid.UUID                 `json:"lesson_id"`
-	TraineeID         uuid.UUID                 `json:"trainee_id"`
-	WorkstationNo     int                       `json:"workstation_no"`
-	ScenarioVersionID uuid.UUID                 `json:"scenario_version_id"`
-	ScenarioDigest    string                    `json:"scenario_digest"`
-	OfferedAt         time.Time                 `json:"offered_at"`
-	OpenedAt          *time.Time                `json:"opened_at"`
-	ClosedAt          time.Time                 `json:"closed_at"`
-	CloseReason       training.CloseReason      `json:"close_reason"`
-	Mode              training.Mode             `json:"mode"`
-	FinalCard         training.IntakeCard       `json:"final_card"`
-	IntakeState       training.IntakeState      `json:"intake_state"`
-	Dispatch          *training.IntakeDispatch  `json:"dispatch"`
-	Actions           []training.EvidenceAction `json:"actions"`
-	CutoffLogSeq      int64                     `json:"cutoff_log_seq"`
-	Interruptions     []training.Interruption   `json:"interruptions"`
+	Schema            string                       `json:"schema"`
+	ExerciseType      content.ExerciseType         `json:"exercise_type"`
+	ItemID            uuid.UUID                    `json:"item_id"`
+	RunID             uuid.UUID                    `json:"run_id"`
+	LessonID          uuid.UUID                    `json:"lesson_id"`
+	TraineeID         uuid.UUID                    `json:"trainee_id"`
+	WorkstationNo     int                          `json:"workstation_no"`
+	ScenarioVersionID uuid.UUID                    `json:"scenario_version_id"`
+	ScenarioDigest    string                       `json:"scenario_digest"`
+	OfferedAt         time.Time                    `json:"offered_at"`
+	OpenedAt          *time.Time                   `json:"opened_at"`
+	ClosedAt          time.Time                    `json:"closed_at"`
+	CloseReason       training.CloseReason         `json:"close_reason"`
+	Mode              training.Mode                `json:"mode"`
+	FinalCard         training.IntakeCard          `json:"final_card"`
+	IntakeState       training.IntakeState         `json:"intake_state"`
+	Dispatch          *training.IntakeDispatch     `json:"dispatch"`
+	Notification      *training.IntakeNotification `json:"notification"`
+	Actions           []training.EvidenceAction    `json:"actions"`
+	CutoffLogSeq      int64                        `json:"cutoff_log_seq"`
+	Interruptions     []training.Interruption      `json:"interruptions"`
 }
 
 func (exercise) Evidence(item training.Item, actions []training.Action, _ []training.ItemEvent, cutoffLogSeq int64, closedAt time.Time) (training.Evidence, error) {
@@ -39,7 +40,7 @@ func (exercise) Evidence(item training.Item, actions []training.Action, _ []trai
 		ItemID: item.ID, RunID: item.RunID, LessonID: item.LessonID, TraineeID: item.UserID,
 		WorkstationNo: item.WorkstationNo, ScenarioVersionID: item.ScenarioVersionID,
 		ScenarioDigest: item.ScenarioDigest, OfferedAt: item.OfferedAt, OpenedAt: item.OpenedAt,
-		ClosedAt: closedAt, Mode: item.Mode, Dispatch: item.IntakeDispatch,
+		ClosedAt: closedAt, Mode: item.Mode, Dispatch: item.IntakeDispatch, Notification: item.IntakeNotification,
 		CutoffLogSeq: cutoffLogSeq, Interruptions: item.Interruptions,
 		Actions: make([]training.EvidenceAction, 0, len(actions))}
 	if item.CloseReason != nil {
