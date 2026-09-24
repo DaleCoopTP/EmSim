@@ -96,6 +96,7 @@ const (
 	CommandRemoveIncidentType  CommandType = "remove_incident_type"
 	CommandReviewServices      CommandType = "review_service_selection"
 	CommandCompleteProfileCase CommandType = "complete_profile_case"
+	CommandSendCallerMessage   CommandType = "send_caller_message" // 112-5a/ADR-024
 )
 
 // Deadlines is items.deadlines: absolute server time, frozen once set.

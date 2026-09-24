@@ -67,6 +67,13 @@
       "service_review": {"type": "object", "required": ["suggested", "selected", "reviewed_at"]},
       "call_status": {"enum": ["ringing", "connected", "held", "ended", "not_applicable"]},
       "asked_question_ids": {"type": "array", "items": {"type": "string"}},
+      "caller_mode": {"enum": ["prepared", "free_text"], "description": "112-5a/ADR-024: absent/\"prepared\" is 112-2's scripted dialogue; \"free_text\" is the caller-chat window (see caller_turns). full_case only."},
+      "caller_turns": {"type": "array", "items": {"type": "object", "required": ["turn", "status", "requested_at"], "properties": {
+        "turn": {"type": "integer", "minimum": 1}, "operator_line_id": {"type": "string"},
+        "status": {"enum": ["pending", "answered", "cancelled", "failed"]}, "adapter": {"type": "string"},
+        "requested_at": {"type": "string", "format": "date-time"}, "resolved_at": {"type": "string", "format": "date-time"},
+        "reason": {"type": "string"}
+      }}},
       "transcript": {"type": "array", "items": {"type": "object", "required": ["text", "server_at"], "properties": {
         "id": {"type": "string"}, "source_id": {"type": "string"},
         "speaker": {"enum": ["caller", "operator"]}, "call_id": {"type": "string", "format": "uuid"},

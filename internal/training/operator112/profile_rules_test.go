@@ -3,6 +3,7 @@ package operator112
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -305,5 +306,130 @@ func TestProfileMedicalHelpAndRemovalRestore(t *testing.T) {
 	}
 	if item.IntakeCard.Profiles["101"].Answers["medical_help"].Value != "Да" {
 		t.Fatal("answer not restored")
+	}
+}
+
+// freeTextDialogue is 112-5a/ADR-024's caller_mode="free_text" shape —
+// facts only, no initial/questions (content.Validate enforces this
+// server-side too; see internal/content/validate_test.go).
+func freeTextDialogue() *content.Intake112Dialogue {
+	return &content.Intake112Dialogue{Facts: []content.Intake112Fact{
+		{ID: "address_city", Label: "Город", CardPath: "/address/city", Knowledge: "initial", Value: "Москва"},
+	}}
+}
+
+func TestFreeTextCallerChatFlow(t *testing.T) {
+	catalog := pilotCatalog(t)
+	card := training.UnansweredIntakeCard("112-chat", "+79161313131", "02:03", "Europe/Moscow")
+	card.Profiles = map[string]training.IntakeProfile{}
+	state := training.IntakeState{Mode: "full_case", CallerMode: content.CallerModeFreeText, Finale: "notify",
+		CallStatus: "ringing", Catalog: &catalog, Transcript: []training.IntakeLine{}}
+	item := training.Item{ID: uuid.New(), State: training.ItemOffered, IntakeCard: &card, IntakeState: &state, IntakeDialogue: freeTextDialogue()}
+	run := func(typ training.CommandType, p any) training.Decision {
+		t.Helper()
+		data, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := New().Decide(item, training.Command{CommandID: uuid.New(), Type: typ, Payload: data}, time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Accepted {
+			item.State, item.IntakeCard, item.IntakeState = d.State, d.IntakeCard, d.IntakeState
+		}
+		return d
+	}
+	if d := run(training.CommandSendCallerMessage, map[string]string{"text": "too early"}); d.Accepted {
+		t.Fatal("send_caller_message must reject before the call is connected")
+	}
+	if d := run(training.CommandOpen, map[string]any{}); !d.Accepted {
+		t.Fatalf("open: %+v", d)
+	}
+	if d := run(training.CommandAnswerIncoming, map[string]any{}); !d.Accepted || len(d.IntakeState.Transcript) != 0 {
+		t.Fatalf("answer must not speak a scripted greeting in free_text: %+v", d)
+	}
+	if d := run(training.CommandAskIntakeQuestion, map[string]string{"question_id": "anything"}); d.Accepted {
+		t.Fatal("ask_intake_question must reject in free_text mode")
+	}
+	if d := run(training.CommandSendCallerMessage, map[string]string{"text": "   "}); d.Accepted {
+		t.Fatal("blank message accepted")
+	}
+	if d := run(training.CommandSendCallerMessage, map[string]string{"text": strings.Repeat("a", 501)}); d.Accepted {
+		t.Fatal("over-length message accepted")
+	}
+	d := run(training.CommandSendCallerMessage, map[string]string{"text": "  Здравствуйте  "})
+	if !d.Accepted || d.CallerTurnRequested == nil || *d.CallerTurnRequested != 1 {
+		t.Fatalf("send: %+v", d)
+	}
+	if len(d.IntakeState.Transcript) != 1 || d.IntakeState.Transcript[0].Speaker != "operator" || d.IntakeState.Transcript[0].Text != "Здравствуйте" {
+		t.Fatalf("operator line not trimmed/recorded: %+v", d.IntakeState.Transcript)
+	}
+	if len(d.IntakeState.CallerTurns) != 1 || d.IntakeState.CallerTurns[0].Status != training.CallerTurnPending ||
+		d.IntakeState.CallerTurns[0].OperatorLineID != d.IntakeState.Transcript[0].ID {
+		t.Fatalf("turn not recorded pending: %+v", d.IntakeState.CallerTurns)
+	}
+	if d := run(training.CommandSendCallerMessage, map[string]string{"text": "second, too soon"}); d.Accepted {
+		t.Fatal("second message while a turn is pending must reject")
+	}
+	if d := run(training.CommandHoldIncoming, map[string]any{}); !d.Accepted {
+		t.Fatalf("hold: %+v", d)
+	}
+	if got := item.IntakeState.CallerTurns[0]; got.Status != training.CallerTurnCancelled || got.Reason != "held" || got.ResolvedAt == nil {
+		t.Fatalf("hold must cancel the pending turn: %+v", got)
+	}
+	if d := run(training.CommandResumeIncoming, map[string]any{}); !d.Accepted {
+		t.Fatalf("resume: %+v", d)
+	}
+	d = run(training.CommandSendCallerMessage, map[string]string{"text": "second message"})
+	if !d.Accepted || d.CallerTurnRequested == nil || *d.CallerTurnRequested != 2 {
+		t.Fatalf("second send: %+v", d)
+	}
+	if d := run(training.CommandEndIncoming, map[string]any{}); !d.Accepted {
+		t.Fatalf("end: %+v", d)
+	}
+	if got := item.IntakeState.CallerTurns[1]; got.Status != training.CallerTurnCancelled || got.Reason != "ended" {
+		t.Fatalf("end must cancel the still-pending second turn: %+v", got)
+	}
+	if len(item.IntakeState.CallerTurns) != 2 {
+		t.Fatalf("turns must not be renumbered/removed on cancel: %+v", item.IntakeState.CallerTurns)
+	}
+}
+
+func TestSendCallerMessageRejectedInPreparedMode(t *testing.T) {
+	catalog := pilotCatalog(t)
+	dialogue := &content.Intake112Dialogue{
+		Initial: content.Intake112Utterance{ID: "initial", Text: "Пахнет газом", Reveals: []string{}},
+		Questions: []content.Intake112Question{
+			{ID: "where", Text: "Где именно?", TopicID: "address", Answer: content.Intake112Utterance{ID: "where_answer", Text: "В квартире", Reveals: []string{}}},
+		},
+	}
+	card := training.UnansweredIntakeCard("112-prepared", "+79161313131", "02:03", "Europe/Moscow")
+	card.Profiles = map[string]training.IntakeProfile{}
+	state := training.IntakeState{Mode: "full_case", Finale: "notify", CallStatus: "connected", Catalog: &catalog, Transcript: []training.IntakeLine{}}
+	item := training.Item{ID: uuid.New(), State: training.ItemInProgress, IntakeCard: &card, IntakeState: &state, IntakeDialogue: dialogue}
+	data, _ := json.Marshal(map[string]string{"text": "своими словами"})
+	d, err := New().Decide(item, training.Command{CommandID: uuid.New(), Type: training.CommandSendCallerMessage, Payload: data}, time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Accepted {
+		t.Fatal("send_caller_message must reject when caller_mode is prepared")
+	}
+}
+
+func TestSendCallerMessageRejectedForCardOnly(t *testing.T) {
+	catalog := pilotCatalog(t)
+	card := training.UnansweredIntakeCard("112-cardonly", "", "", "")
+	card.Profiles = map[string]training.IntakeProfile{}
+	state := training.IntakeState{Mode: "card_only", CallStatus: "not_applicable", Catalog: &catalog, Transcript: []training.IntakeLine{}}
+	item := training.Item{ID: uuid.New(), State: training.ItemInProgress, IntakeCard: &card, IntakeState: &state}
+	data, _ := json.Marshal(map[string]string{"text": "hello"})
+	d, err := New().Decide(item, training.Command{CommandID: uuid.New(), Type: training.CommandSendCallerMessage, Payload: data}, time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Accepted {
+		t.Fatal("send_caller_message must reject for card_only")
 	}
 }

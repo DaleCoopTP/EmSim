@@ -172,6 +172,44 @@ type IntakeQuestionOption struct {
 	Asked   bool   `json:"asked"`
 }
 
+// IntakeCallerTurn is one round of 112-5a/ADR-024's free-text caller
+// chat: send_caller_message starts a turn as CallerTurnPending and the
+// application service enqueues caller.reply for it in the same
+// transaction; a worker resolves it to CallerTurnAnswered (appending the
+// applicant's reply to Transcript) or, once the task's own attempt
+// budget is exhausted, CallerTurnFailed via the registered Finalizer.
+// hold_incoming/end_incoming/mark_call_dropped/complete_intake cancel a
+// still-pending turn to CallerTurnCancelled in their own command
+// transaction. Turn never renumbers on cancel/failure — it is both
+// caller.reply's dedup_key suffix and ApplyCallerReply's "is this still
+// the turn I was asked to answer" check, so a late worker attempt for an
+// already-resolved turn safely no-ops rather than double-applying.
+type IntakeCallerTurn struct {
+	Turn           int    `json:"turn"`
+	OperatorLineID string `json:"operator_line_id"`
+	Status         string `json:"status"` // pending, answered, cancelled, failed
+	// Adapter names which CallerReplier produced the reply (e.g.
+	// "stub/v1") — set only once Status=answered, so the instructor's
+	// review can tell a stub-generated reply from a future model's
+	// without a separate server-side setting.
+	Adapter     string     `json:"adapter,omitempty"`
+	RequestedAt time.Time  `json:"requested_at"`
+	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
+	// Reason is set for Status=cancelled ("held"/"ended"/"dropped"/
+	// "closed") or Status=failed (a short technical cause, never a raw
+	// error — RFC-001 §9 forbids operational detail leaking to a
+	// trainee-visible field).
+	Reason string `json:"reason,omitempty"`
+}
+
+// IntakeCallerTurn.Status values.
+const (
+	CallerTurnPending   = "pending"
+	CallerTurnAnswered  = "answered"
+	CallerTurnCancelled = "cancelled"
+	CallerTurnFailed    = "failed"
+)
+
 type IntakeState struct {
 	Mode string `json:"mode,omitempty"`
 	// Finale selects the item's completion route: "" (absent, including
@@ -188,9 +226,19 @@ type IntakeState struct {
 	CallStatus        string                    `json:"call_status"` // ringing, connected, held, ended
 	Transcript        []IntakeLine              `json:"transcript"`
 	AskedQuestionIDs  []string                  `json:"asked_question_ids,omitempty"`
-	HasSavedDraft     bool                      `json:"has_saved_draft"`
-	Dispatched        bool                      `json:"dispatched"`
-	SelectedService   string                    `json:"selected_service,omitempty"`
+	// CallerMode is full_case's own applicant behavior (112-5a/ADR-024):
+	// "" and content.CallerModePrepared keep 112-2's scripted dialogue
+	// (AvailableQuestions/ask_intake_question); content.CallerModeFreeText
+	// opens the trainee's caller-chat window instead — send_caller_message
+	// and CallerTurns, never AvailableQuestions. Always "" for card_only
+	// and incoming_call.
+	CallerMode string `json:"caller_mode,omitempty"`
+	// CallerTurns is CallerMode=free_text's own round log — see
+	// IntakeCallerTurn. Always empty for a prepared-dialogue item.
+	CallerTurns     []IntakeCallerTurn `json:"caller_turns,omitempty"`
+	HasSavedDraft   bool               `json:"has_saved_draft"`
+	Dispatched      bool               `json:"dispatched"`
+	SelectedService string             `json:"selected_service,omitempty"`
 	// Notified is Finale="notify"'s own completion gate, parallel to
 	// Dispatched: set by notify_services, required by complete_intake,
 	// and — once true — blocks every further draft/type/service edit.

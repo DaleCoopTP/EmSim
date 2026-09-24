@@ -69,6 +69,15 @@ type Decision struct {
 	Close     *CloseReason
 	StartCall *Call
 	EndCall   *CallEnd
+
+	// CallerTurnRequested is non-nil only on an accepted
+	// send_caller_message (112-5a/ADR-024): the IntakeCallerTurn.Turn
+	// just added to IntakeState.CallerTurns as CallerTurnPending. The
+	// application service enqueues caller.reply for exactly this turn,
+	// in the same transaction as this decision's own action/patch —
+	// Decide itself never touches platform/tasks (it stays pure, no
+	// PostgreSQL/queue access, per Exercise's own doc comment).
+	CallerTurnRequested *int
 }
 
 type CallEnd struct {

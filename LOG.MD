@@ -1486,3 +1486,80 @@ service.go` (Execute/recordDecision/lockForCommand/tickEvent — как
 Next: коммит 1 — домен (`caller_mode`, `send_caller_message`,
 `IntakeCallerTurn`, миграция `actions_type_check`, контракты, тесты
 правил) без ещё постановки задачи `caller.reply`.
+
+## 2026-09-24 — Срез 112-5a, коммит 1: домен — caller_mode и send_caller_message
+
+Status: домен готов (без постановки задачи caller.reply — она в коммите 2).
+Реализует `slice-112-5a-plan.md` §2 «caller_mode сценария»/«новая команда».
+
+- `internal/content/body.go`, `validate.go`: `Intake112.CallerMode`
+  (`""`/`"prepared"` | `"free_text"`), допустим только при
+  `mode=full_case`; `free_text` требует `dialogue.facts`, запрещает
+  `initial`/`questions` (`validateIntake112FreeTextDialogue` — своя
+  проверка без reveal-механики, в отличие от `validateIntake112Dialogue`).
+  Тесты: `TestValidateFreeTextFullCase`,
+  `TestValidateRejectsCallerModeOutsideFullCase`.
+- `design-docs/contracts/scenario.schema.json`: `caller_mode` в
+  `properties`; `oneOf` для `intake112` разделён на full_case-prepared
+  (`dialogue.required += [initial, questions]`) и full_case-free_text
+  (пятая ветка, `dialogue.not.anyOf` запрещает initial/questions);
+  `dialogue.required` на верхнем уровне сужен до `[facts]`, ветки
+  восстанавливают `initial`/`questions` там, где они нужны;
+  `caller_mode: false` в трёх остальных ветках (по образцу
+  `dialogue: false`).
+- `internal/training/domain.go`: `CommandSendCallerMessage`.
+  `internal/training/command.go`: `Decision.CallerTurnRequested *int` —
+  Decide остаётся чистой функцией, задачу в очередь коммит 2 поставит по
+  этому полю.
+  `internal/training/intake.go`: `IntakeCallerTurn`
+  (`Turn/OperatorLineID/Status/Adapter/RequestedAt/ResolvedAt/Reason`),
+  статусы `CallerTurnPending/Answered/Cancelled/Failed`;
+  `IntakeState.CallerMode`/`CallerTurns`.
+- `internal/training/service.go`: `startOneAssignment` копирует
+  `Intake112.CallerMode` в `intakeState.CallerMode` только для full_case
+  (card_only не имеет вызова).
+- `internal/training/operator112/rules.go`: `AvailableQuestions`
+  возвращает `[]` при `caller_mode=free_text` явной проверкой (не только
+  из-за пустого `Questions` в `Available`).
+  `profile_rules.go` (`decideProfileFlow`): защитная копия
+  `state.CallerTurns` (по образцу Transcript/AskedQuestionIDs);
+  `answer_incoming` не произносит сценарную реплику в free_text;
+  `ask_intake_question` отклоняется в free_text; новый кейс
+  `send_caller_message` (mode=full_case, caller_mode=free_text,
+  call_status=connected, нет ожидающего хода, текст 1–500 байт после
+  trim) добавляет реплику оператора и ход `pending`, выставляет
+  `CallerTurnRequested`; `hold_incoming`/`end_incoming`/
+  `mark_call_dropped` отменяют ожидающий ход (`cancelPendingCallerTurn`,
+  reason held/ended/dropped) — `complete_intake` не нуждается в
+  отдельной отмене: он уже требует `call_status=ended`, которое
+  недостижимо мимо end_incoming/mark_call_dropped. Тесты:
+  `TestFreeTextCallerChatFlow` (полный цикл: answer без реплики, отказ
+  ask_intake_question, пустой/слишком длинный текст, первый ход pending,
+  повторное сообщение отклонено, hold отменяет ход, resume и второй ход
+  получает номер 2 без переиспользования, end отменяет второй ход, номера
+  ходов не переиспользуются), `TestSendCallerMessageRejectedInPreparedMode`,
+  `TestSendCallerMessageRejectedForCardOnly`.
+- `migrations/00016_operator112_caller_message.sql`: `send_caller_message`
+  в `actions_type_check` (по образцу 00011–00015); `caller_turns`/
+  `caller_mode` живут в существующем `items.intake_state jsonb`, новых
+  таблиц/колонок не потребовалось.
+- `design-docs/contracts/openapi.yaml`: `send_caller_message` в перечне
+  `Command.type` и отдельная ветка `oneOf` (`payload.text`, 1–500);
+  `Intake112State.caller_mode`/`caller_turns`.
+  `evidence.operator112.schema.json`: те же два поля в `intake_state`
+  (schema без `additionalProperties: false`, но поля описаны явно).
+  `web/src/api/schema.d.ts` перегенерирован (`npm run generate:api`; файл
+  в `.gitignore`, коммитить нечего).
+
+Validation: `gofmt -l` чисто; `make verify` (format-check, build, test,
+vet, staticcheck) — зелёный; `python3 design-docs/contracts/check.py` —
+все проверки прошли, включая JSON Schema валидацию исправленного
+`scenario.schema.json`. `make test-integration`/`make verify-web` не
+запускались — это чисто доменный Go-код и контракты, PostgreSQL/UI не
+затронуты.
+
+Next: коммит 2 — порт `CallerReplier`, заглушка на 6 фраз, задача
+`caller.reply` (пул `caller`, `EnqueueTx` из `recordDecision` по
+`CallerTurnRequested`), `ApplyCallerReply`, обработчик и `Finalizer` в
+`cmd/emsim/worker_composition.go`, конфиг `CALLER_*`,
+интеграционные тесты.

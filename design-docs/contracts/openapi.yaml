@@ -976,6 +976,21 @@ components:
             reason: { type: string }
             reviewed_at: { type: string, format: date-time }
         asked_question_ids: { type: array, items: { type: string }, description: В порядке первого вопроса; повторные вопросы остаются в журнале реплик. }
+        caller_mode: { type: string, enum: [prepared, free_text], description: '112-5a/ADR-024: отсутствие/"prepared" — сценарный диалог 112-2 (available_questions/ask_intake_question); "free_text" — окно чата с заявителем (send_caller_message/caller_turns) вместо него. Только у full_case.' }
+        caller_turns:
+          type: array
+          description: '112-5a/ADR-024: журнал ходов caller_mode=free_text. Пуст у сценарного диалога.'
+          items:
+            type: object
+            required: [turn, status, requested_at]
+            properties:
+              turn: { type: integer, minimum: 1 }
+              operator_line_id: { type: string, description: ID реплики оператора в transcript, начавшей этот ход. }
+              status: { type: string, enum: [pending, answered, cancelled, failed] }
+              adapter: { type: string, description: 'Реализация CallerReplier, давшая ответ (например "stub/v1"). Заполнено только при status=answered.' }
+              requested_at: { type: string, format: date-time }
+              resolved_at: { type: string, format: date-time }
+              reason: { type: string, description: Причина cancelled (held/ended/dropped) или короткая техническая причина failed. }
         transcript:
           type: array
           items:
@@ -1518,6 +1533,7 @@ components:
           - review_service_selection
           - complete_profile_case
           - notify_services
+          - send_caller_message
         payload:
           type: object
         client_at:
@@ -1713,6 +1729,15 @@ components:
           type: { const: notify_services }
           payload: { type: object, additionalProperties: false, required: [services, reason], properties: { services: { type: array, items: { type: string }, minItems: 1, uniqueItems: true }, reason: { type: string } } }
         description: 'ADR-023: «Сохранить → оповестить и сохранить карточку» — единственный финал для card_only/full_case, назначенных с этого среза. Список не может быть пустым; reason обязателен, если он отличается от suggested_services. Закрывает черновик для дальнейших правок.'
+      - properties:
+          type: { const: send_caller_message }
+          payload:
+            type: object
+            additionalProperties: false
+            required: [text]
+            properties:
+              text: { type: string, minLength: 1, maxLength: 500 }
+        description: '112-5a/ADR-024: одно сообщение оператора заявителю в свободном тексте (intake_state.caller_mode=free_text). Принимается только при call_status=connected и отсутствии ожидающего хода; ответ заявителя формируется асинхронно worker и появляется в intake_state.caller_turns/transcript отдельным событием, не в этой квитанции.'
 
     Receipt:
       type: object

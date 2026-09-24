@@ -73,7 +73,7 @@ func validateIntake112(intake *Intake112, catalog Catalog) error {
 		return invalid("intake112", "required")
 	}
 	if intake.Mode == "card_only" {
-		if intake.Dialogue != nil || intake.Call != nil || len(intake.RecipientServices) != 0 ||
+		if intake.CallerMode != "" || intake.Dialogue != nil || intake.Call != nil || len(intake.RecipientServices) != 0 ||
 			len(intake.Reference.ExpectedTypes) == 0 || intake.Reference.CaseDescription == "" ||
 			len(intake.Reference.ExpectedServices) != 0 ||
 			intake.Reference.RecipientService != "" || intake.Reference.ExpectedCard != nil {
@@ -86,6 +86,12 @@ func validateIntake112(intake *Intake112, catalog Catalog) error {
 	}
 	if intake.Mode != "" && intake.Mode != "incoming_call" {
 		return invalid("intake112.mode", "invalid")
+	}
+	// CallerMode (112-5a/ADR-024) only ever applies to full_case's own
+	// caller-chat window — incoming_call keeps 112-1's single scripted
+	// call, never a free-text one.
+	if intake.CallerMode != "" {
+		return invalid("intake112.caller_mode", "full_case_only")
 	}
 	if intake.Call == nil || intake.Reference.ExpectedCard == nil {
 		return invalid("intake112", "incomplete_incoming_call")
@@ -120,6 +126,9 @@ func validateIntake112(intake *Intake112, catalog Catalog) error {
 // expected_card, reference.recipient_service) — a scenario picks one
 // mode, not a mix of both contracts.
 func validateIntake112FullCase(intake *Intake112, catalog Catalog) error {
+	if intake.CallerMode != "" && intake.CallerMode != CallerModePrepared && intake.CallerMode != CallerModeFreeText {
+		return invalid("intake112.caller_mode", "invalid")
+	}
 	if intake.Call == nil || intake.Dialogue == nil || len(intake.Call.Script) > 0 ||
 		len(intake.RecipientServices) != 0 ||
 		intake.Reference.ExpectedCard != nil || intake.Reference.RecipientService != "" ||
@@ -142,7 +151,48 @@ func validateIntake112FullCase(intake *Intake112, catalog Catalog) error {
 			return invalid(field, "inactive")
 		}
 	}
+	if intake.CallerMode == CallerModeFreeText {
+		return validateIntake112FreeTextDialogue(*intake.Dialogue)
+	}
 	return validateIntake112Dialogue(*intake.Dialogue)
+}
+
+// validateIntake112FreeTextDialogue is CallerModeFreeText's own dialogue
+// shape (112-5a/ADR-024): the applicant does not speak a scripted
+// initial line or answer scripted questions — the trainee writes freely
+// in the caller-chat window and a CallerReplier answers asynchronously.
+// Only Facts are validated (the future model's own knowledge input,
+// unused by 112-5a's stub); Initial/Questions carry no meaning for this
+// caller_mode and must stay empty so a scenario cannot mix both dialogue
+// shapes. Unlike validateIntake112Dialogue, there is no reveals/reachability
+// check — free text has no scripted reveal mechanism.
+func validateIntake112FreeTextDialogue(dialogue Intake112Dialogue) error {
+	if dialogue.Initial.ID != "" || dialogue.Initial.Text != "" || len(dialogue.Initial.Reveals) != 0 || len(dialogue.Questions) != 0 {
+		return invalid("intake112.dialogue", "free_text_forbids_initial_or_questions")
+	}
+	if len(dialogue.Facts) == 0 {
+		return invalid("intake112.dialogue.facts", "required")
+	}
+	ids := make(map[string]bool, len(dialogue.Facts))
+	paths := make(map[string]bool, len(dialogue.Facts))
+	for i, fact := range dialogue.Facts {
+		field := fmt.Sprintf("intake112.dialogue.facts[%d]", i)
+		if fact.ID == "" || ids[fact.ID] {
+			return invalid(field+".id", "missing_or_duplicate")
+		}
+		if !validIntake112CardPath(fact.CardPath) || paths[fact.CardPath] {
+			return invalid(field+".card_path", "invalid_or_duplicate")
+		}
+		if fact.Knowledge == "unknown" {
+			if fact.Value != "" {
+				return invalid(field+".value", "unknown_has_value")
+			}
+		} else if (fact.Knowledge != "initial" && fact.Knowledge != "on_question") || fact.Value == "" {
+			return invalid(field+".knowledge", "invalid")
+		}
+		ids[fact.ID], paths[fact.CardPath] = true, true
+	}
+	return nil
 }
 
 func validateIntake112Dialogue(dialogue Intake112Dialogue) error {

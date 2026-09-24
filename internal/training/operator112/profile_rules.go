@@ -2,6 +2,7 @@ package operator112
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -193,6 +194,11 @@ func (e exercise) decideProfileFlow(item training.Item, cmd training.Command, no
 	}
 	state.Transcript = append(make([]training.IntakeLine, 0, len(item.IntakeState.Transcript)), item.IntakeState.Transcript...)
 	state.AskedQuestionIDs = append([]string(nil), item.IntakeState.AskedQuestionIDs...)
+	// CallerTurns (112-5a/ADR-024) needs the same defensive copy as
+	// Transcript/AskedQuestionIDs above — item.IntakeState is a shallow
+	// read from the store, so its slice's backing array must not be
+	// mutated in place by this decision.
+	state.CallerTurns = append(make([]training.IntakeCallerTurn, 0, len(item.IntakeState.CallerTurns)), item.IntakeState.CallerTurns...)
 	d := training.Decision{Accepted: true, State: item.State, Reaction: item.Reaction,
 		Card: item.Card, IntakeCard: &card, IntakeState: &state}
 	switch cmd.Type {
@@ -215,17 +221,24 @@ func (e exercise) decideProfileFlow(item training.Item, cmd training.Command, no
 		}
 		state.CallStatus, state.AnsweredAt = "connected", &now
 		state.Transcript = []training.IntakeLine{}
-		if item.IntakeDialogue == nil {
-			return reject(item, training.RejectTransitionNotAllowed), nil
+		if state.CallerMode == content.CallerModeFreeText {
+			// 112-5a/ADR-024: the applicant says nothing until the
+			// operator writes the first chat message — no scripted
+			// greeting line, unlike the prepared dialogue below.
+		} else {
+			if item.IntakeDialogue == nil {
+				return reject(item, training.RejectTransitionNotAllowed), nil
+			}
+			turn, ok := e.caller.Turn(callerRequest(item, ""))
+			if !ok {
+				return reject(item, training.RejectTransitionNotAllowed), nil
+			}
+			appendLine(&state, item, cmd, now, turn.Answer.ID, "caller", turn.Answer.Text, "", "", turn.Answer.Reveals)
 		}
-		turn, ok := e.caller.Turn(callerRequest(item, ""))
-		if !ok {
-			return reject(item, training.RejectTransitionNotAllowed), nil
-		}
-		appendLine(&state, item, cmd, now, turn.Answer.ID, "caller", turn.Answer.Text, "", "", turn.Answer.Reveals)
 		d.State = training.ItemInProgress
 	case training.CommandAskIntakeQuestion:
-		if state.Mode != "full_case" || state.CallStatus != "connected" || item.IntakeDialogue == nil {
+		if state.Mode != "full_case" || state.CallerMode == content.CallerModeFreeText ||
+			state.CallStatus != "connected" || item.IntakeDialogue == nil {
 			return reject(item, training.RejectTransitionNotAllowed), nil
 		}
 		var p struct {
@@ -257,6 +270,7 @@ func (e exercise) decideProfileFlow(item training.Item, cmd training.Command, no
 			return reject(item, training.RejectInvalidPayload), nil
 		}
 		state.CallStatus = "held"
+		cancelPendingCallerTurn(&state, now, "held")
 	case training.CommandResumeIncoming:
 		if state.Mode != "full_case" || state.CallStatus != "held" {
 			return reject(item, training.RejectTransitionNotAllowed), nil
@@ -275,6 +289,7 @@ func (e exercise) decideProfileFlow(item training.Item, cmd training.Command, no
 			return reject(item, training.RejectInvalidPayload), nil
 		}
 		state.CallStatus, state.EndedAt = "ended", &now
+		cancelPendingCallerTurn(&state, now, "ended")
 	case training.CommandMarkNoContact:
 		if state.Mode != "full_case" || item.State != training.ItemOpened || state.CallStatus != "ringing" {
 			return reject(item, training.RejectTransitionNotAllowed), nil
@@ -295,6 +310,7 @@ func (e exercise) decideProfileFlow(item training.Item, cmd training.Command, no
 			return reject(item, training.RejectInvalidPayload), nil
 		}
 		state.CallStatus, state.EndedAt = "ended", &now
+		cancelPendingCallerTurn(&state, now, "dropped")
 		reason := training.CloseCallDropped
 		d.Close, d.State = &reason, training.ItemClosed
 	case training.CommandAddIncidentType:
@@ -441,6 +457,39 @@ func (e exercise) decideProfileFlow(item training.Item, cmd training.Command, no
 		state.Notified = true
 		d.IntakeNotification = &training.IntakeNotification{Services: services, Reason: p.Reason, CardSnapshot: card, NotifiedAt: now}
 		d.Effect = map[string]any{"services": p.Services, "reason": p.Reason}
+	case training.CommandSendCallerMessage:
+		// 112-5a/ADR-024: the operator's own half of one caller-chat
+		// turn. The reply itself is not decided here — Decide stays
+		// pure (Exercise's own doc comment) and a caller.reply task,
+		// enqueued by the application service from
+		// d.CallerTurnRequested in the same transaction as this
+		// command, resolves the turn asynchronously via
+		// ApplyCallerReply.
+		if state.Mode != "full_case" || state.CallerMode != content.CallerModeFreeText || state.CallStatus != "connected" {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		if hasPendingCallerTurn(state.CallerTurns) {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		var p struct {
+			Text string `json:"text"`
+		}
+		if !payload(cmd.Payload, &p) {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		text := strings.TrimSpace(p.Text)
+		if text == "" || len(text) > 500 {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		// appendLine computes this same id from len(state.Transcript) —
+		// captured before the call so the new turn can reference it.
+		lineID := cmd.CommandID.String() + ":" + strconv.Itoa(len(state.Transcript)+1)
+		appendLine(&state, item, cmd, now, "", "operator", text, "", "", nil)
+		turn := len(state.CallerTurns) + 1
+		state.CallerTurns = append(state.CallerTurns, training.IntakeCallerTurn{
+			Turn: turn, OperatorLineID: lineID, Status: training.CallerTurnPending, RequestedAt: now,
+		})
+		d.CallerTurnRequested = &turn
 	case training.CommandCompleteIntake:
 		// card_only never has a call (CallStatus stays not_applicable);
 		// full_case requires the caller conversation to have ended first,
@@ -504,4 +553,35 @@ func validServiceSelection(catalog *content.IntakeCatalog, suggested []training.
 		return false
 	}
 	return len(reason) <= 1000 && strings.TrimSpace(reason) == reason
+}
+
+// hasPendingCallerTurn reports whether a free-text caller chat has a
+// turn still awaiting its caller.reply (112-5a/ADR-024) —
+// send_caller_message rejects a new message while one is pending, since
+// the applicant answers strictly in order.
+func hasPendingCallerTurn(turns []training.IntakeCallerTurn) bool {
+	for _, t := range turns {
+		if t.Status == training.CallerTurnPending {
+			return true
+		}
+	}
+	return false
+}
+
+// cancelPendingCallerTurn resolves any still-pending caller turn to
+// CallerTurnCancelled (112-5a/ADR-024). hold_incoming, end_incoming and
+// mark_call_dropped all call this before their own effect: once the
+// call is no longer connected, a caller.reply answer for that turn
+// would have nowhere to be shown, and ApplyCallerReply's own pending
+// check makes a worker that resolves it after this point a no-op
+// regardless — this is the trainee-visible half of that same guarantee.
+func cancelPendingCallerTurn(state *training.IntakeState, now time.Time, reason string) {
+	for i := range state.CallerTurns {
+		if state.CallerTurns[i].Status == training.CallerTurnPending {
+			resolvedAt := now
+			state.CallerTurns[i].Status = training.CallerTurnCancelled
+			state.CallerTurns[i].ResolvedAt = &resolvedAt
+			state.CallerTurns[i].Reason = reason
+		}
+	}
 }

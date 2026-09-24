@@ -29,12 +29,31 @@ type Body struct {
 // versions use Dialogue. Neither the dialogue tree nor Reference is sent
 // to a trainee.
 type Intake112 struct {
-	Mode              string             `json:"mode,omitempty"`
+	Mode string `json:"mode,omitempty"`
+	// CallerMode selects the applicant's own behavior for mode="full_case"
+	// (112-5a/ADR-024): "" and CallerModePrepared (the default, and the
+	// only value valid for card_only/incoming_call) keep 112-2's scripted
+	// question/answer dialogue; CallerModeFreeText opens the trainee's
+	// caller-chat window instead — the applicant speaks nothing until the
+	// operator writes a message, and a CallerReplier (a stub in 112-5a, a
+	// model in 112-5b) answers asynchronously (ADR-024). It never changes
+	// which mode/dialogue fields are required on their own — see
+	// validateIntake112FullCase.
+	CallerMode        string             `json:"caller_mode,omitempty"`
 	Call              *Intake112Call     `json:"call,omitempty"`
 	Dialogue          *Intake112Dialogue `json:"dialogue,omitempty"`
 	RecipientServices []string           `json:"recipient_services,omitempty"`
 	Reference         Intake112Reference `json:"reference"`
 }
+
+// CallerMode's two allowed values (Intake112.CallerMode's own doc
+// comment). "" (the JSON omitted case) behaves exactly like
+// CallerModePrepared everywhere this package and internal/training
+// compare against it.
+const (
+	CallerModePrepared = "prepared"
+	CallerModeFreeText = "free_text"
+)
 
 type Intake112Call struct {
 	AON       string   `json:"aon"`

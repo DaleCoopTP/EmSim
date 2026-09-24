@@ -812,6 +812,13 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 				// card_only has no call — the plain "ringing" default
 				// above never applies to it.
 				intakeState.CallStatus = "not_applicable"
+			} else {
+				// full_case only (112-5a/ADR-024): "" and "prepared"
+				// both mean 112-2's scripted dialogue; the scenario's
+				// own CallerMode carries through unchanged so the
+				// exercise rule knows whether to open the caller-chat
+				// window instead of AvailableQuestions.
+				intakeState.CallerMode = version.Body.Intake112.CallerMode
 			}
 			// full_case keeps CallStatus="ringing": it answers/talks to
 			// the caller the same way incoming_call does, before its

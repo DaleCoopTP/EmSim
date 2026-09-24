@@ -130,6 +130,66 @@ func TestValidateFullCase(t *testing.T) {
 	}
 }
 
+// validFreeTextFullCaseBody is 112-5a/ADR-024's caller_mode="free_text"
+// shape: same full_case reference as validFullCaseBody, but the dialogue
+// carries only facts — no scripted initial line or questions, since the
+// trainee writes freely and a CallerReplier answers asynchronously.
+func validFreeTextFullCaseBody() Body {
+	body := validFullCaseBody()
+	body.Intake112.CallerMode = CallerModeFreeText
+	body.Intake112.Dialogue = &Intake112Dialogue{
+		Facts: []Intake112Fact{
+			{ID: "address_city", Label: "Город", CardPath: "/address/city", Knowledge: "initial", Value: "Москва"},
+			{ID: "address_house", Label: "Дом", CardPath: "/address/house", Knowledge: "on_question", Value: "2"},
+		},
+	}
+	return body
+}
+
+func TestValidateFreeTextFullCase(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := validFreeTextFullCaseBody()
+	if err := Validate(body, catalog); err != nil {
+		t.Fatalf("valid free_text full_case: %v", err)
+	}
+	for name, mutate := range map[string]func(*Body){
+		"invalid caller_mode": func(b *Body) { b.Intake112.CallerMode = "ai" },
+		"initial present":     func(b *Body) { b.Intake112.Dialogue.Initial = Intake112Utterance{ID: "greeting", Text: "Алло"} },
+		"questions present": func(b *Body) {
+			b.Intake112.Dialogue.Questions = []Intake112Question{{ID: "q", Text: "?", TopicID: "t", Answer: Intake112Utterance{ID: "a", Text: "a"}}}
+		},
+		"no facts":            func(b *Body) { b.Intake112.Dialogue.Facts = nil },
+		"duplicate fact id":   func(b *Body) { b.Intake112.Dialogue.Facts[1].ID = b.Intake112.Dialogue.Facts[0].ID },
+		"duplicate card_path": func(b *Body) { b.Intake112.Dialogue.Facts[1].CardPath = b.Intake112.Dialogue.Facts[0].CardPath },
+		"invalid card_path":   func(b *Body) { b.Intake112.Dialogue.Facts[0].CardPath = "/not/allowed" },
+		"unknown fact w/ value": func(b *Body) {
+			b.Intake112.Dialogue.Facts[0].Knowledge, b.Intake112.Dialogue.Facts[0].Value = "unknown", "x"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := validFreeTextFullCaseBody()
+			mutate(&invalid)
+			if err := Validate(invalid, catalog); err == nil {
+				t.Fatalf("%s: expected rejection", name)
+			}
+		})
+	}
+	if err := Validate(validFreeTextFullCaseBody(), catalog); err != nil {
+		t.Fatalf("original body still valid after mutation subtests: %v", err)
+	}
+}
+
+func TestValidateRejectsCallerModeOutsideFullCase(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_ambulance"] = ServiceRecord{Active: true}
+	body := validIntakeDialogueBody()
+	body.Intake112.CallerMode = CallerModeFreeText
+	if err := Validate(body, catalog); err == nil {
+		t.Fatal("caller_mode on incoming_call accepted")
+	}
+}
+
 func TestValidateIntakeDialogueReferencesAndCycles(t *testing.T) {
 	catalog := pilotCatalog()
 	catalog.services["pilot_ambulance"] = ServiceRecord{Active: true}

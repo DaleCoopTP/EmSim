@@ -35,13 +35,15 @@
       "additionalProperties": false,
       "required": ["reference"],
       "oneOf": [
-        {"required": ["call", "recipient_services"], "properties": {"mode": {"enum": ["incoming_call"]}, "call": {"required": ["script"]}, "dialogue": false, "reference": {"required": ["expected_card", "recipient_service"]}}},
-        {"required": ["call", "recipient_services", "dialogue"], "properties": {"mode": {"enum": ["incoming_call"]}, "call": {"not": {"required": ["script"]}}, "reference": {"required": ["expected_card", "recipient_service"]}}},
-        {"required": ["mode"], "properties": {"mode": {"const": "card_only"}, "reference": {"required": ["expected_types", "case_description"], "not": {"anyOf": [{"required": ["expected_card"]}, {"required": ["recipient_service"]}, {"required": ["expected_services"]}]}}}, "not": {"anyOf": [{"required": ["call"]}, {"required": ["dialogue"]}, {"required": ["recipient_services"]}]}},
-        {"required": ["mode", "call", "dialogue"], "properties": {"mode": {"const": "full_case"}, "call": {"not": {"required": ["script"]}}, "reference": {"required": ["expected_types", "case_description", "expected_services"], "not": {"anyOf": [{"required": ["expected_card"]}, {"required": ["recipient_service"]}]}}}, "not": {"required": ["recipient_services"]}}
+        {"required": ["call", "recipient_services"], "properties": {"mode": {"enum": ["incoming_call"]}, "caller_mode": false, "call": {"required": ["script"]}, "dialogue": false, "reference": {"required": ["expected_card", "recipient_service"]}}},
+        {"required": ["call", "recipient_services", "dialogue"], "properties": {"mode": {"enum": ["incoming_call"]}, "caller_mode": false, "call": {"not": {"required": ["script"]}}, "dialogue": {"required": ["initial", "questions"]}, "reference": {"required": ["expected_card", "recipient_service"]}}},
+        {"required": ["mode"], "properties": {"mode": {"const": "card_only"}, "caller_mode": false, "reference": {"required": ["expected_types", "case_description"], "not": {"anyOf": [{"required": ["expected_card"]}, {"required": ["recipient_service"]}, {"required": ["expected_services"]}]}}}, "not": {"anyOf": [{"required": ["call"]}, {"required": ["dialogue"]}, {"required": ["recipient_services"]}]}},
+        {"required": ["mode", "call", "dialogue"], "properties": {"mode": {"const": "full_case"}, "caller_mode": {"not": {"const": "free_text"}}, "call": {"not": {"required": ["script"]}}, "dialogue": {"required": ["initial", "questions"]}, "reference": {"required": ["expected_types", "case_description", "expected_services"], "not": {"anyOf": [{"required": ["expected_card"]}, {"required": ["recipient_service"]}]}}}, "not": {"required": ["recipient_services"]}},
+        {"required": ["mode", "caller_mode", "call", "dialogue"], "properties": {"mode": {"const": "full_case"}, "caller_mode": {"const": "free_text"}, "call": {"not": {"required": ["script"]}}, "dialogue": {"not": {"anyOf": [{"required": ["initial"]}, {"required": ["questions"]}]}}, "reference": {"required": ["expected_types", "case_description", "expected_services"], "not": {"anyOf": [{"required": ["expected_card"]}, {"required": ["recipient_service"]}]}}}, "not": {"required": ["recipient_services"]}}
       ],
       "properties": {
         "mode": {"enum": ["incoming_call", "card_only", "full_case"]},
+        "caller_mode": {"enum": ["prepared", "free_text"]},
         "call": {
           "type": "object",
           "additionalProperties": false,
@@ -55,7 +57,7 @@
         },
         "dialogue": {
           "type": "object", "additionalProperties": false,
-          "required": ["facts", "initial", "questions"],
+          "required": ["facts"],
           "properties": {
             "facts": {"type": "array", "minItems": 1, "items": {
               "type": "object", "additionalProperties": false,

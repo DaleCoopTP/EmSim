@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"emsim/internal/content"
 	"emsim/internal/training"
 )
 
@@ -19,7 +20,12 @@ func New() training.Exercise { return exercise{caller: preparedCaller{}} }
 func (e exercise) AvailableQuestions(item training.Item) []training.IntakeQuestionOption {
 	if item.IntakeDialogue == nil || item.IntakeState == nil || item.IntakeState.CallStatus != "connected" ||
 		item.StopCutoffLogSeq != nil ||
-		item.State == training.ItemClosed || item.State == training.ItemInterrupted {
+		item.State == training.ItemClosed || item.State == training.ItemInterrupted ||
+		// 112-5a/ADR-024: a free-text caller has no prepared questions —
+		// the trainee's own caller-chat window replaces this projection,
+		// not e.caller.Available (whose Dialogue.Questions is empty for
+		// this caller_mode anyway, but this guard says so explicitly).
+		item.IntakeState.CallerMode == content.CallerModeFreeText {
 		return []training.IntakeQuestionOption{}
 	}
 	return e.caller.Available(callerRequest(item, ""))
