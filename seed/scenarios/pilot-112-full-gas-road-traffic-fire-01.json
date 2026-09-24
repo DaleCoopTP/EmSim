@@ -1,0 +1,38 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "pilot-112-full-gas-road-traffic-fire-01",
+  "version": 1,
+  "title": "Полный кейс: запах газа рядом с ДТП",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "exercise_type": "operator112_intake",
+    "difficulty": 3,
+    "intake112": {
+      "mode": "full_case",
+      "call": {"aon": "+79161313131", "local_time": "02:03", "time_zone": "Europe/Moscow"},
+      "dialogue": {
+        "facts": [
+          {"id": "complaint", "label": "Жалобы", "card_path": "/complaint", "knowledge": "initial", "value": "сильно пахнет газом и рядом горит машина после столкновения"},
+          {"id": "applicant_status", "label": "Статус заявителя", "card_path": "/applicant_status", "knowledge": "initial", "value": "witness"},
+          {"id": "city", "label": "Город", "card_path": "/address/city", "knowledge": "on_question", "value": "Москва"},
+          {"id": "street", "label": "Улица", "card_path": "/address/street", "knowledge": "on_question", "value": "улица Гаражная"},
+          {"id": "house", "label": "Дом", "card_path": "/address/house", "knowledge": "on_question", "value": "5"},
+          {"id": "landmark", "label": "Ориентир", "card_path": "/address/landmark", "knowledge": "on_question", "value": "у автозаправки"},
+          {"id": "victims_count", "label": "Число пострадавших", "card_path": "/victims_count", "knowledge": "on_question", "value": "0"}
+        ],
+        "initial": {"id": "greeting", "text": "Здравствуйте! Тут авария, машина горит, и очень сильно пахнет газом рядом.", "reveals": ["complaint", "applicant_status"]},
+        "questions": [
+          {"id": "ask_address", "text": "Назовите адрес, где вы находитесь.", "topic_id": "address", "answer": {"id": "address_partial", "text": "Мы на улице Гаражной, у автозаправки.", "reveals": ["city", "street", "landmark"]}},
+          {"id": "clarify_house", "text": "Уточните номер дома или ближайшее строение.", "topic_id": "address", "available_after": ["ask_address"], "answer": {"id": "house_answer", "text": "Рядом дом 5.", "reveals": ["house"]}},
+          {"id": "ask_victims", "text": "Есть ли пострадавшие?", "topic_id": "victims", "answer": {"id": "victims_answer", "text": "Пока никто не пострадал, но все боятся взрыва.", "reveals": ["victims_count"]}}
+        ]
+      },
+      "reference": {
+        "expected_types": ["gas_explosion_road_traffic_fire"],
+        "case_description": "Учебный комбинированный случай: запах газа рядом с местом ДТП с возгоранием. Оператор ведёт разговор, добавляет оба типа происшествия, заполняет карты 104 и 101 и оповещает предложенные службы одним действием.",
+        "expected_services": ["pilot_gas_104", "pilot_fire_101"]
+      }
+    }
+  }
+}

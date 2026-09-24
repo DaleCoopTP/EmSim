@@ -369,7 +369,8 @@ func (s *Service) Start(ctx context.Context, actor auth.Principal, lessonID uuid
 					if err != nil {
 						return err
 					}
-					if version.Body.Intake112 != nil && version.Body.Intake112.Mode == "card_only" {
+					if version.Body.Intake112 != nil &&
+						(version.Body.Intake112.Mode == "card_only" || version.Body.Intake112.Mode == "full_case") {
 						needsCatalog = true
 					}
 				}
@@ -377,7 +378,7 @@ func (s *Service) Start(ctx context.Context, actor auth.Principal, lessonID uuid
 			if needsCatalog {
 				catalog, err := s.scenarios.LatestIntakeCatalog(ctx, tx)
 				if err != nil {
-					return validationErr("intake_catalog", "catalog is required for card_only")
+					return validationErr("intake_catalog", "catalog is required for card_only/full_case")
 				}
 				lesson.IntakeCatalogVersion = &catalog.Version
 			}
@@ -797,7 +798,8 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 		}
 		card := UnansweredIntakeCard("112-"+itemID.String(), call.AON, call.LocalTime, call.TimeZone)
 		intakeState := &IntakeState{CallStatus: "ringing", Transcript: []IntakeLine{}}
-		if version.Body.Intake112.Mode == "card_only" {
+		switch version.Body.Intake112.Mode {
+		case "card_only", "full_case":
 			if lesson.IntakeCatalogVersion == nil {
 				return fmt.Errorf("training: lesson has no intake catalog snapshot")
 			}
@@ -805,8 +807,17 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 			if err != nil {
 				return fmt.Errorf("training: intake catalog missing: %w", err)
 			}
-			intakeState.Mode, intakeState.CallStatus, intakeState.Catalog = "card_only", "not_applicable", &catalog
-			// ADR-023: every card_only item created from this slice on
+			intakeState.Mode, intakeState.Catalog = version.Body.Intake112.Mode, &catalog
+			if version.Body.Intake112.Mode == "card_only" {
+				// card_only has no call — the plain "ringing" default
+				// above never applies to it.
+				intakeState.CallStatus = "not_applicable"
+			}
+			// full_case keeps CallStatus="ringing": it answers/talks to
+			// the caller the same way incoming_call does, before its
+			// notify_services finale (ADR-023).
+			//
+			// Every card_only/full_case item created from this slice on
 			// uses the single notify_services finale; an item already in
 			// progress when this code shipped has no "finale" key in its
 			// stored intake_state and keeps the pre-ADR-023 route.

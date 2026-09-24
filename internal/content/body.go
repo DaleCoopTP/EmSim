@@ -78,6 +78,11 @@ type Intake112Reference struct {
 	RecipientService string                 `json:"recipient_service"`
 	ExpectedTypes    []string               `json:"expected_types,omitempty"`
 	CaseDescription  string                 `json:"case_description,omitempty"`
+	// ExpectedServices is full_case's own closed reference — the
+	// service codes a correct notify_services call should include —
+	// used for manual review only (ADR-023, slice 112-4); it is not
+	// yet consulted by any automatic rule.
+	ExpectedServices []string `json:"expected_services,omitempty"`
 }
 
 type Intake112ExpectedCard struct {

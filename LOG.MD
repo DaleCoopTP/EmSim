@@ -1189,3 +1189,64 @@ Remaining risk: `design-docs/contracts/schema.sql` не обновлён — э�
 Next: `full_case` — режим сценария, объединяющий диалог 112-2 и профильные
 карты 112-3, с тем же финалом `notify_services` (шаг 3 плана по коммитам,
 `slice-112-4-plan.md`).
+
+## 2026-09-24 — Срез 112-4, шаг 3: full_case (разговор + профильные карты)
+
+Status: реализовано и проверено сквозным интеграционным тестом.
+
+- `internal/training/operator112/rules.go`/`profile_rules.go`: единый
+  диспетчер `Decide` теперь направляет и `card_only`, и `full_case` в
+  `decideProfileFlow` (бывшая `decideProfileCase`, стала методом `exercise`
+  ради доступа к `e.caller`); прежний incoming_call-код вынесен в
+  `decideIncomingCall` без изменения поведения. `decideProfileFlow`
+  добавляет телефонные команды (`answer_incoming`, `ask_intake_question`,
+  `hold/resume/end_incoming`, `mark_no_contact`, `mark_call_dropped`),
+  каждая под явным `state.Mode != "full_case"` отказом — card_only их
+  по-прежнему не видит. `save_intake_draft` дополнительно отклоняется при
+  `CallStatus == "ringing"`; `complete_intake` для `full_case` требует
+  `CallStatus == "ended"` вместо `not_applicable`. `dispatch_intake`
+  отклоняется для обоих новых режимов через общий `default` (не отдельная
+  ветка). Транскрипт/`AskedQuestionIDs` теперь копируются в общем месте
+  для card_only и full_case (раньше — только в incoming_call-пути).
+- `internal/content`: режим `intake112.mode="full_case"` — диалог 112-2 +
+  типы/карты 112-3 в одном сценарии, без `recipient_services`/
+  `expected_card`/`recipient_service`; новое `reference.expected_services`
+  (закрытый эталон списка служб для ручного разбора, коды проверяются
+  против `catalog.Service`). `scenario.schema.json`: четвёртая ветка
+  `oneOf` для `full_case`, `expected_services` в `reference.properties`.
+- `internal/training/service.go`: `needsCatalog` и создание item расширены
+  на `full_case` — каталог обязателен так же, как для `card_only`, но
+  `CallStatus` остаётся `"ringing"` (не переопределяется в
+  `"not_applicable"|)`; `Finale="notify"` ставится для обоих режимов.
+- `evidence.operator112.schema.json`: `intake_state.mode` расширен до
+  `["card_only","full_case"]` (было `const "card_only"` — недосмотр шага 2,
+  исправлен сейчас); условие «dispatch обязан быть null» тоже расширено.
+- `http/handlers.go`: проекции `traineeIntakeState` (скрытие каталога) и
+  название типа происшествия в списке карточек учитывают `full_case`
+  наравне с `card_only`.
+- Seed: `seed/scenarios/pilot-112-full-gas-road-traffic-fire-01.json` —
+  разговор про запах газа у ДТП, комбинированный тип
+  `gas_explosion_road_traffic_fire`, эталон служб `pilot_gas_104`+
+  `pilot_fire_101`. Обновлены жёстко заданные количества сценариев в
+  `test/integration/content_import_test.go` (10→11 сценариев, 11→12
+  версий, фильтр по `operator112_intake` 6→7) и `api_process_test.go`
+  (список сценариев инструктора 10→11).
+- Тесты: `internal/content/validate_test.go` — `TestValidateFullCase`
+  (10 негативных подслучаев + позитивный); `operator112/profile_rules_test.go`
+  — `TestFullCaseFlow` (полный маршрут: звонок → вопросы → типы → карты →
+  `notify_services` → отказ `complete_intake` до конца разговора →
+  `end_incoming` → `complete_intake`; `dispatch_intake` отклонён). Новый
+  `test/integration/operator112_full_case_test.go` —
+  `TestOperator112FullCase`: полный кейс через API/БД с проверкой
+  `intake_notifications`/`intake_dispatches`, evidence по JSON Schema и
+  содержимому (2 карты, транскрипт из 7 реплик, `dispatch=nil`,
+  `notification` с двумя службами).
+
+Validation: `gofmt`, `make verify`, `make verify-web`, `python3
+design-docs/contracts/check.py`, `internal/content.TestSeedFilesAreValid`,
+полный `go test -tags=integration ./test/integration/...` (включая новый
+и все существующие 112/ДДС/worker/recovery тесты) — все прошли.
+
+Next: UI — сначала card_only (шаг 4 плана: окно «оповестить и сохранить»
+в `Operator112ProfileCase.tsx`), затем перенос экрана входящего вызова на
+вёрстку карточки 112-3 для `full_case` (шаг 5).

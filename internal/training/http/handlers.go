@@ -838,7 +838,7 @@ func toItemSummaryJSON(item training.Item) itemSummaryJSON {
 		incidentType := ""
 		if item.IntakeState != nil {
 			callStatus, dispatched, notified = item.IntakeState.CallStatus, item.IntakeState.Dispatched, item.IntakeState.Notified
-			if item.IntakeState.Mode == "card_only" && item.IntakeState.Catalog != nil {
+			if (item.IntakeState.Mode == "card_only" || item.IntakeState.Mode == "full_case") && item.IntakeState.Catalog != nil {
 				var names []string
 				for _, id := range item.IntakeCard.IncidentTypes {
 					for _, option := range item.IntakeState.Catalog.Types {
@@ -1053,7 +1053,7 @@ func toDeliveredEventsJSON(events []training.DeliveredEvent) []deliveredEventJSO
 
 func traineeIntakeState(item training.Item) (*training.IntakeState, []string) {
 	state := *item.IntakeState
-	if state.Mode != "card_only" || state.Catalog == nil {
+	if (state.Mode != "card_only" && state.Mode != "full_case") || state.Catalog == nil {
 		return &state, nil
 	}
 	full := state.Catalog

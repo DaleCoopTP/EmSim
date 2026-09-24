@@ -62,10 +62,19 @@ func (e exercise) Decide(item training.Item, cmd training.Command, now time.Time
 	if item.IntakeCard == nil || item.IntakeState == nil {
 		return reject(item, training.RejectTransitionNotAllowed), nil
 	}
-	card, state := *item.IntakeCard, *item.IntakeState
-	if state.Mode == "card_only" {
-		return decideProfileCase(item, cmd, now)
+	if item.IntakeState.Mode == "card_only" || item.IntakeState.Mode == "full_case" {
+		return e.decideProfileFlow(item, cmd, now)
 	}
+	return e.decideIncomingCall(item, cmd, now)
+}
+
+// decideIncomingCall is the pre-ADR-023 incoming_call route: a single
+// recipient service via dispatch_intake, no incident-type/profile-card
+// mechanics. ADR-023's full_case (a caller conversation plus profile
+// cards, finished through notify_services) is decideProfileFlow's, not
+// this function's, even though both read a phone call's commands.
+func (e exercise) decideIncomingCall(item training.Item, cmd training.Command, now time.Time) (training.Decision, error) {
+	card, state := *item.IntakeCard, *item.IntakeState
 	state.Transcript = append(make([]training.IntakeLine, 0, len(item.IntakeState.Transcript)), item.IntakeState.Transcript...)
 	state.AskedQuestionIDs = append([]string(nil), item.IntakeState.AskedQuestionIDs...)
 	d := training.Decision{Accepted: true, State: item.State, Reaction: item.Reaction,

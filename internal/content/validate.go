@@ -75,10 +75,14 @@ func validateIntake112(intake *Intake112, catalog Catalog) error {
 	if intake.Mode == "card_only" {
 		if intake.Dialogue != nil || intake.Call != nil || len(intake.RecipientServices) != 0 ||
 			len(intake.Reference.ExpectedTypes) == 0 || intake.Reference.CaseDescription == "" ||
+			len(intake.Reference.ExpectedServices) != 0 ||
 			intake.Reference.RecipientService != "" || intake.Reference.ExpectedCard != nil {
 			return invalid("intake112", "invalid_card_only_case")
 		}
 		return nil
+	}
+	if intake.Mode == "full_case" {
+		return validateIntake112FullCase(intake, catalog)
 	}
 	if intake.Mode != "" && intake.Mode != "incoming_call" {
 		return invalid("intake112.mode", "invalid")
@@ -107,6 +111,38 @@ func validateIntake112(intake *Intake112, catalog Catalog) error {
 		return validateIntake112Dialogue(*intake.Dialogue)
 	}
 	return nil
+}
+
+// validateIntake112FullCase is ADR-023/slice-112-4-plan.md's combined
+// mode: 112-2's caller dialogue plus 112-3's incident types, finished
+// through notify_services rather than a single recipient service. It
+// forbids incoming_call's own fields (recipient_services, script,
+// expected_card, reference.recipient_service) — a scenario picks one
+// mode, not a mix of both contracts.
+func validateIntake112FullCase(intake *Intake112, catalog Catalog) error {
+	if intake.Call == nil || intake.Dialogue == nil || len(intake.Call.Script) > 0 ||
+		len(intake.RecipientServices) != 0 ||
+		intake.Reference.ExpectedCard != nil || intake.Reference.RecipientService != "" ||
+		len(intake.Reference.ExpectedTypes) == 0 || intake.Reference.CaseDescription == "" ||
+		len(intake.Reference.ExpectedServices) == 0 {
+		return invalid("intake112", "invalid_full_case")
+	}
+	seen := make(map[string]bool, len(intake.Reference.ExpectedServices))
+	for i, code := range intake.Reference.ExpectedServices {
+		field := fmt.Sprintf("intake112.reference.expected_services[%d]", i)
+		if code == "" || seen[code] {
+			return invalid(field, "invalid_or_duplicate")
+		}
+		seen[code] = true
+		service, ok := catalog.Service(code)
+		if !ok {
+			return invalid(field, "unknown")
+		}
+		if !service.Active {
+			return invalid(field, "inactive")
+		}
+	}
+	return validateIntake112Dialogue(*intake.Dialogue)
 }
 
 func validateIntake112Dialogue(dialogue Intake112Dialogue) error {

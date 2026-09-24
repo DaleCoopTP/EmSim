@@ -59,7 +59,7 @@
       "profiles": {"type": "object", "additionalProperties": {"type": "object", "required": ["definition_id", "version", "answers"]}}
     }},
     "intake_state": {"type": "object", "required": ["call_status", "transcript", "has_saved_draft", "dispatched"], "properties": {
-      "mode": {"const": "card_only"},
+      "mode": {"enum": ["card_only", "full_case"]},
       "finale": {"enum": ["", "notify"], "description": "ADR-023: absent/\"\" keeps the pre-slice-112-4 dispatch_intake/review_service_selection routes; \"notify\" is the single notify_services route."},
       "notified": {"type": "boolean"},
       "catalog": {"type": "object", "required": ["version", "types", "profiles", "service_rules"]},

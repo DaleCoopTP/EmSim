@@ -748,7 +748,7 @@ components:
       type: object
       required: [reference]
       properties:
-        mode: { type: string, enum: [incoming_call, card_only], description: Отсутствие означает incoming_call для старых версий. }
+        mode: { type: string, enum: [incoming_call, card_only, full_case], description: Отсутствие означает incoming_call для старых версий. full_case (ADR-023) объединяет диалог с заявителем и профильные карты, финал — notify_services. }
         call:
           type: object
           required: [aon, local_time, time_zone]
@@ -764,8 +764,9 @@ components:
           required: [expected_card, recipient_service]
           properties:
             recipient_service: { type: string }
-            expected_types: { type: array, items: { type: string }, description: Закрытый эталон card_only; определения карт здесь не хранятся. }
-            case_description: { type: string, description: Закрытое описание ситуации card_only. }
+            expected_types: { type: array, items: { type: string }, description: Закрытый эталон card_only/full_case; определения карт здесь не хранятся. }
+            case_description: { type: string, description: Закрытое описание ситуации card_only/full_case. }
+            expected_services: { type: array, items: { type: string }, description: Закрытый эталон full_case — коды служб для ручного разбора notify_services (ADR-023). }
             expected_card:
               type: object
               required: [applicant_status, age, address, incident_type, complaint, victims_count]

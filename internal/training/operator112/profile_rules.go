@@ -170,7 +170,14 @@ func serviceSuggestions(card training.IntakeCard, c *content.IntakeCatalog) []tr
 	return result
 }
 
-func decideProfileCase(item training.Item, cmd training.Command, now time.Time) (training.Decision, error) {
+// decideProfileFlow handles every command for both card_only and
+// full_case: they share incident-type/profile-card/notify_services
+// mechanics (ADR-023) in full, and full_case additionally layers the
+// same incoming-call commands rules.go's own decideIncomingCall uses —
+// duplicated here rather than shared as a helper only where the two
+// truly diverge (card_only never reaches these cases at all, since
+// state.Mode != "full_case" rejects them up front).
+func (e exercise) decideProfileFlow(item training.Item, cmd training.Command, now time.Time) (training.Decision, error) {
 	card, state := *item.IntakeCard, *item.IntakeState
 	if state.Catalog == nil {
 		return reject(item, training.RejectTransitionNotAllowed), nil
@@ -184,6 +191,8 @@ func decideProfileCase(item training.Item, cmd training.Command, now time.Time) 
 	for id, profile := range item.IntakeState.InactiveProfiles {
 		state.InactiveProfiles[id] = profile
 	}
+	state.Transcript = append(make([]training.IntakeLine, 0, len(item.IntakeState.Transcript)), item.IntakeState.Transcript...)
+	state.AskedQuestionIDs = append([]string(nil), item.IntakeState.AskedQuestionIDs...)
 	d := training.Decision{Accepted: true, State: item.State, Reaction: item.Reaction,
 		Card: item.Card, IntakeCard: &card, IntakeState: &state}
 	switch cmd.Type {
@@ -196,6 +205,98 @@ func decideProfileCase(item training.Item, cmd training.Command, now time.Time) 
 			return reject(item, training.RejectInvalidPayload), nil
 		}
 		d.State, d.OpenedAt = training.ItemOpened, &now
+	case training.CommandAnswerIncoming:
+		if state.Mode != "full_case" || item.State != training.ItemOpened || state.CallStatus != "ringing" {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		var empty struct{}
+		if !payload(cmd.Payload, &empty) {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		state.CallStatus, state.AnsweredAt = "connected", &now
+		state.Transcript = []training.IntakeLine{}
+		if item.IntakeDialogue == nil {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		turn, ok := e.caller.Turn(callerRequest(item, ""))
+		if !ok {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		appendLine(&state, item, cmd, now, turn.Answer.ID, "caller", turn.Answer.Text, "", "", turn.Answer.Reveals)
+		d.State = training.ItemInProgress
+	case training.CommandAskIntakeQuestion:
+		if state.Mode != "full_case" || state.CallStatus != "connected" || item.IntakeDialogue == nil {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		var p struct {
+			QuestionID string `json:"question_id"`
+		}
+		if !payload(cmd.Payload, &p) || p.QuestionID == "" {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		turn, ok := e.caller.Turn(callerRequest(item, p.QuestionID))
+		if !ok || turn.Question == nil {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		question := turn.Question
+		appendLine(&state, item, cmd, now, question.ID, "operator", question.Text, question.ID, question.TopicID, nil)
+		appendLine(&state, item, cmd, now, turn.Answer.ID, "caller", turn.Answer.Text, question.ID, question.TopicID, turn.Answer.Reveals)
+		asked := false
+		for _, id := range state.AskedQuestionIDs {
+			asked = asked || id == question.ID
+		}
+		if !asked {
+			state.AskedQuestionIDs = append(state.AskedQuestionIDs, question.ID)
+		}
+	case training.CommandHoldIncoming:
+		if state.Mode != "full_case" || state.CallStatus != "connected" {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		var empty struct{}
+		if !payload(cmd.Payload, &empty) {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		state.CallStatus = "held"
+	case training.CommandResumeIncoming:
+		if state.Mode != "full_case" || state.CallStatus != "held" {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		var empty struct{}
+		if !payload(cmd.Payload, &empty) {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		state.CallStatus = "connected"
+	case training.CommandEndIncoming:
+		if state.Mode != "full_case" || (state.CallStatus != "connected" && state.CallStatus != "held") {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		var empty struct{}
+		if !payload(cmd.Payload, &empty) {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		state.CallStatus, state.EndedAt = "ended", &now
+	case training.CommandMarkNoContact:
+		if state.Mode != "full_case" || item.State != training.ItemOpened || state.CallStatus != "ringing" {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		var empty struct{}
+		if !payload(cmd.Payload, &empty) {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		state.CallStatus, state.EndedAt = "ended", &now
+		reason := training.CloseNoContact
+		d.Close, d.State = &reason, training.ItemClosed
+	case training.CommandMarkCallDropped:
+		if state.Mode != "full_case" || (state.CallStatus != "connected" && state.CallStatus != "held") || state.Notified {
+			return reject(item, training.RejectTransitionNotAllowed), nil
+		}
+		var empty struct{}
+		if !payload(cmd.Payload, &empty) {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
+		state.CallStatus, state.EndedAt = "ended", &now
+		reason := training.CloseCallDropped
+		d.Close, d.State = &reason, training.ItemClosed
 	case training.CommandAddIncidentType:
 		if (item.State != training.ItemOpened && item.State != training.ItemInProgress) || state.Notified {
 			return reject(item, training.RejectTransitionNotAllowed), nil
@@ -266,7 +367,8 @@ func decideProfileCase(item training.Item, cmd training.Command, now time.Time) 
 		state.SuggestedServices = serviceSuggestions(card, state.Catalog)
 		d.Effect = map[string]any{"type_id": p.TypeID, "active_profiles": active}
 	case training.CommandSaveIntakeDraft:
-		if (item.State != training.ItemOpened && item.State != training.ItemInProgress) || state.Notified {
+		if (item.State != training.ItemOpened && item.State != training.ItemInProgress) ||
+			state.Notified || state.CallStatus == "ringing" {
 			return reject(item, training.RejectTransitionNotAllowed), nil
 		}
 		var p struct {
@@ -340,7 +442,12 @@ func decideProfileCase(item training.Item, cmd training.Command, now time.Time) 
 		d.IntakeNotification = &training.IntakeNotification{Services: services, Reason: p.Reason, CardSnapshot: card, NotifiedAt: now}
 		d.Effect = map[string]any{"services": p.Services, "reason": p.Reason}
 	case training.CommandCompleteIntake:
-		if state.Finale != "notify" || !state.Notified || state.CallStatus != "not_applicable" ||
+		// card_only never has a call (CallStatus stays not_applicable);
+		// full_case requires the caller conversation to have ended first,
+		// the same precondition dispatch_intake's incoming_call route
+		// enforces (decideIncomingCall's own CommandCompleteIntake case).
+		callDone := state.CallStatus == "not_applicable" || (state.Mode == "full_case" && state.CallStatus == "ended")
+		if state.Finale != "notify" || !state.Notified || !callDone ||
 			(item.State != training.ItemOpened && item.State != training.ItemInProgress) {
 			return reject(item, training.RejectTransitionNotAllowed), nil
 		}

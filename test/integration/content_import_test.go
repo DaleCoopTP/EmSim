@@ -149,15 +149,15 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportScenarios: %v", err)
 	}
-	if scenarioResult.NewScenarios != 10 || scenarioResult.NewVersions != 11 || scenarioResult.Unchanged != 0 {
-		t.Fatalf("ImportScenarios = %+v, want NewScenarios=10 NewVersions=11 Unchanged=0", scenarioResult)
+	if scenarioResult.NewScenarios != 11 || scenarioResult.NewVersions != 12 || scenarioResult.Unchanged != 0 {
+		t.Fatalf("ImportScenarios = %+v, want NewScenarios=11 NewVersions=12 Unchanged=0", scenarioResult)
 	}
 	scenarioResult2, err := svc.ImportScenarios(ctx, openScenarioDir(t, "../../seed/scenarios"), actorID, actorRole, "req-6")
 	if err != nil {
 		t.Fatalf("ImportScenarios (replay): %v", err)
 	}
-	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 11 {
-		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=11", scenarioResult2)
+	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 12 {
+		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=12", scenarioResult2)
 	}
 
 	// --- read side ---
@@ -165,8 +165,8 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListScenarios: %v", err)
 	}
-	if total != 10 || len(items) != 10 {
-		t.Fatalf("ListScenarios: total=%d len=%d, want 10 including three card-only cases", total, len(items))
+	if total != 11 || len(items) != 11 {
+		t.Fatalf("ListScenarios: total=%d len=%d, want 11 including three card-only cases and one full_case", total, len(items))
 	}
 
 	var case02ID uuid.UUID
@@ -189,7 +189,7 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 		t.Fatalf("pilot-112-medical-01 not found in ListScenarios: %+v", items)
 	}
 	intakeItems, intakeTotal, err := svc.ListScenarios(ctx, content.ScenarioFilter{ExerciseType: content.ExerciseTypeOperator112Intake})
-	if err != nil || intakeTotal != 6 || len(intakeItems) != 6 {
+	if err != nil || intakeTotal != 7 || len(intakeItems) != 7 {
 		t.Fatalf("112 catalogue filter: items=%+v total=%d err=%v", intakeItems, intakeTotal, err)
 	}
 	intakeDetail, err := svc.ScenarioDetail(ctx, intakeID)

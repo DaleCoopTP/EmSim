@@ -77,6 +77,59 @@ func validIntakeDialogueBody() Body {
 	}}
 }
 
+// validFullCaseBody is ADR-023's combined mode: 112-2's dialogue plus
+// 112-3's incident types, finished through notify_services rather than
+// a single recipient_services entry.
+func validFullCaseBody() Body {
+	body := validIntakeDialogueBody()
+	body.Intake112.RecipientServices = nil
+	body.Intake112.Mode = "full_case"
+	body.Intake112.Reference = Intake112Reference{
+		ExpectedTypes: []string{"gas_explosion"}, CaseDescription: "Запах газа в квартире",
+		ExpectedServices: []string{"pilot_gas_104"},
+	}
+	return body
+}
+
+func TestValidateFullCase(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := validFullCaseBody()
+	if err := Validate(body, catalog); err != nil {
+		t.Fatalf("valid full_case: %v", err)
+	}
+	for name, mutate := range map[string]func(*Body){
+		"recipient_services present":  func(b *Body) { b.Intake112.RecipientServices = []string{"pilot_gas_104"} },
+		"missing dialogue":            func(b *Body) { b.Intake112.Dialogue = nil },
+		"legacy script":               func(b *Body) { b.Intake112.Call.Script = []string{"Здравствуйте"} },
+		"expected_card present":       func(b *Body) { b.Intake112.Reference.ExpectedCard = &Intake112ExpectedCard{} },
+		"recipient_service present":   func(b *Body) { b.Intake112.Reference.RecipientService = "pilot_gas_104" },
+		"missing expected_types":      func(b *Body) { b.Intake112.Reference.ExpectedTypes = nil },
+		"missing case_description":    func(b *Body) { b.Intake112.Reference.CaseDescription = "" },
+		"missing expected_services":   func(b *Body) { b.Intake112.Reference.ExpectedServices = nil },
+		"duplicate expected_services": func(b *Body) { b.Intake112.Reference.ExpectedServices = []string{"pilot_gas_104", "pilot_gas_104"} },
+		"unknown expected_services":   func(b *Body) { b.Intake112.Reference.ExpectedServices = []string{"unknown_service"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := validFullCaseBody()
+			mutate(&invalid)
+			if err := Validate(invalid, catalog); err == nil {
+				t.Fatalf("%s: expected rejection", name)
+			}
+		})
+	}
+	t.Run("inactive expected_services", func(t *testing.T) {
+		inactiveCatalog := pilotCatalog()
+		inactiveCatalog.services["pilot_gas_104"] = ServiceRecord{Active: false}
+		if err := Validate(validFullCaseBody(), inactiveCatalog); err == nil {
+			t.Fatal("expected rejection for an inactive expected service")
+		}
+	})
+	if err := Validate(validFullCaseBody(), catalog); err != nil {
+		t.Fatalf("original body still valid after mutation subtests: %v", err)
+	}
+}
+
 func TestValidateIntakeDialogueReferencesAndCycles(t *testing.T) {
 	catalog := pilotCatalog()
 	catalog.services["pilot_ambulance"] = ServiceRecord{Active: true}

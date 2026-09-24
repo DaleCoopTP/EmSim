@@ -178,6 +178,71 @@ func TestProfileNotifyServicesFinale(t *testing.T) {
 	})
 }
 
+// TestFullCaseFlow is ADR-023/slice-112-4-plan.md's combined mode: the
+// 112-2 caller dialogue and the 112-3 profile cards in one item, finished
+// through the same notify_services/complete_intake pair card_only uses.
+func TestFullCaseFlow(t *testing.T) {
+	catalog := pilotCatalog(t)
+	dialogue := &content.Intake112Dialogue{
+		Initial: content.Intake112Utterance{ID: "initial", Text: "Пахнет газом", Reveals: []string{}},
+		Questions: []content.Intake112Question{
+			{ID: "where", Text: "Где именно?", TopicID: "address", Answer: content.Intake112Utterance{ID: "where_answer", Text: "В квартире", Reveals: []string{}}},
+		},
+	}
+	card := training.UnansweredIntakeCard("112-full", "+79161313131", "02:03", "Europe/Moscow")
+	card.Profiles = map[string]training.IntakeProfile{}
+	state := training.IntakeState{Mode: "full_case", Finale: "notify", CallStatus: "ringing", Catalog: &catalog, Transcript: []training.IntakeLine{}}
+	item := training.Item{ID: uuid.New(), State: training.ItemOffered, IntakeCard: &card, IntakeState: &state, IntakeDialogue: dialogue}
+	run := func(typ training.CommandType, p any) training.Decision {
+		t.Helper()
+		data, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := New().Decide(item, training.Command{Type: typ, Payload: data}, time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Accepted {
+			item.State, item.IntakeCard, item.IntakeState = d.State, d.IntakeCard, d.IntakeState
+		}
+		return d
+	}
+	if d := run(training.CommandDispatchIntake, map[string]string{"service_code": "pilot_gas_104"}); d.Accepted {
+		t.Fatal("dispatch_intake must reject for full_case")
+	}
+	if d := run(training.CommandOpen, map[string]any{}); !d.Accepted {
+		t.Fatalf("open: %+v", d)
+	}
+	if d := run(training.CommandSaveIntakeDraft, map[string]any{"draft": item.IntakeCard}); d.Accepted {
+		t.Fatal("save before answering the call")
+	}
+	if d := run(training.CommandAnswerIncoming, map[string]any{}); !d.Accepted || len(d.IntakeState.Transcript) != 1 {
+		t.Fatalf("answer: %+v", d)
+	}
+	if d := run(training.CommandAskIntakeQuestion, map[string]string{"question_id": "where"}); !d.Accepted || len(d.IntakeState.Transcript) != 3 {
+		t.Fatalf("ask: %+v", d)
+	}
+	if d := run(training.CommandAddIncidentType, map[string]string{"type_id": "gas_explosion"}); !d.Accepted || len(d.IntakeCard.Profiles) != 1 {
+		t.Fatalf("add type: %+v", d)
+	}
+	if d := run(training.CommandSaveIntakeDraft, map[string]any{"draft": item.IntakeCard}); !d.Accepted {
+		t.Fatalf("save: %+v", d)
+	}
+	if d := run(training.CommandNotifyServices, map[string]any{"services": []string{"pilot_gas_104"}, "reason": ""}); !d.Accepted || d.IntakeNotification == nil {
+		t.Fatalf("notify: %+v", d)
+	}
+	if d := run(training.CommandCompleteIntake, map[string]any{}); d.Accepted {
+		t.Fatal("complete_intake must reject before the call ends")
+	}
+	if d := run(training.CommandEndIncoming, map[string]any{}); !d.Accepted {
+		t.Fatalf("end: %+v", d)
+	}
+	if d := run(training.CommandCompleteIntake, map[string]any{}); !d.Accepted || d.State != training.ItemClosed {
+		t.Fatalf("complete: %+v", d)
+	}
+}
+
 func TestProfileMedicalHelpAndRemovalRestore(t *testing.T) {
 	catalog := pilotCatalog(t)
 	card := training.UnansweredIntakeCard("112-test", "", "", "")

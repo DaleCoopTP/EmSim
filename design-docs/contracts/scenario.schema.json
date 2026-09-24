@@ -37,10 +37,11 @@
       "oneOf": [
         {"required": ["call", "recipient_services"], "properties": {"mode": {"enum": ["incoming_call"]}, "call": {"required": ["script"]}, "dialogue": false, "reference": {"required": ["expected_card", "recipient_service"]}}},
         {"required": ["call", "recipient_services", "dialogue"], "properties": {"mode": {"enum": ["incoming_call"]}, "call": {"not": {"required": ["script"]}}, "reference": {"required": ["expected_card", "recipient_service"]}}},
-        {"required": ["mode"], "properties": {"mode": {"const": "card_only"}, "reference": {"required": ["expected_types", "case_description"], "not": {"anyOf": [{"required": ["expected_card"]}, {"required": ["recipient_service"]}]}}}, "not": {"anyOf": [{"required": ["call"]}, {"required": ["dialogue"]}, {"required": ["recipient_services"]}]}}
+        {"required": ["mode"], "properties": {"mode": {"const": "card_only"}, "reference": {"required": ["expected_types", "case_description"], "not": {"anyOf": [{"required": ["expected_card"]}, {"required": ["recipient_service"]}, {"required": ["expected_services"]}]}}}, "not": {"anyOf": [{"required": ["call"]}, {"required": ["dialogue"]}, {"required": ["recipient_services"]}]}},
+        {"required": ["mode", "call", "dialogue"], "properties": {"mode": {"const": "full_case"}, "call": {"not": {"required": ["script"]}}, "reference": {"required": ["expected_types", "case_description", "expected_services"], "not": {"anyOf": [{"required": ["expected_card"]}, {"required": ["recipient_service"]}]}}}, "not": {"required": ["recipient_services"]}}
       ],
       "properties": {
-        "mode": {"enum": ["incoming_call", "card_only"]},
+        "mode": {"enum": ["incoming_call", "card_only", "full_case"]},
         "call": {
           "type": "object",
           "additionalProperties": false,
@@ -94,6 +95,7 @@
           "properties": {
             "expected_types": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["gas_explosion", "road_traffic_fire", "gas_explosion_road_traffic_fire"]}},
             "case_description": {"type": "string", "minLength": 1},
+            "expected_services": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}, "description": "full_case (ADR-023): закрытый эталон списка служб для ручного разбора."},
             "expected_card": {
               "type": "object", "additionalProperties": false,
               "required": ["applicant_status", "age", "address", "incident_type", "complaint", "victims_count"],
