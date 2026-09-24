@@ -1,6 +1,7 @@
-import { expect, request as apiRequest, test, type APIResponse } from "@playwright/test";
+import { expect, request as apiRequest, test, type APIRequestContext, type APIResponse } from "@playwright/test";
 
 const password = "e2e-password-123";
+const bootstrapPassword = "local-only-admin-password";
 const baseURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:18080";
 
 async function ok(response: APIResponse) {
@@ -8,11 +9,24 @@ async function ok(response: APIResponse) {
   return response;
 }
 
+// Every e2e spec's own setup logs into the same "admin" account, against
+// RFC-001 §9's real 5-attempts/min-per-login limiter (never relaxed for
+// tests, internal/auth/ratelimit.go). A fast full-suite run can stack more
+// admin logins than that into one minute; retry past the limiter's fixed
+// window instead of treating its 429 as spurious flakiness.
+async function adminLogin(admin: APIRequestContext) {
+  for (let attempt = 0; ; attempt++) {
+    const response = await admin.post("/api/v1/auth/login", { data: { login: "admin", password: bootstrapPassword } });
+    if (response.status() !== 429 || attempt >= 14) return ok(response);
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+}
+
 test("operator 112: instructor assignment → incoming call → saved draft → dispatch → manual review", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1366, height: 768 });
   const admin = await apiRequest.newContext({ baseURL });
-  await ok(await admin.post("/api/v1/auth/login", { data: { login: "admin", password: "local-only-admin-password" } }));
+  await adminLogin(admin);
   await ok(await admin.put("/api/v1/admin/workstations", { data: [{ number: 902, label: "112 browser workstation" }] }));
   const trainee = await (await ok(await admin.post("/api/v1/admin/users", { data: {
     login: "e2e-112-trainee", password, full_name: "Обучаемый 112", role: "trainee",
@@ -179,7 +193,7 @@ test("operator 112: instructor assignment → incoming call → saved draft → 
 test("operator 112: no contact and dropped call close without dispatch", async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 768 });
   const admin = await apiRequest.newContext({ baseURL });
-  await ok(await admin.post("/api/v1/auth/login", { data: { login: "admin", password: "local-only-admin-password" } }));
+  await adminLogin(admin);
   await ok(await admin.put("/api/v1/admin/workstations", { data: [{ number: 903, label: "112 no contact" }, { number: 904, label: "112 dropped call" }] }));
   const trainees = [];
   for (const login of ["e2e-112-no-contact", "e2e-112-call-dropped"]) {
@@ -233,7 +247,7 @@ test("operator 112: full case — call, questions, incident types, profile cards
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1366, height: 768 });
   const admin = await apiRequest.newContext({ baseURL });
-  await ok(await admin.post("/api/v1/auth/login", { data: { login: "admin", password: "local-only-admin-password" } }));
+  await adminLogin(admin);
   await ok(await admin.put("/api/v1/admin/workstations", { data: [{ number: 908, label: "112 full case" }] }));
   const trainee = await (await ok(await admin.post("/api/v1/admin/users", { data: {
     login: "e2e-112-full-case-trainee", password, full_name: "Обучаемый полного кейса 112", role: "trainee",
@@ -332,4 +346,179 @@ test("operator 112: full case — call, questions, incident types, profile cards
   await expect(notifiedLine).toBeVisible();
   await expect(notifiedLine).toContainText("pilot_gas_104");
   await expect(notifiedLine).toContainText("pilot_fire_101");
+});
+
+test("operator 112: free-text caller chat — async stub replies, draft survives them, hold cancels a pending turn", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const admin = await apiRequest.newContext({ baseURL });
+  await adminLogin(admin);
+  await ok(await admin.put("/api/v1/admin/workstations", { data: [{ number: 909, label: "112 caller chat" }] }));
+  const trainee = await (await ok(await admin.post("/api/v1/admin/users", { data: {
+    login: "e2e-112-chat-trainee", password, full_name: "Обучаемый чата 112", role: "trainee",
+  } }))).json();
+  await ok(await admin.post("/api/v1/admin/users", { data: {
+    login: "e2e-112-chat-instructor", password, full_name: "Преподаватель чата 112", role: "instructor",
+  } }));
+  await admin.dispose();
+
+  const instructorAPI = await apiRequest.newContext({ baseURL });
+  await ok(await instructorAPI.post("/api/v1/auth/login", { data: { login: "e2e-112-chat-instructor", password } }));
+  const catalogue = await (await ok(await instructorAPI.get("/api/v1/scenarios?status=approved&exercise_type=operator112_intake&page=1&page_size=200"))).json();
+  const scenario = catalogue.items.find((candidate: { source_key?: string }) => candidate.source_key === "pilot-112-free-text-chat-01");
+  expect(scenario).toBeTruthy();
+  await instructorAPI.dispose();
+
+  await page.goto(`${baseURL}/login`);
+  await page.getByLabel("Логин").fill("e2e-112-chat-instructor");
+  await page.getByLabel("Пароль").fill(password);
+  await page.getByRole("button", { name: "Войти" }).click();
+  await expect(page.getByRole("heading", { name: "Занятия" })).toBeVisible();
+  await page.getByRole("button", { name: "Создать занятие" }).click();
+  await page.getByLabel("Название").fill("Чат с заявителем 112 E2E");
+  await page.getByLabel("Упражнение").selectOption("operator112_intake");
+  await page.getByRole("button", { name: "Создать", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Чат с заявителем 112 E2E" })).toBeVisible();
+  const lessonId = new URL(page.url()).pathname.split("/").at(-1)!;
+  await page.getByLabel("Рабочее место").selectOption("909");
+  await page.getByLabel("Обучаемый").selectOption(trainee.id);
+  await page.locator(".queue-editor select").selectOption(scenario.id);
+  await page.getByRole("button", { name: "+ В очередь" }).click();
+  await page.getByRole("button", { name: "Сохранить назначения" }).click();
+  await expect(page.getByText("Назначения сохранены.")).toBeVisible();
+  await page.getByRole("button", { name: /Запустить занятие/ }).click();
+  await expect(page.locator(".lesson-heading .status-badge")).toHaveText("Идёт");
+  await page.getByRole("button", { name: "Выйти" }).click();
+
+  await page.getByLabel("Логин").fill("e2e-112-chat-trainee");
+  await page.getByLabel("Пароль").fill(password);
+  await page.getByLabel("Номер рабочего места (для обучаемого)").fill("909");
+  await page.getByRole("button", { name: "Войти" }).click();
+  await expect(page.getByRole("heading", { name: "Чат с заявителем 112 E2E" })).toBeVisible();
+  const items = await (await ok(await page.request.get("/api/v1/my/items"))).json();
+  expect(items).toHaveLength(1);
+  const itemID = items[0].id;
+  const initial = await (await ok(await page.request.get(`/api/v1/items/${itemID}`))).json();
+  expect(initial.intake_state.caller_mode).toBe("free_text");
+
+  await page.getByRole("button", { name: /Открыть карточку №/ }).click();
+  await page.getByRole("button", { name: "Открыть кейс" }).click();
+  await page.getByRole("button", { name: "ответить", exact: true }).click();
+
+  // The chat window opens by default as soon as the call is answered
+  // (112-2's scripted available_questions are replaced by free text).
+  await expect(page.getByRole("dialog", { name: "Чат с заявителем" })).toBeVisible();
+  await expect(page.getByText("Напишите первое сообщение заявителю.")).toBeVisible();
+
+  const chatInput = page.getByLabel("Сообщение заявителю");
+  const send = page.getByRole("button", { name: "Отправить" });
+
+  await chatInput.fill("Что случилось? Где вы находитесь?");
+  await send.click();
+  await expect(page.getByText("Заявитель печатает…")).toBeVisible();
+  await expect(page.getByText(/Я упал\.\.\. Глаз очень болит/)).toBeVisible({ timeout: 10_000 });
+
+  // Monitor.tsx's last-action label for send_caller_message, checked via a
+  // separate instructor API session (not the trainee's own page) right
+  // after the one command whose own receipt is still the lesson's most
+  // recent action — every later step in this test (save, notify, end,
+  // complete) would otherwise overwrite it before a UI check could run.
+  const instructorMonitorAPI = await apiRequest.newContext({ baseURL });
+  await ok(await instructorMonitorAPI.post("/api/v1/auth/login", { data: { login: "e2e-112-chat-instructor", password } }));
+  const monitorSnapshot = await (await ok(await instructorMonitorAPI.get(`/api/v1/lessons/${lessonId}/monitor`))).json();
+  const monitorRow = monitorSnapshot.rows.find((row: { user: { id: string } }) => row.user.id === trainee.id);
+  expect(monitorRow?.last_action?.type).toBe("send_caller_message");
+  await instructorMonitorAPI.dispose();
+
+  // Collapse the chat and edit the card underneath — the caller reply just
+  // received arrived through the same SSE-triggered item refetch a chat
+  // message's own receipt does. Commit 4 of 112-5a fixed a bug where that
+  // refetch reset the unsaved draft (it was keyed off item.seq, which every
+  // accepted command bumps, instead of item.card's own content); the rest
+  // of this test keeps typing through several more async replies to prove
+  // the draft survives them.
+  await page.getByRole("button", { name: "скрыть чат" }).click();
+  await expect(page.getByRole("dialog", { name: "Чат с заявителем" })).toHaveCount(0);
+  await page.getByLabel("Тип происшествия").fill("Взрыв газа и ДТП с пламенем");
+  await page.getByRole("option", { name: "Взрыв газа и ДТП с пламенем", exact: true }).click();
+  await expect(page.locator(".intake-profile-panel")).toHaveCount(2);
+  await page.getByLabel("Улица: значение").fill("улица Гаражная");
+  await page.getByLabel("Дом/Вл: значение").fill("5");
+  await page.getByRole("button", { name: "чат с заявителем", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Чат с заявителем" })).toBeVisible();
+  await expect(page.getByLabel("Улица: значение")).toHaveValue("улица Гаражная");
+
+  // Phrases 2-6 in order (stub_caller.go's fixed six replies).
+  const phrases = [
+    /Москва, улица Космонавтов, дом 1, корпус 4\./,
+    /На спортивной площадке возле дома, на улице/,
+    /Произошло примерно четыре минуты назад\./,
+    /Кудрявцев Алексей Иванович\./,
+    /Хорошо, остаюсь на связи\. Жду помощи\./,
+  ];
+  for (const phrase of phrases) {
+    await chatInput.fill("Уточните, пожалуйста.");
+    await send.click();
+    await expect(page.getByText(phrase)).toBeVisible({ timeout: 10_000 });
+  }
+  // The 7th message repeats the 6th (last) phrase, same as every message past it.
+  await chatInput.fill("Ещё раз, пожалуйста.");
+  await send.click();
+  await expect(page.getByText(/Хорошо, остаюсь на связи\. Жду помощи\./)).toHaveCount(2, { timeout: 10_000 });
+
+  // The card draft typed while the chat was collapsed is still there.
+  await expect(page.getByLabel("Улица: значение")).toHaveValue("улица Гаражная");
+  await expect(page.getByLabel("Дом/Вл: значение")).toHaveValue("5");
+
+  // Hold started while a turn is pending cancels that turn (ADR-024); no
+  // reply is recorded for it, and the input becomes available again once
+  // the operator returns to the call.
+  await chatInput.fill("Оставайтесь на линии, пожалуйста.");
+  await send.click();
+  await expect(page.getByText("Заявитель печатает…")).toBeVisible();
+  await page.getByRole("button", { name: "удержать" }).click();
+  await expect(page.getByText("на удержании", { exact: true }).first()).toBeVisible();
+  const heldSnapshot = await (await ok(await page.request.get(`/api/v1/items/${itemID}`))).json();
+  const cancelledTurn = heldSnapshot.intake_state.caller_turns.at(-1);
+  expect(cancelledTurn.status).toBe("cancelled");
+  expect(cancelledTurn.reason).toBe("held");
+  await page.getByRole("button", { name: "вернуться к разговору" }).click();
+  await expect(page.getByText("Заявитель печатает…")).toHaveCount(0);
+  await expect(chatInput).toBeEnabled();
+
+  await page.getByRole("button", { name: "Сохранить карточку" }).click();
+  await expect(page.getByText(/Проверьте службы/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Добавить службу" }).click();
+  const dialog = page.getByRole("dialog", { name: "Список оповещаемых служб" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(/Служба 104/)).toBeVisible();
+  await expect(dialog.getByText(/Служба 101/)).toBeVisible();
+  await dialog.getByRole("button", { name: "оповестить и сохранить карточку" }).click();
+  await expect(page.getByText(/Службы оповещены/)).toBeVisible();
+
+  await page.getByRole("button", { name: "завершить разговор", exact: true }).click();
+  await page.getByRole("button", { name: "Завершить кейс" }).click();
+  await expect(page.getByText(/Кейс завершён/)).toBeVisible();
+
+  const finished = await (await ok(await page.request.get(`/api/v1/items/${itemID}`))).json();
+  expect(finished.notification.services.map((entry: { service_code: string }) => entry.service_code).sort()).toEqual(["pilot_fire_101", "pilot_gas_104"]);
+  const turns = finished.intake_state.caller_turns as Array<{ status: string; adapter?: string; reason?: string }>;
+  expect(turns.filter((turn) => turn.status === "answered")).toHaveLength(7);
+  expect(turns.every((turn) => turn.status !== "answered" || turn.adapter === "stub/v1")).toBeTruthy();
+  expect(turns.filter((turn) => turn.status === "cancelled" && turn.reason === "held")).toHaveLength(1);
+  await page.getByRole("button", { name: "Выйти" }).click();
+
+  await page.getByLabel("Логин").fill("e2e-112-chat-instructor");
+  await page.getByLabel("Пароль").fill(password);
+  await page.getByRole("button", { name: "Войти" }).click();
+  await expect(page.getByRole("heading", { name: "Занятия" })).toBeVisible();
+  await page.goto(`${baseURL}/instructor/items/${itemID}/review`);
+  await expect(page.getByRole("heading", { name: "Кейс с разговором" })).toBeVisible();
+  await expect(page.getByText(/Оператор: Что случилось\? Где вы находитесь\?/)).toBeVisible();
+  await expect(page.getByText(/Заявитель: Я упал\.\.\. Глаз очень болит/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ходы свободного диалога" })).toBeVisible();
+  await expect(page.getByText(/Отвечено \(stub\/v1\)/).first()).toBeVisible();
+  await expect(page.getByText(/Отменён: удержание/)).toBeVisible();
+  await expect(page.getByText(/Сообщение заявителю/).first()).toBeVisible();
 });

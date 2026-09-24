@@ -13,8 +13,17 @@ async function expectOK(response: APIResponse) {
   return response;
 }
 
+// Every e2e spec's own setup logs into the same "admin" account, against
+// RFC-001 §9's real 5-attempts/min-per-login limiter (never relaxed for
+// tests, internal/auth/ratelimit.go). A fast full-suite run can stack more
+// admin logins than that into one minute; retry past the limiter's fixed
+// window instead of treating its 429 as spurious flakiness.
 async function login(request: APIRequestContext, loginName: string, loginPassword = password) {
-	await expectOK(await request.post("/api/v1/auth/login", { data: { login: loginName, password: loginPassword } }));
+	for (let attempt = 0; ; attempt++) {
+		const response = await request.post("/api/v1/auth/login", { data: { login: loginName, password: loginPassword } });
+		if (response.status() !== 429 || attempt >= 14) { await expectOK(response); return; }
+		await new Promise((resolve) => setTimeout(resolve, 5_000));
+	}
 }
 
 async function expectDesktopScreenshots(page: Page, name: string, masks: Locator[] = []) {

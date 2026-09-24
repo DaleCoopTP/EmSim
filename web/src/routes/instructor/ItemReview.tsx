@@ -12,13 +12,15 @@ type Item = components["schemas"]["Item"];
 type IntakeField = { state: string; value?: string };
 type IntakeCard = { number: string; aon: string; call_local_time: string; call_time_zone: string; applicant_name: IntakeField; applicant_status: IntakeField; age: IntakeField; address: Record<string, IntakeField>; incident_type: IntakeField; incident_types?: string[]; profiles?: Record<string, { definition_id: string; version: number; answers: Record<string, { state: string; value?: string; values?: string[] }> }>; complaint: IntakeField; victims_present: IntakeField; victims_count: IntakeField; provided_phone: IntakeField; on_site_phone?: IntakeField; channel?: IntakeField; foreign_language?: IntakeField; no_on_site?: IntakeField; no_access?: IntakeField };
 type IntakeReviewLine = { id?: string; speaker?: "caller" | "operator"; text: string; server_at: string; reveals?: string[]; topic_id?: string };
+type IntakeReviewCallerTurn = { turn: number; operator_line_id?: string; status: "pending" | "answered" | "cancelled" | "failed"; adapter?: string; requested_at: string; resolved_at?: string; reason?: string };
 type IntakeReviewAction = { type: string; accepted: boolean; server_at: string; log_seq: number; payload?: { draft?: IntakeCard; type_id?: string; services?: string[]; reason?: string }; effect?: { suggested?: { service_code: string; reasons: string[] }[] } };
 type DialogueFact = { id: string; label: string; card_path: string; knowledge: "initial" | "on_question" | "unknown"; value?: string };
 type ReviewCatalog = { version: number; types: { id: string; name: string }[]; profiles: { id: string; name: string; fields: { id: string; label: string; kind: string; shared?: string }[] }[] };
 type ReviewServiceState = { suggested_services?: { service_code: string; reasons: string[] }[]; service_review?: { suggested: { service_code: string; reasons: string[] }[]; selected: string[]; reason?: string; reviewed_at: string } };
 type IntakeNotification = { item_id: string; action_id: string; services: { service_code: string; suggested: boolean }[]; reason?: string; card_snapshot: IntakeCard; notified_at: string };
-type IntakeReviewItem = Item & { card: IntakeCard; intake_reference?: unknown; intake_dialogue_reference?: { facts: DialogueFact[] }; intake_state?: { mode?: string; catalog?: ReviewCatalog; transcript?: IntakeReviewLine[] } & ReviewServiceState; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; notification?: IntakeNotification };
-type IntakeReviewEvidence = { final_card?: IntakeCard; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; notification?: IntakeNotification; intake_state?: { mode?: string; catalog?: ReviewCatalog; transcript?: IntakeReviewLine[] } & ReviewServiceState; actions?: IntakeReviewAction[] };
+type IntakeReviewState = { mode?: string; catalog?: ReviewCatalog; transcript?: IntakeReviewLine[]; caller_mode?: "prepared" | "free_text"; caller_turns?: IntakeReviewCallerTurn[] } & ReviewServiceState;
+type IntakeReviewItem = Item & { card: IntakeCard; intake_reference?: unknown; intake_dialogue_reference?: { facts: DialogueFact[] }; intake_state?: IntakeReviewState; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; notification?: IntakeNotification };
+type IntakeReviewEvidence = { final_card?: IntakeCard; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; notification?: IntakeNotification; intake_state?: IntakeReviewState; actions?: IntakeReviewAction[] };
 const labels: Record<string, string> = { met: "выполнено", partial: "частично", not_met: "не выполнено", not_applicable: "не применимо", unavailable: "не проверено" };
 const manualStatuses: CriterionStatus[] = ["met", "partial", "not_met", "not_applicable"];
 
@@ -131,15 +133,25 @@ function IntakeProfileReviewPanel({ item, evidence }: { item: IntakeReviewItem; 
       case "complete_profile_case": case "complete_intake": return "Завершил обработку";
       case "mark_no_contact": return "Закрыл: нет контакта";
       case "mark_call_dropped": return "Закрыл: срыв звонка";
+      case "send_caller_message": return "Сообщение заявителю";
       default: return action.type;
     }
   };
   const answerText = (answer: { state: string; value?: string; values?: string[] } | undefined) => answer?.state === "known" ? answer.values?.join(", ") ?? answer.value ?? "" : answer?.state === "unknown" ? "неизвестно" : "не заполнено";
+  const callerTurns = state?.caller_turns ?? [];
+  const turnStatusText = (turn: IntakeReviewCallerTurn) => {
+    if (turn.status === "answered") return `Отвечено${turn.adapter ? ` (${turn.adapter})` : ""}`;
+    if (turn.status === "failed") return "Нет ответа — техническая причина";
+    if (turn.status === "cancelled") return `Отменён: ${turn.reason === "held" ? "удержание" : turn.reason === "ended" ? "завершение" : turn.reason === "dropped" ? "срыв звонка" : turn.reason ?? "—"}`;
+    return "Без ответа на момент остановки";
+  };
   return <>
     <h2>{isCall ? "Кейс с разговором" : "Кейс без разговора"}</h2>
     <p>Каталог профилей: версия {catalog?.version ?? "—"}.{!isCall && " Отправка карточки в службу для этого режима не выполняется."}</p>
     {isCall && <><h3>Разговор с заявителем</h3>
-      <ol>{transcript.map((line, index) => <li key={line.id ?? index}>{formatDateTime(line.server_at)} · {line.speaker === "operator" ? "Оператор" : "Заявитель"}: {line.text}</li>)}</ol></>}
+      <ol>{transcript.map((line, index) => <li key={line.id ?? index}>{formatDateTime(line.server_at)} · {line.speaker === "operator" ? "Оператор" : "Заявитель"}: {line.text}</li>)}</ol>
+      {callerTurns.length > 0 && <><h4>Ходы свободного диалога</h4>
+        <ul>{callerTurns.map((turn) => <li key={turn.turn}>Ход {turn.turn} · {formatDateTime(turn.requested_at)} · {turnStatusText(turn)}</li>)}</ul></>}</>}
     <h3>Последовательность действий</h3><ol>{actions.map((action) => <li key={action.log_seq}>{formatDateTime(action.server_at)} · {actionText(action)}</li>)}</ol>
     <h3>Итоговая общая карточка</h3><IntakeCardView card={card} />
     <h3>Выбранные типы</h3><ul>{(card.incident_types ?? []).map((id) => <li key={id}>{typeName(id)}</li>)}</ul>

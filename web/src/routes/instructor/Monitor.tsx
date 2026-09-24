@@ -28,6 +28,7 @@ const commandLabels: Record<string, string> = {
   ask_intake_question: "Задал уточняющий вопрос",
   mark_no_contact: "Закрыл: нет контакта",
   mark_call_dropped: "Закрыл: срыв звонка",
+  send_caller_message: "Сообщение заявителю",
 };
 
 // RFC-001 §7.7's monitor: SSE (lessons/{id}/stream) is an invalidation

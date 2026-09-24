@@ -599,8 +599,8 @@ dd { margin: 0; }
 .arm112-line { display: flex; align-items: stretch; margin-right: 6px; }
 .arm112-hangup { display: grid; place-items: center; width: 56px; color: #333; }
 .arm112-line-state { display: flex; flex: 1; flex-direction: column; justify-content: center; gap: 9px; padding: 6px 8px 6px 4px; font-size: 15px; }
-.arm112-line-state div { display: flex; gap: 8px; }
-.arm112-line-state button { flex: 1; padding: 2px 6px; font-size: 11px; font-weight: 400; background: #f3f3f3; border-color: #9c9c9c; }
+.arm112-line-state div { display: flex; flex-wrap: wrap; gap: 8px; }
+.arm112-line-state button { flex: 1 1 auto; min-width: 64px; padding: 2px 6px; font-size: 11px; font-weight: 400; background: #f3f3f3; border-color: #9c9c9c; }
 .arm112-line-state button:disabled { opacity: 1; color: #555; }
 .arm112-phone-side { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #3a3a3a; background: #dadada !important; }
 .arm112-phone { position: relative; display: flex; flex-direction: column; justify-content: flex-start; min-width: 0; margin-right: 6px; padding: 6px 12px 8px; }

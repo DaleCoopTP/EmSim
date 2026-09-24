@@ -40,6 +40,15 @@ const environment = {
   WORKER_ADMIN_PORT: workerAdminPort,
   E2E_BASE_URL: `http://127.0.0.1:${apiPort}`,
   PLAYWRIGHT_BROWSERS_PATH: resolve(import.meta.dirname, "../.playwright-browsers"),
+  // 112-5a's stub caller (internal/training/operator112/stub_caller.go)
+  // defaults to a 1s reply delay so the async protocol is visibly
+  // exercised in a manual demo; e2e shortens that to stay fast, without
+  // touching the compose default itself. Not zero: operator112.spec.ts's
+  // caller-chat test asserts the turn is still "pending" (the "Заявитель
+  // печатает…" indicator, held long enough to test hold-cancellation) —
+  // a 0s delay lets the worker's reply (poll interval 250ms) land before
+  // that state is ever observably rendered.
+  CALLER_STUB_DELAY: process.env.CALLER_STUB_DELAY ?? "800ms",
 };
 const compose = ["compose", "-p", project];
 

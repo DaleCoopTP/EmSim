@@ -1,6 +1,7 @@
-import { expect, request as apiRequest, test, type APIResponse } from "@playwright/test";
+import { expect, request as apiRequest, test, type APIRequestContext, type APIResponse } from "@playwright/test";
 
 const password = "e2e-password-123";
+const bootstrapPassword = "local-only-admin-password";
 const baseURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:18080";
 
 async function ok(response: APIResponse) {
@@ -8,11 +9,23 @@ async function ok(response: APIResponse) {
   return response;
 }
 
+// See operator112.spec.ts's own adminLogin: every e2e spec's setup shares
+// the "admin" account, against RFC-001 §9's real 5-attempts/min-per-login
+// limiter (never relaxed for tests). Retry past its fixed window instead of
+// treating a full-suite run's 429 as spurious flakiness.
+async function adminLogin(admin: APIRequestContext) {
+  for (let attempt = 0; ; attempt++) {
+    const response = await admin.post("/api/v1/auth/login", { data: { login: "admin", password: bootstrapPassword } });
+    if (response.status() !== 429 || attempt >= 14) return ok(response);
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+}
+
 test("operator 112: three card-only cases show profiles only after type selection", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1366, height: 768 });
   const admin = await apiRequest.newContext({ baseURL });
-  await ok(await admin.post("/api/v1/auth/login", { data: { login: "admin", password: "local-only-admin-password" } }));
+  await adminLogin(admin);
   await ok(await admin.put("/api/v1/admin/workstations", { data: [
     { number: 905, label: "112 профиль 104" }, { number: 906, label: "112 профиль 101" }, { number: 907, label: "112 комбинированный" },
   ] }));
