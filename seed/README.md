@@ -57,8 +57,19 @@
 - `scenarios/pilot-112-gas-explosion-01.json`,
   `pilot-112-road-traffic-fire-01.json` и
   `pilot-112-gas-road-traffic-fire-01.json` — три самостоятельных назначения
-  без разговора. Их закрытый эталон хранит ожидаемый тип, а карты появляются
-  только после действия обучаемого «Добавить тип происшествия».
+  без разговора (`intake112.mode="card_only"`). Их закрытый эталон хранит
+  ожидаемый тип, а карты появляются только после действия обучаемого
+  «Добавить тип происшествия». Прохождения, начатые с 112-4, заканчиваются
+  единым действием «оповестить и сохранить карточку»
+  (`notify_services`/`complete_intake`) вместо прежних
+  `review_service_selection`/`complete_profile_case`.
+- `scenarios/pilot-112-full-gas-road-traffic-fire-01.json` — срез 112-4,
+  `intake112.mode="full_case"`: разговор про запах газа рядом с ДТП
+  (`dialogue`, как у `pilot-112-medical-01-v2`) в одном задании с картами
+  104/101 (`card_only`'s type/profile catalog). Закрытый эталон —
+  `reference.expected_types`/`expected_services`
+  (`["pilot_gas_104","pilot_fire_101"]`), без `recipient_services` —
+  это поле относится только к прежнему `incoming_call`.
 - `voice-assets/manifest.json` и два PCM WAV-файла — greeting/ack этого
   контакта (mono, 16-bit, 16 kHz). `import seed` после сценариев импортирует
   их идемпотентно в content-addressed `BLOB_ROOT`.
