@@ -7,6 +7,7 @@ import { itemQueryKey, myItemsQueryKey, myRunQueryKey } from "../../api/workplac
 import { availableLocalStorage, clearPending, loadPending, savePending, type PendingCommand } from "../../commands/pending";
 import { BellIcon, CloseIcon, GlobeIcon, HangupIcon, HelpIcon, LinkIcon, MapIcon, MessageIcon, PhoneIcon, PinIcon, PlusIcon, SmsIcon, StopwatchIcon, TranslateIcon } from "../../components/Arm112Icons";
 import { formatDateTime } from "../../format";
+import { CallerChat } from "./CallerChat";
 import type { IntakeCard, IntakeCatalog, IntakeField, IntakeItem, IntakeProfileAnswer } from "./Operator112Workplace";
 
 const empty: IntakeField = { state: "unanswered" };
@@ -85,6 +86,20 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
   const [outcomeIntent, setOutcomeIntent] = useState<"no_contact" | "call_dropped" | null>(null);
   const [clientNow, setClientNow] = useState(Date.now);
   const [clock] = useState(() => ({ client: Date.now(), server: new Date(item.server_time).getTime() }));
+  const chatStorageKey = `emsim:112:chat-open:${item.id}`;
+  const [chatOpen, setChatOpen] = useState(() => {
+    try {
+      const saved = storage?.getItem(chatStorageKey);
+      if (saved === "open") return true;
+      if (saved === "closed") return false;
+    } catch { /* falls through to the default below */ }
+    return true; // open by default the first time the chat becomes available
+  });
+  const toggleChat = () => setChatOpen((current) => {
+    const next = !current;
+    try { storage?.setItem(chatStorageKey, next ? "open" : "closed"); } catch { /* per-viewer convenience only */ }
+    return next;
+  });
   const state = item.intake_state;
   const catalog = state.catalog;
   const terminal = item.state === "closed" || item.state === "interrupted";
@@ -95,7 +110,8 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
   const ringingCall = isCall && state.call_status === "ringing";
   const bodyReady = opened && !ringingCall;
   const editable = bodyReady && !notified;
-  const dirty = JSON.stringify(draft) !== JSON.stringify(item.card);
+  const cardSignature = JSON.stringify(item.card);
+  const dirty = JSON.stringify(draft) !== cardSignature;
   const suggested = state.suggested_services ?? [];
   const reviewed = notifyFlow ? item.notification?.services.map((entry) => entry.service_code) : state.service_review?.selected;
   const serverNow = clock.server + clientNow - clock.client;
@@ -106,10 +122,15 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
     setSelectedServices(state.service_review?.selected ?? suggested.map((entry) => entry.service_code));
     setReviewReason(state.service_review?.reason ?? "");
   };
+  // Keyed off the card's own content (not item.seq, which every accepted
+  // command bumps, including a chat message or an asynchronous caller
+  // reply's own SSE-triggered refetch) — otherwise those unrelated
+  // updates would silently discard whatever the operator is mid-typing
+  // in the card.
   useEffect(() => {
     setDraft(item.card);
     resetSelection();
-  }, [item.seq]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [cardSignature]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const timer = window.setInterval(() => setClientNow(Date.now()), 1000); return () => window.clearInterval(timer); }, []);
 
   const refresh = async () => { await Promise.all([
@@ -173,6 +194,7 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
             {state.call_status === "connected" && !terminal && <button type="button" disabled={!!pending} onClick={() => send("hold_incoming", {})}>удержать</button>}
             {state.call_status === "held" && !terminal && <button type="button" disabled={!!pending} onClick={() => send("resume_incoming", {})}>вернуться к разговору</button>}
             {(state.call_status === "connected" || state.call_status === "held") && !terminal && <button type="button" disabled={!!pending} onClick={() => send("end_incoming", {})}>завершить разговор</button>}
+            {state.caller_mode === "free_text" && bodyReady && <button type="button" aria-pressed={chatOpen} onClick={toggleChat}>{chatOpen ? "скрыть чат" : "чат с заявителем"}</button>}
           </div>
         </div> : <div className="arm112-line-state"><span>не подключен</span>
           <div><button type="button" disabled title={unavailable}>записи звонков</button><button type="button" disabled title={unavailable}>список SMS</button></div>
@@ -281,7 +303,7 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
                 value={knownValue(draft.complaint)} onChange={(event) => update("complaint", fromText(event.target.value))} /></label>
             <span className="arm112-counter">{knownValue(draft.complaint).length} / 1999</span>
           </section>
-          {isCall && <section className="arm112-panel">
+          {isCall && state.caller_mode !== "free_text" && <section className="arm112-panel">
             <h3>Разговор с заявителем</h3>
             <div className="intake-transcript"><ol>{state.transcript.map((line, index) => <li key={line.id ?? index}><strong>{line.speaker === "operator" ? "Оператор" : "Заявитель"}:</strong> {line.text}</li>)}</ol></div>
             {state.call_status === "held" && <p>Вызов на удержании. Вернитесь к разговору, чтобы задать вопрос.</p>}
@@ -379,6 +401,9 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
       <div><button type="button" onClick={() => setOutcomeIntent(null)}>Вернуться к карточке</button>
         <button type="button" className="arm-primary-action" disabled={!!pending} onClick={() => { send(outcomeIntent === "no_contact" ? "mark_no_contact" : "mark_call_dropped", {}); setOutcomeIntent(null); }}>Закрыть карточку</button></div>
     </div></div>}
+
+    {isCall && state.caller_mode === "free_text" && bodyReady && <CallerChat item={item} open={chatOpen} onToggle={toggleChat} pending={!!pending}
+      onSend={(text) => send("send_caller_message", { text })} />}
   </section>;
 }
 

@@ -26,8 +26,14 @@ export type IntakeProfileAnswerSet = { definition_id: string; version: number; a
 export type IntakeCatalog = { version: number; types: { id: string; name: string; profile_ids: string[] }[];
   profiles: { id: string; version: number; name: string; fields: { id: string; label: string; kind: "single" | "multiple" | "text" | "shared"; options?: string[]; shared?: "no_on_site" | "no_access" }[] }[];
   service_rules: { id: string; profile_id: string; field_id?: string; equals?: string; service_code: string; reason: string }[] };
-type IntakeLine = { id?: string; speaker?: "caller" | "operator"; text: string; server_at: string; topic_id?: string };
+export type IntakeLine = { id?: string; speaker?: "caller" | "operator"; text: string; server_at: string; topic_id?: string };
+// 112-5a/ADR-024: one send_caller_message/caller.reply round trip. status
+// stays "pending" until the async worker answers (or hold/end/close
+// cancels it, or the finalizer fails it after exhausted retries).
+export type IntakeCallerTurn = { turn: number; operator_line_id?: string; status: "pending" | "answered" | "cancelled" | "failed";
+  adapter?: string; requested_at: string; resolved_at?: string; reason?: string };
 export type IntakeState = { mode?: "card_only" | "full_case"; catalog?: IntakeCatalog; call_status: "ringing" | "connected" | "held" | "ended" | "not_applicable"; transcript: IntakeLine[]; asked_question_ids?: string[];
+  caller_mode?: "prepared" | "free_text"; caller_turns?: IntakeCallerTurn[];
   suggested_services?: { service_code: string; reasons: string[] }[]; service_review?: { selected: string[]; reason?: string; reviewed_at: string };
   has_saved_draft: boolean; dispatched: boolean; selected_service?: string; answered_at?: string; ended_at?: string; finale?: string; notified: boolean };
 type Dispatch = { service_code: string; sent_at: string; card_snapshot: IntakeCard };
