@@ -1,6 +1,7 @@
 # Срез 112-5a — чат с заявителем поверх заглушки
 
-Дата: 2026-09-24. Статус: план.
+Дата: 2026-09-24. Статус: реализован (коммиты 0–5 из `LOG.MD`; коммит 6 —
+документация).
 
 Основание: `slice-planning-112.md` §8 (112-5), [ADR-022](design-docs/adr/022-operator112-caller-simulator.md),
 [ADR-024](design-docs/adr/024-operator112-async-caller-reply.md). Срез 112-5

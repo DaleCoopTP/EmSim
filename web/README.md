@@ -9,7 +9,7 @@ npm ci
 npm run dev     # http://localhost:5173, proxies /api to :8080 (start `go run ./cmd/emsim api` separately)
 npm run check   # regenerate API types from ../design-docs/contracts/openapi.yaml, then tsc -b
 npm run build   # -> dist/, embedded by web/embed.go's //go:embed
-npm run test:e2e # isolated Chromium + compose browser acceptance tests (DDS, 112 incoming-call, 112 card_only, 112 full_case)
+npm run test:e2e # isolated Chromium + compose browser acceptance tests (DDS, 112 incoming-call, 112 card_only, 112 full_case, 112 free-text caller chat)
 ```
 
 `src/api/schema.d.ts` is generated (`npm run generate:api`, an
@@ -52,9 +52,15 @@ The instructor review (`ItemReview.tsx`) shows the dialogue transcript for
 `full_case`/incoming-call routes, the profile cards and action log for
 `card_only`/`full_case`, and either the notification record (recipients,
 suggested-vs-manual, reason, time) or the legacy dispatch/service-review
-snapshot, whichever the item actually produced. The monitor
-(`Monitor.tsx`) row for an active 112 item shows the incident type once
-chosen and "· оповещено" once notified, alongside the call state.
+snapshot, whichever the item actually produced. For a `caller_mode:
+"free_text"` case (112-5a) it also lists each caller-chat turn's status
+(answered with its adapter, no reply for a technical reason, cancelled by
+hold/end/dropped call, or still pending at stop) under its own "Ходы
+свободного диалога" heading, and the action log labels
+`send_caller_message`. The monitor (`Monitor.tsx`) row for an active 112
+item shows the incident type once chosen and "· оповещено" once notified,
+alongside the call state, and labels `send_caller_message` as the last
+action the same way.
 An assignment can contain several ordered 112 cases. The next case is offered
 when the current one closes, and the trainee can return to the case list after
 finishing the last case while the workplace remains open.
@@ -66,6 +72,22 @@ while short screens scroll the page. The card's training availability
 indicator is local to the current browser and workstation: an open card
 forces "unavailable" until ten seconds after closure, then restores the
 manual choice. It does not report SIP connectivity.
+
+For `full_case` items with `intake_state.caller_mode: "free_text"`
+(112-5a, [ADR-024](../design-docs/adr/024-operator112-async-caller-reply.md)),
+`CallerChat.tsx` replaces the prepared-questions transcript panel with a
+floating chat window (collapsible to a launcher button with an unread badge;
+open/collapsed persists per item in localStorage). The operator types
+free-text messages; the caller's reply arrives asynchronously (a worker task,
+not part of the command's own transaction) and never bumps `item.seq`, so an
+unsaved card draft survives it — the card's own `useEffect` resets the draft
+off `JSON.stringify(item.card)`, not `item.seq`, specifically because every
+accepted command (including a chat message) bumps the latter. While a reply
+is pending the window shows "Заявитель печатает…"; hold, end-call, or a
+dropped/no-contact close cancel that pending turn instead of leaving it
+stuck. This slice's replies come from a deterministic six-phrase stub
+(`adapter: "stub/v1"`); 112-5b swaps only the `CallerReplier` port for a real
+model.
 
 `test:e2e` creates a uniquely named Compose project with its own volumes and
 free localhost ports, feeds Chromium `seed/voice-assets/crew_leader_greeting.wav`
