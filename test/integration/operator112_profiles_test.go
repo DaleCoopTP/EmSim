@@ -107,6 +107,8 @@ func TestOperator112ProfileCases(t *testing.T) {
 		assignments = append(assignments, training.AssignmentInput{WorkstationNo: i + 1, UserID: trainee.ID, ScenarioVersionIDs: []uuid.UUID{versionID}})
 		operators = append(operators, principal(trainee, ws))
 	}
+	// A 112 assignment can contain several ordered cases, including repeats.
+	assignments[0].ScenarioVersionIDs = append(assignments[0].ScenarioVersionIDs, assignments[1].ScenarioVersionIDs[0])
 	stopUser := newTrainee("profile-stop-trainee-"+uuid.NewString(), "")
 	stopUser.ServiceCode = nil
 	var stopTrainee auth.User
@@ -246,6 +248,15 @@ func TestOperator112ProfileCases(t *testing.T) {
 			}
 			if len(evidence.FinalCard.Profiles) != tc.profileCount || evidence.Dispatch != nil || len(evidence.IntakeState.ServiceReview.Selected) != tc.serviceCount {
 				t.Fatalf("evidence: %+v", evidence)
+			}
+			if i == 0 {
+				nextItems, err := trainingService.MyItems(ctx, operator)
+				if err != nil || len(nextItems) != 2 || nextItems[0].State != training.ItemClosed || nextItems[1].State != training.ItemOffered || nextItems[1].ScenarioVersionID != assignments[1].ScenarioVersionIDs[0] {
+					t.Fatalf("next 112 case was not offered: %+v, %v", nextItems, err)
+				}
+				if nextItems[1].IntakeCard == nil || len(nextItems[1].IntakeCard.IncidentTypes) != 0 || len(nextItems[1].IntakeCard.Profiles) != 0 {
+					t.Fatalf("next case inherited profile cards: %+v", nextItems[1].IntakeCard)
+				}
 			}
 		})
 	}

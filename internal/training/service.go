@@ -231,9 +231,6 @@ func (s *Service) ReplaceAssignments(ctx context.Context, actor auth.Principal, 
 			if len(in.ScenarioVersionIDs) == 0 {
 				return validationErr("scenario_version_ids", "at least one scenario version is required")
 			}
-			if lesson.ExerciseType == content.ExerciseTypeOperator112Intake && len(in.ScenarioVersionIDs) != 1 {
-				return validationErr("scenario_version_ids", "operator112_intake supports exactly one scenario in the first slice")
-			}
 			if lesson.Level == auth.LevelHard && len(in.ScenarioVersionIDs) > 1 &&
 				(lesson.Timing.SpawnEveryS == nil || *lesson.Timing.SpawnEveryS <= 0) {
 				return validationErr("timing.spawn_every_s", "is required for a hard queue with multiple scenarios")
