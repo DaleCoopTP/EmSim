@@ -2201,3 +2201,97 @@ replier), fallback на нейтральную реплику при исчер�
 `callerReplyHandler`, новые поля `config.Worker`
 (`CallerReplier`/`CallerLLMURL`/`CallerLLMModel`/генерационные
 параметры), `compose.yaml`.
+
+## 2026-09-25 — Срез 112-5b, коммит 4: клиент модели и ИИ-адаптер
+
+Подключает модель за портом `CallerReplier` без изменения протокола
+ADR-024; по умолчанию (`CALLER_REPLIER` не задан) поведение равно
+112-5a — `StubCallerReplier` остаётся единственным исполнением:
+
+- `internal/platform/llm/` (новый пакет): `Client.Complete` — один
+  `POST {base}/chat/completions`, `net/http`, без новых зависимостей;
+  `Request{Model, Messages, Stream=false, Temperature, TopP, MaxTokens,
+  RepeatPenalty}` (`repeat_penalty` — расширение llama.cpp, Ollama может
+  игнорировать — отмечено в доккомменте и ADR-025); ошибки не содержат
+  тела ответа (RFC-001 §9). Переиспользуется 112-6 для
+  `assessment.evaluate`, когда он появится.
+- `internal/training/operator112/aicaller/` (новый пакет):
+  `state.go` — `OpenFacts`/`RevealedFacts` восстанавливают состояние из
+  транскрипта заново на каждый ход (без сохранения между вызовами,
+  решение 1 плана); `classify.go` — `FactAsked` (`ask_patterns` минус
+  `ask_exclude_patterns`, спецслучай «адрес vs ориентировка» теперь в
+  данных сценария), `DiscloseReveals` (регэкспы `disclosure_patterns`,
+  телефон — по последним 10 цифрам, как в `caller.py`), общий кеш
+  скомпилированных `(?i)`-паттернов; `prompt.go` — раскладка под кеш
+  префикса llama.cpp (решение 4): `system` = статичные правила
+  (дословно из `caller.py`) + персонаж — неизменны в пределах диалога;
+  история — как есть; факты/задача хода — в последнем `user`-сообщении;
+  `replier.go` — `Replier.Reply`: нет профиля → делегирует `Stub`; ход 1 →
+  `Caller.Opening` без модели (`Reveals` — из `Opening.Reveals`
+  сценария, тот же принцип, что у `dialogue.initial.reveals` 112-2);
+  ровно один спрошенный факт с подходящим `answer_variant` →
+  без модели; иначе — вызов `ChatCompleter` (порт, объявленный здесь;
+  реализация — `platform/llm`), `CleanReply` вырезает `<think>…</think>`
+  и обрезает до последней границы предложения при
+  `finish_reason=length`, пустой ответ — ошибка; `Fallback(req)` —
+  нейтральная реплика с `source=fallback` и записанными параметрами
+  генерации.
+- `cmd/emsim/worker_composition.go`: `callerReplyHandler` получил
+  `maxAttempts int, fallback func(...) operator112.CallerReply`;
+  `callerReplyFallbackOutcome` (чистая функция) решает — fallback
+  применяется, только если `fallback != nil` (т.е. `CALLER_REPLIER=llm`)
+  и это последняя попытка (`lease.Attempt >= maxAttempts`, то же
+  условие, что `ResolveFailureTx`, `internal/platform/tasks/
+  pgrecovery.go`, использует для остановки retry) — иначе обычный
+  retryable `HandlerFailure`, как в 112-5a. `composePools` выбирает
+  `operator112.StubCallerReplier` или `aicaller.Replier` по
+  `config.Worker.CallerReplier`, `MaxAttempts` берёт из
+  `registry.Lookup(training.KindCallerReply)`, а не дублирует константу.
+- `internal/platform/config/worker.go`: `CallerReplier` (`stub`|`llm`,
+  по умолчанию `stub` при пустом `CALLER_REPLIER` — свойство сохранения
+  совместимости, стек без модели работает как раньше),
+  `CallerLLMURL`/`CallerLLMModel` (обязательны при `llm`),
+  `CallerTemperature`/`CallerTopP`/`CallerRepeatPenalty`/`CallerMaxTokens`
+  с дефолтами MVP (0.3/0.9/1.1/150, `handoff/README.md`); `Validate`
+  проверяет допустимые диапазоны и обязательность URL/модели при `llm`.
+- `compose.yaml`: `CALLER_REPLIER`, `CALLER_LLM_URL` (по умолчанию
+  `http://host.docker.internal:11434/v1`), `CALLER_LLM_MODEL`,
+  `extra_hosts: host.docker.internal:host-gateway` у `worker`; заголовок
+  файла обновлён (llm-клиент существует, `llama-server`-контейнер — ещё
+  нет, это этап 2).
+- Тесты: `internal/platform/llm/client_test.go` — форма запроса
+  (`httptest`), `stream=false`, код ответа ≠200 (без утечки тела в
+  ошибку), отмена по `ctx`, пустой `choices`.
+  `internal/training/operator112/aicaller/replier_test.go` — вступление
+  без вызова модели (`erroringChat`), делегирование заглушке без
+  профиля, исключение «ориентировка ≠ адрес», фиксированный ответ (и его
+  пропуск при >1 спрошенном факте), очистка `<think>`/генерация в
+  результате, распространение ошибки модели, отказ на пустом ответе,
+  **системное сообщение побайтно одинаково между 2 и 3 ходом** (решение
+  4 проверено явно), закрытые факты не попадают в промпт, fallback,
+  `CleanReply` (обрезка по `finish_reason=length` и без нее).
+  `internal/platform/config/worker_test.go` — дефолт `stub` без единой
+  переменной `CALLER_*`, `llm` без URL/модели отклоняется, `top_p` вне
+  `[0,1]` отклоняется, неизвестное значение `CALLER_REPLIER` отклоняется.
+  `cmd/emsim/worker_test.go` — `callerReplyFallbackOutcome`: не
+  последняя попытка → retry без вызова fallback; последняя попытка с
+  fallback → применяется; `fallback=nil` (заглушка) → никогда не
+  применяется, даже на последней попытке.
+
+Validation: `gofmt -l` (чисто), `go build ./...`, `go vet ./...` и
+`go vet -tags integration ./...` (чистые), `make verify` (зелёный, все
+новые пакеты включены), `python3 design-docs/contracts/check.py`
+(зелёный), `docker compose config` (валиден), `make test-integration`
+— зелёный (155.569s, прежний набор 112-5a/ДДС на заглушке без
+изменений — `CALLER_REPLIER` не установлен нигде в интеграционных
+тестах, поэтому они по-прежнему используют `StubCallerReplier`).
+Ручная проверка с реальным Ollama не выполнялась в рамках этого
+коммита — сценариев с `dialogue.caller` пока нет (появятся в коммите
+c5); `CALLER_REPLIER=llm` сейчас отвечал бы заглушкой для всех
+существующих сценариев (нет профиля заявителя), что и есть
+задокументированное поведение решения 7.
+
+Next: коммит c5 — три новых сида в `seed/scenarios/` с профилем
+заявителя, перенесённые из YAML пользователя
+(`claude_caller_mvp_20260925.zip`), с заглушкой-эталоном там, где
+каталог типов происшествий не покрывает сценарий; `seed/README.md`.

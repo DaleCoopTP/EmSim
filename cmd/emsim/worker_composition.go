@@ -19,12 +19,14 @@ import (
 
 	"emsim/internal/assessment"
 	"emsim/internal/platform/config"
+	"emsim/internal/platform/llm"
 	"emsim/internal/platform/observability"
 	"emsim/internal/platform/tasks"
 	"emsim/internal/reporting"
 	reportingpg "emsim/internal/reporting/postgres"
 	"emsim/internal/training"
 	"emsim/internal/training/operator112"
+	"emsim/internal/training/operator112/aicaller"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -178,8 +180,33 @@ type callerReplyPayload struct {
 // error must instead come back as a *tasks.HandlerFailure so
 // ResolveFailure requeues it (Spec.MaxAttempts=2, RetryBase) and, once
 // exhausted, delegates to callerReplyFinalizer instead of crashing the
-// whole worker process.
-func callerReplyHandler(pool *pgxpool.Pool, store *tasks.Store, trainingService *training.Service, replier operator112.CallerReplier, timeout time.Duration) tasks.Handler {
+// whole worker process — UNLESS fallback is non-nil and this is already
+// the task's last allowed attempt (lease.Attempt >= maxAttempts, the
+// same condition ResolveFailureTx itself uses to stop retrying,
+// internal/platform/tasks/pgrecovery.go): ADR-025's decision 6 applies
+// fallback's neutral reply instead, so the turn becomes Answered with
+// Source=fallback rather than Failed, and the conversation keeps going
+// even though the model itself could not be reached. fallback is nil for
+// CALLER_REPLIER=stub — StubCallerReplier keeps 112-5a's original
+// retry-then-Failed behavior unchanged, since it has no model to fail
+// against in the first place.
+// callerReplyFallbackOutcome is callerReplyHandler's own retry-vs-
+// fallback decision (ADR-025's decision 6), pulled out as a pure
+// function so it is testable without a database: apply fallback's
+// neutral reply only when one is configured (CALLER_REPLIER=llm) and
+// attempt is already the task's last allowed one — attempt >= maxAttempts
+// is exactly ResolveFailureTx's own "attempts < maxAttempts" condition
+// negated (internal/platform/tasks/pgrecovery.go), so this never fires
+// on a try the queue would have retried anyway. ok=false means "return
+// a retryable HandlerFailure instead", the pre-112-5b behavior.
+func callerReplyFallbackOutcome(fallback func(operator112.CallerReplyRequest) operator112.CallerReply, req operator112.CallerReplyRequest, attempt, maxAttempts int) (operator112.CallerReply, bool) {
+	if fallback == nil || attempt < maxAttempts {
+		return operator112.CallerReply{}, false
+	}
+	return fallback(req), true
+}
+
+func callerReplyHandler(pool *pgxpool.Pool, store *tasks.Store, trainingService *training.Service, replier operator112.CallerReplier, timeout time.Duration, maxAttempts int, fallback func(operator112.CallerReplyRequest) operator112.CallerReply) tasks.Handler {
 	return tasks.HandlerFunc(func(ctx context.Context, lease tasks.Lease) error {
 		var payload callerReplyPayload
 		if err := json.Unmarshal(lease.Payload, &payload); err != nil {
@@ -189,17 +216,22 @@ func callerReplyHandler(pool *pgxpool.Pool, store *tasks.Store, trainingService 
 		if err != nil {
 			return err
 		}
-		callCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		reply, err := replier.Reply(callCtx, operator112.CallerReplyRequest{
+		req := operator112.CallerReplyRequest{
 			Facts: replyCtx.Dialogue.Facts, Caller: replyCtx.Dialogue.Caller, Transcript: replyCtx.Transcript, Turn: payload.Turn,
-		})
+		}
+		callCtx, cancel := context.WithTimeout(ctx, timeout)
+		reply, err := replier.Reply(callCtx, req)
+		cancel()
 		if err != nil {
-			failure, ferr := tasks.NewHandlerFailure(tasks.Retryable, "caller_reply_unavailable")
-			if ferr != nil {
-				return ferr
+			fallbackReply, applyFallback := callerReplyFallbackOutcome(fallback, req, lease.Attempt, maxAttempts)
+			if !applyFallback {
+				failure, ferr := tasks.NewHandlerFailure(tasks.Retryable, "caller_reply_unavailable")
+				if ferr != nil {
+					return ferr
+				}
+				return failure
 			}
-			return failure
+			reply = fallbackReply
 		}
 		tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 		if err != nil {
@@ -360,15 +392,37 @@ func composePools(
 	if err := handlers.Register(reporting.KindBuild, reporting.NewBuilderFromEnvironment(reportingpg.NewStore(pool), store)); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
-	// 112-5a/ADR-024: StubCallerReplier is the only CallerReplier this
-	// slice composes — 112-5b swaps it for a model adapter right here,
-	// nothing else in this function changes.
+	// 112-5b/ADR-025: CALLER_REPLIER selects StubCallerReplier (default —
+	// 112-5a's own behavior, no model dependency) or aicaller.Replier (a
+	// model call over an OpenAI-compatible endpoint, falling back to the
+	// very same stub for a scenario with no caller profile — see
+	// aicaller.Replier's own doc comment). callerFallback stays nil for
+	// the stub: only the model path can fail in a way ADR-025's neutral
+	// reply is meant to cover.
 	stubDelay, err := callerStubDelay()
 	if err != nil {
 		return nil, err
 	}
-	callerReplier := operator112.StubCallerReplier{Delay: stubDelay}
-	if err := handlers.Register(training.KindCallerReply, callerReplyHandler(pool, store, trainingService, callerReplier, processConfig.CallerReplyTimeout)); err != nil {
+	stubReplier := operator112.StubCallerReplier{Delay: stubDelay}
+	var callerReplier operator112.CallerReplier = stubReplier
+	var callerFallback func(operator112.CallerReplyRequest) operator112.CallerReply
+	if processConfig.CallerReplier == config.CallerReplierLLM {
+		aiReplier := aicaller.Replier{
+			Chat: llm.NewClient(processConfig.CallerLLMURL), Model: processConfig.CallerLLMModel,
+			Temperature: processConfig.CallerTemperature, TopP: processConfig.CallerTopP,
+			RepeatPenalty: processConfig.CallerRepeatPenalty, MaxTokens: processConfig.CallerMaxTokens,
+			Stub: stubReplier,
+		}
+		callerReplier = aiReplier
+		callerFallback = aiReplier.Fallback
+	}
+	callerReplySpec, ok := registry.Lookup(training.KindCallerReply)
+	if !ok {
+		return nil, errors.New("caller.reply kind is not registered")
+	}
+	if err := handlers.Register(training.KindCallerReply, callerReplyHandler(
+		pool, store, trainingService, callerReplier, processConfig.CallerReplyTimeout, callerReplySpec.MaxAttempts, callerFallback,
+	)); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
 

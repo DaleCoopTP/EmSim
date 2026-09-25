@@ -14,6 +14,7 @@ import (
 	"emsim/internal/platform/tasks"
 	"emsim/internal/reporting"
 	"emsim/internal/training"
+	"emsim/internal/training/operator112"
 )
 
 func TestParseWorkerRoleRequiresKnownExplicitFlag(t *testing.T) {
@@ -104,5 +105,38 @@ func TestRegisterKindsIncludesReportBuildInDedicatedPool(t *testing.T) {
 	spec, ok := registry.Lookup(reporting.KindBuild)
 	if !ok || spec.Pool != "report" || spec.MaxAttempts != 3 || spec.Lease != 2*time.Minute {
 		t.Fatalf("report.build spec = %+v", spec)
+	}
+}
+
+// TestCallerReplyFallbackOutcomeAppliesOnlyOnLastAttempt is 112-5b/
+// ADR-025's decision 6, pulled out into callerReplyFallbackOutcome so it
+// is testable without a database (see its own doc comment): a model
+// failure on an attempt before the last one must still retry normally
+// (ok=false, the pre-112-5b behavior callerReplyHandler already had),
+// and CALLER_REPLIER=stub (fallback==nil) must never apply a fallback
+// reply at all, on any attempt — 112-5a's original retry-then-Failed
+// protocol stays exactly as it was.
+func TestCallerReplyFallbackOutcomeAppliesOnlyOnLastAttempt(t *testing.T) {
+	req := operator112.CallerReplyRequest{Turn: 3}
+	called := false
+	fallback := func(gotReq operator112.CallerReplyRequest) operator112.CallerReply {
+		called = true
+		if gotReq.Turn != req.Turn {
+			t.Fatalf("fallback got req.Turn=%d, want %d", gotReq.Turn, req.Turn)
+		}
+		return operator112.CallerReply{Text: "fallback text"}
+	}
+
+	if _, ok := callerReplyFallbackOutcome(fallback, req, 1, 2); ok || called {
+		t.Fatalf("attempt 1 of 2 must retry, not fall back (ok=%v called=%v)", ok, called)
+	}
+	reply, ok := callerReplyFallbackOutcome(fallback, req, 2, 2)
+	if !ok || !called || reply.Text != "fallback text" {
+		t.Fatalf("attempt 2 of 2 must apply the fallback: ok=%v called=%v reply=%+v", ok, called, reply)
+	}
+
+	called = false
+	if _, ok := callerReplyFallbackOutcome(nil, req, 2, 2); ok || called {
+		t.Fatalf("a nil fallback (CALLER_REPLIER=stub) must never apply, even on the last attempt: ok=%v called=%v", ok, called)
 	}
 }

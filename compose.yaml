@@ -1,11 +1,16 @@
 name: emsim
 
 # "demo" profile (RFC-001 §4.3): everything on one machine, one worker
-# process running every pool (short/llm/stt) plus maintenance
+# process running every pool (short/llm/stt/caller) plus maintenance
 # (reaper + sampler) via --role=all — unlike orchestration-core's compose,
 # which ran a separate container per Kind/role, this port has one worker
-# process by design (ADR-001). llm/stt/caddy are added once the inference
-# clients exist.
+# process by design (ADR-001). stt/caddy are still added once those
+# inference clients exist. 112-5b/ADR-025 adds an OpenAI-compatible LLM
+# client (internal/platform/llm) for caller.reply, reachable through
+# CALLER_LLM_URL — by default Ollama running on the host during
+# development (extra_hosts below), never a container this compose starts
+# itself; a llama-server container with a chosen GGUF is
+# slice-112-5b-plan.md's own stage 2, not this file's job yet.
 
 x-database-url: &database-url postgres://emsim:${POSTGRES_PASSWORD:-local-only-postgres-password}@postgres:5432/emsim?sslmode=disable
 
@@ -116,10 +121,20 @@ services:
       CALLER_CONCURRENCY: 4
       CALLER_REPLY_TIMEOUT: 15s
       CALLER_STUB_DELAY: ${CALLER_STUB_DELAY:-1s}
+      # 112-5b/ADR-025: CALLER_REPLIER unset/"stub" keeps 112-5a's own
+      # behavior — no model dependency, nothing below matters. Set
+      # CALLER_REPLIER=llm (and, typically, run `ollama serve` +
+      # `ollama pull` on the host first — see README.md) to route
+      # caller.reply through aicaller.Replier instead.
+      CALLER_REPLIER: ${CALLER_REPLIER:-stub}
+      CALLER_LLM_URL: ${CALLER_LLM_URL:-http://host.docker.internal:11434/v1}
+      CALLER_LLM_MODEL: ${CALLER_LLM_MODEL:-t-tech/T-lite-it-2.1:q5_K_M}
     ports:
       - "127.0.0.1:${WORKER_ADMIN_PORT:-8082}:8081"
     volumes:
       - blob-data:/app/blobs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       migrate:
         condition: service_completed_successfully
