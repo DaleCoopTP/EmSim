@@ -2599,3 +2599,42 @@ Next: коммит 7 — интеграционные тесты полного 
 → waiting → sealed input → auto rev=1 ready; retry/lease loss; stop до
 оповещения; legacy → failed/operator112_legacy_route + ручная ревизия;
 expert после auto; занятие v1 не ставит задачу). `make test-integration`.
+
+## 2026-09-25 — 112-6, коммит 7: интеграционные тесты полного конвейера 112
+
+Новый `test/integration/operator112_assessment_pipeline_test.go` —
+шесть тестов, зеркало `assessment_pipeline_test.go` для реального
+`operator112_intake` full_case-кейса (`pilot-112-full-gas-road-traffic-
+fire-01`), теперь когда оценщик реально зарегистрирован (коммит 6):
+полный цикл close→waiting→coordinator→pending→Handle→auto rev=1
+ready (не needs_review — в этой рубрике нет llm-критериев, в отличие
+от ДДС); повтор задачи не создаёт вторую auto; stop до
+`notify_services` — auto всё равно `ready`, `T_FILL`/`P_SERVICES`
+`not_applicable`; легаси-маршрут (`incoming_call`/`dispatch_intake` под
+свежим `rubric-v2` занятием) — `failed/operator112_legacy_route`, auto
+не создаётся, ручная ревизия работает; expert после auto становится
+итоговым, auto-строка остаётся нетронутой; занятие на `rubric-v1`
+(искусственно — `CreateLesson` больше не может его создать после
+коммита 4) не ставит задачу вообще.
+
+Пришлось дважды поправить сборку сценариев: `pilot-112-medical-01` в
+реальном сиде имеет более новую v2 (диалоговую) версию, которая
+подменяет v1 как `approved` при импорте всей директории — тест сначала
+брал `version=1` напрямую и получал `not approved`; переключился на
+выбор по `status='approved'`. Для легаси-теста в итоге всё равно
+понадобился отдельный (не из сида) `incoming_call`-сценарий —
+скопирован приём `TestOperator112IntakeTransaction`'а: тело
+`pilot-112-medical-01.json` вставляется напрямую под собственным
+`source_key`, в обход `ImportScenarios`, чтобы не зависеть от того,
+какая версия сейчас approved в сиде.
+
+Validation: `gofmt -l`, `go vet ./...`, `go vet -tags=integration
+./test/integration/...`, `go test ./...`, `python3 design-docs/
+contracts/check.py`, полный `go test -tags=integration ./test/
+integration/...` (реальный Postgres, testcontainers) — все зелёные.
+
+Next: коммит 8 — UI разбора преподавателя (`ItemReview.tsx`: автооценка
+для 112 с таблицей блоков и раскрываемыми `details`, штрафы отдельно,
+числовые поля в форме ревизии) и результатов обучаемого
+(`History.tsx`: итог/блоки/штрафы без `expected`), типы из
+`openapi.yaml`, e2e `operator112.spec.ts`.
