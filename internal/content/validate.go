@@ -1,6 +1,10 @@
 package content
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
 
 // Catalog is the domain-facing reference-data lookup Validate needs for
 // services, classifier types, and referenced scenario versions. It exposes
@@ -158,14 +162,22 @@ func validateIntake112FullCase(intake *Intake112, catalog Catalog) error {
 }
 
 // validateIntake112FreeTextDialogue is CallerModeFreeText's own dialogue
-// shape (112-5a/ADR-024): the applicant does not speak a scripted
-// initial line or answer scripted questions — the trainee writes freely
-// in the caller-chat window and a CallerReplier answers asynchronously.
-// Only Facts are validated (the future model's own knowledge input,
-// unused by 112-5a's stub); Initial/Questions carry no meaning for this
-// caller_mode and must stay empty so a scenario cannot mix both dialogue
-// shapes. Unlike validateIntake112Dialogue, there is no reveals/reachability
-// check — free text has no scripted reveal mechanism.
+// shape (112-5a/ADR-024, 112-5b/ADR-025): the applicant does not speak a
+// scripted initial line or answer scripted questions — the trainee writes
+// freely in the caller-chat window and a CallerReplier answers
+// asynchronously. Initial/Questions carry no meaning for this caller_mode
+// and must stay empty so a scenario cannot mix both dialogue shapes.
+// Unlike validateIntake112Dialogue, there is no reveals/reachability
+// check over Questions — free text has no scripted reveal mechanism.
+//
+// Caller is optional (112-5b, minimal schema extension "a" — see
+// slice-112-5b-plan.md): a scenario written for 112-5a's stub, or one that
+// intentionally keeps answering through the stub under CALLER_REPLIER=llm,
+// omits it and is still valid. When present, it turns on the AI caller
+// adapter's requirements: every initial/on_question fact needs a
+// Statement to build a reply around, and Opening.Reveals may only name
+// initial facts (the applicant cannot open the call by revealing
+// something it does not yet know).
 func validateIntake112FreeTextDialogue(dialogue Intake112Dialogue) error {
 	if dialogue.Initial.ID != "" || dialogue.Initial.Text != "" || len(dialogue.Initial.Reveals) != 0 || len(dialogue.Questions) != 0 {
 		return invalid("intake112.dialogue", "free_text_forbids_initial_or_questions")
@@ -173,15 +185,18 @@ func validateIntake112FreeTextDialogue(dialogue Intake112Dialogue) error {
 	if len(dialogue.Facts) == 0 {
 		return invalid("intake112.dialogue.facts", "required")
 	}
-	ids := make(map[string]bool, len(dialogue.Facts))
+	facts := make(map[string]Intake112Fact, len(dialogue.Facts))
 	paths := make(map[string]bool, len(dialogue.Facts))
 	for i, fact := range dialogue.Facts {
 		field := fmt.Sprintf("intake112.dialogue.facts[%d]", i)
-		if fact.ID == "" || ids[fact.ID] {
+		if fact.ID == "" || facts[fact.ID].ID != "" {
 			return invalid(field+".id", "missing_or_duplicate")
 		}
-		if !validIntake112CardPath(fact.CardPath) || paths[fact.CardPath] {
-			return invalid(field+".card_path", "invalid_or_duplicate")
+		if fact.CardPath != "" {
+			if !validIntake112CardPath(fact.CardPath) || paths[fact.CardPath] {
+				return invalid(field+".card_path", "invalid_or_duplicate")
+			}
+			paths[fact.CardPath] = true
 		}
 		if fact.Knowledge == "unknown" {
 			if fact.Value != "" {
@@ -190,7 +205,88 @@ func validateIntake112FreeTextDialogue(dialogue Intake112Dialogue) error {
 		} else if (fact.Knowledge != "initial" && fact.Knowledge != "on_question") || fact.Value == "" {
 			return invalid(field+".knowledge", "invalid")
 		}
-		ids[fact.ID], paths[fact.CardPath] = true, true
+		if dialogue.Caller != nil && fact.Knowledge != "unknown" && fact.Statement == "" {
+			return invalid(field+".statement", "required_with_caller_profile")
+		}
+		if err := validateIntake112FactPatterns(field, fact); err != nil {
+			return err
+		}
+		facts[fact.ID] = fact
+	}
+	if dialogue.Caller == nil {
+		return nil
+	}
+	if dialogue.Caller.Persona == "" || dialogue.Caller.Opening.Text == "" {
+		return invalid("intake112.dialogue.caller", "incomplete")
+	}
+	for _, id := range dialogue.Caller.Opening.Reveals {
+		fact, exists := facts[id]
+		if !exists || fact.Knowledge != "initial" {
+			return invalid("intake112.dialogue.caller.opening.reveals", "invalid_fact_reference")
+		}
+	}
+	return nil
+}
+
+// validateIntake112FactPatterns rejects a caller-profile pattern that
+// would silently misbehave in Go's RE2 engine or that is meaningless
+// (empty). \b is disallowed project-wide for these fields: RE2's \b is
+// ASCII word-boundary only and matches nothing useful around Cyrillic
+// letters, so a scenario author's regex would compile but never fire —
+// better to reject it at import than to ship a fact the classifier can
+// never detect.
+func validateIntake112FactPatterns(field string, fact Intake112Fact) error {
+	for _, p := range fact.AskPatterns {
+		if err := validateCallerRegexPattern(field+".ask_patterns", p); err != nil {
+			return err
+		}
+	}
+	for _, p := range fact.AskExcludePatterns {
+		if err := validateCallerRegexPattern(field+".ask_exclude_patterns", p); err != nil {
+			return err
+		}
+	}
+	for _, p := range fact.DisclosurePatterns {
+		if err := validateCallerRegexPattern(field+".disclosure_patterns", p); err != nil {
+			return err
+		}
+	}
+	for i, variant := range fact.AnswerVariants {
+		vf := fmt.Sprintf("%s.answer_variants[%d]", field, i)
+		if variant.Text == "" {
+			return invalid(vf+".text", "required")
+		}
+		if variant.When != "" {
+			if err := validateCallerRegexPattern(vf+".when", variant.When); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateCallerRegexPattern(field, pattern string) error {
+	if pattern == "" {
+		return invalid(field, "empty")
+	}
+	if strings.Contains(pattern, `\b`) {
+		return invalid(field, "word_boundary_forbidden")
+	}
+	if _, err := regexp.Compile("(?i)" + pattern); err != nil {
+		return invalid(field, "invalid_regex")
+	}
+	return nil
+}
+
+// forbidIntake112CallerProfileFields rejects the 112-5b caller-profile
+// fields on a prepared dialogue (validateIntake112Dialogue's own facts):
+// they have no meaning without the free-text AI adapter that reads them,
+// and allowing them on a scripted dialogue would let a scenario carry
+// dead data that looks load-bearing.
+func forbidIntake112CallerProfileFields(field string, fact Intake112Fact) error {
+	if fact.Statement != "" || len(fact.AskPatterns) != 0 || len(fact.AskExcludePatterns) != 0 ||
+		len(fact.AnswerVariants) != 0 || len(fact.DisclosurePatterns) != 0 {
+		return invalid(field, "caller_profile_fields_forbidden")
 	}
 	return nil
 }
@@ -198,6 +294,9 @@ func validateIntake112FreeTextDialogue(dialogue Intake112Dialogue) error {
 func validateIntake112Dialogue(dialogue Intake112Dialogue) error {
 	if dialogue.Initial.ID == "" || dialogue.Initial.Text == "" || len(dialogue.Questions) == 0 {
 		return invalid("intake112.dialogue", "incomplete")
+	}
+	if dialogue.Caller != nil {
+		return invalid("intake112.dialogue.caller", "free_text_only")
 	}
 	facts := make(map[string]Intake112Fact, len(dialogue.Facts))
 	paths := make(map[string]bool, len(dialogue.Facts))
@@ -215,6 +314,9 @@ func validateIntake112Dialogue(dialogue Intake112Dialogue) error {
 			}
 		} else if (fact.Knowledge != "initial" && fact.Knowledge != "on_question") || fact.Value == "" {
 			return invalid(field+".knowledge", "invalid")
+		}
+		if err := forbidIntake112CallerProfileFields(field, fact); err != nil {
+			return err
 		}
 		facts[fact.ID], paths[fact.CardPath] = fact, true
 	}

@@ -180,6 +180,113 @@ func TestValidateFreeTextFullCase(t *testing.T) {
 	}
 }
 
+// validAICallerFullCaseBody is 112-5b/ADR-025's own extension of
+// validFreeTextFullCaseBody: a caller profile plus the per-fact fields
+// the AI adapter reads (statement, ask_patterns, answer_variants,
+// disclosure_patterns). A scenario without Caller (the plain
+// validFreeTextFullCaseBody above) must stay valid too — see
+// TestValidateFreeTextFullCase — since 112-5a scenarios predate this
+// extension and are read unmodified.
+func validAICallerFullCaseBody() Body {
+	body := validFullCaseBody()
+	body.Intake112.CallerMode = CallerModeFreeText
+	body.Intake112.Dialogue = &Intake112Dialogue{
+		Caller: &Intake112CallerProfile{
+			Persona: "Женщина, 40 лет, испугана, но говорит связно.",
+			Opening: Intake112Utterance{ID: "opening", Text: "Помогите, у нас в квартире пахнет газом!", Reveals: []string{"address_city"}},
+		},
+		Facts: []Intake112Fact{
+			{
+				ID: "address_city", Label: "Город", CardPath: "/address/city", Knowledge: "initial", Value: "Москва",
+				Statement: "Мы в Москве", AskPatterns: []string{"город"}, DisclosurePatterns: []string{"москв"},
+			},
+			{
+				ID: "age", Label: "Возраст", Knowledge: "on_question", Value: "40",
+				Statement: "Мне сорок лет", AskPatterns: []string{"возраст", "сколько.*лет"}, AskExcludePatterns: []string{"сколько.*человек"},
+				AnswerVariants:     []Intake112AnswerVariant{{When: "возраст", Text: "Мне сорок лет."}, {Text: "Сорок."}},
+				DisclosurePatterns: []string{`\d{2}\s*лет`},
+			},
+		},
+	}
+	return body
+}
+
+func TestValidateAICallerProfile(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := validAICallerFullCaseBody()
+	if err := Validate(body, catalog); err != nil {
+		t.Fatalf("valid caller profile: %v", err)
+	}
+	if err := Validate(validFreeTextFullCaseBody(), catalog); err != nil {
+		t.Fatalf("caller-less free_text scenario (112-5a shape) still valid: %v", err)
+	}
+	for name, mutate := range map[string]func(*Body){
+		"missing persona": func(b *Body) { b.Intake112.Dialogue.Caller.Persona = "" },
+		"missing opening text": func(b *Body) {
+			b.Intake112.Dialogue.Caller.Opening = Intake112Utterance{ID: "opening"}
+		},
+		"opening reveals unknown fact": func(b *Body) {
+			b.Intake112.Dialogue.Caller.Opening.Reveals = []string{"nope"}
+		},
+		"opening reveals on_question fact": func(b *Body) {
+			b.Intake112.Dialogue.Caller.Opening.Reveals = []string{"age"}
+		},
+		"missing statement with caller profile": func(b *Body) {
+			b.Intake112.Dialogue.Facts[1].Statement = ""
+		},
+		"invalid ask_pattern regex": func(b *Body) {
+			b.Intake112.Dialogue.Facts[1].AskPatterns = []string{"("}
+		},
+		"word boundary in ask_pattern": func(b *Body) {
+			b.Intake112.Dialogue.Facts[1].AskPatterns = []string{`\bвозраст\b`}
+		},
+		"word boundary in disclosure_pattern": func(b *Body) {
+			b.Intake112.Dialogue.Facts[1].DisclosurePatterns = []string{`\bлет\b`}
+		},
+		"empty answer_variant text": func(b *Body) {
+			b.Intake112.Dialogue.Facts[1].AnswerVariants = []Intake112AnswerVariant{{When: "x", Text: ""}}
+		},
+		"invalid answer_variant when regex": func(b *Body) {
+			b.Intake112.Dialogue.Facts[1].AnswerVariants = []Intake112AnswerVariant{{When: "(", Text: "x"}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := validAICallerFullCaseBody()
+			mutate(&invalid)
+			if err := Validate(invalid, catalog); err == nil {
+				t.Fatalf("%s: expected rejection", name)
+			}
+		})
+	}
+	if err := Validate(validAICallerFullCaseBody(), catalog); err != nil {
+		t.Fatalf("original body still valid after mutation subtests: %v", err)
+	}
+}
+
+func TestValidateRejectsCallerProfileFieldsInPreparedDialogue(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_ambulance"] = ServiceRecord{Active: true}
+	for name, mutate := range map[string]func(*Body){
+		"caller on prepared full_case": func(b *Body) {
+			b.Intake112.Dialogue.Caller = &Intake112CallerProfile{Persona: "x", Opening: Intake112Utterance{ID: "o", Text: "x"}}
+		},
+		"statement on prepared fact":    func(b *Body) { b.Intake112.Dialogue.Facts[0].Statement = "x" },
+		"ask_patterns on prepared fact": func(b *Body) { b.Intake112.Dialogue.Facts[0].AskPatterns = []string{"x"} },
+		"answer_variants on prepared fact": func(b *Body) {
+			b.Intake112.Dialogue.Facts[0].AnswerVariants = []Intake112AnswerVariant{{Text: "x"}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := validIntakeDialogueBody()
+			mutate(&body)
+			if err := Validate(body, catalog); err == nil {
+				t.Fatalf("%s: expected rejection", name)
+			}
+		})
+	}
+}
+
 func TestValidateRejectsCallerModeOutsideFullCase(t *testing.T) {
 	catalog := pilotCatalog()
 	catalog.services["pilot_ambulance"] = ServiceRecord{Active: true}

@@ -2075,3 +2075,66 @@ Next: коммит c2 — минимальное расширение схемы
 профилем заявителя (`Intake112CallerProfile`, поля факта) в
 `internal/content`, синхронные обновления контрактов
 (`scenario.schema.json`, `openapi.yaml`, `web/src/api/schema.d.ts`).
+
+## 2026-09-25 — Срез 112-5b, коммит 2: профиль заявителя в схеме сценария
+
+Минимальное расширение (вариант «a» из `slice-112-5b-plan.md`) схемы
+`free_text`-диалога для будущего ИИ-адаптера, без изменений в
+`internal/training`/worker — только `content` и контракты:
+
+- `internal/content/body.go`: `Intake112Dialogue.Caller
+  *Intake112CallerProfile{Persona, Opening}`; `Intake112Fact` получил
+  `Statement`, `AskPatterns`, `AskExcludePatterns`,
+  `AnswerVariants []Intake112AnswerVariant{When, Text}`,
+  `DisclosurePatterns` (все `omitempty`); `CardPath` стал `omitempty`
+  (у free_text может отсутствовать — нарративный факт без поля
+  карточки, например номер машины).
+- `internal/content/validate.go`
+  (`validateIntake112FreeTextDialogue`): `caller` необязателен —
+  сценарии 112-5a без профиля (в т.ч. `pilot-112-free-text-chat-01`)
+  остаются валидны; при заданном профиле обязательны `persona` и
+  `opening.text`, `opening.reveals` может ссылаться только на
+  `initial`-факты, у `initial`/`on_question`-фактов обязателен
+  `statement`. `card_path`, если указан, по-прежнему проверяется
+  `validIntake112CardPath` и на дубликаты; если не указан — факт
+  нарративный (только регэкспы формируют классификацию, значение никуда
+  не пишется в карточку). Все регэксп-поля (`ask_patterns`,
+  `ask_exclude_patterns`, `disclosure_patterns`,
+  `answer_variants[].when`) компилируются как `(?i)`+шаблон при импорте;
+  `\b` запрещён (RE2 не работает с кириллицей через `\b`) —
+  `validateCallerRegexPattern`. `validateIntake112Dialogue` (prepared)
+  отклоняет `dialogue.caller` и любое из новых полей факта —
+  `forbidIntake112CallerProfileFields`.
+- `design-docs/contracts/scenario.schema.json`: `facts.items.required`
+  лишился `card_path` (структурно необязателен везде; required-по-
+  caller_mode проверяет только Go `Validate`, как и раньше для похожих
+  кросс-полевых правил); добавлены `statement`, `ask_patterns`,
+  `ask_exclude_patterns`, `disclosure_patterns`, `answer_variants[]`
+  (`when`?, `text`) и `dialogue.caller` (`persona`, `opening`).
+- `design-docs/contracts/openapi.yaml`: `Intake112Dialogue` (инструкторская
+  проекция) — то же расширение полей факта и `caller`; `card_path` убран
+  из `required`.
+- `web/src/api/schema.d.ts` перегенерирован (`npm run generate:api`) —
+  файл в `.gitignore`, коммитить нечего.
+- Тесты: `internal/content/validate_test.go` —
+  `TestValidateAICallerProfile` (валидный профиль + 10 подслучаев:
+  пустая persona, пустой opening.text, opening.reveals на
+  неизвестный/`on_question` факт, отсутствующий statement при заданном
+  caller, битый regex, `\b` в `ask_patterns`/`disclosure_patterns`,
+  пустой text у answer_variant, битый regex в `when`),
+  `TestValidateRejectsCallerProfileFieldsInPreparedDialogue` (4
+  подслучая: `caller` и три новых поля факта на prepared-диалоге).
+  `TestValidateFreeTextFullCase` (112-5a форма без профиля) осталась
+  зелёной без изменений — подтверждает обратную совместимость.
+
+Validation: `gofmt -l` (чисто), `go build ./...`, `make verify` (полностью
+зелёный — format-check/build/test/vet/staticcheck), `python3
+design-docs/contracts/check.py` (все проверки прошли, включая
+`scenario.example.json` против обновлённой схемы). `make verify-web` не
+запускался — TS-код в этом коммите не менялся, только перегенерированный
+игнорируемый файл.
+
+Next: коммит c3 — расширить результат хода (`CallerReply.Source/
+Reveals/Generation`, `IntakeCallerTurn.Source/Generation`,
+`ApplyCallerReply`) в `internal/training`/`operator112`, метка адаптера
+переезжает из `CallerReplier.Adapter()` в сам `CallerReply`.

@@ -794,13 +794,25 @@ components:
           type: array
           items:
             type: object
-            required: [id, label, card_path, knowledge]
+            required: [id, label, knowledge]
             properties:
               id: { type: string }
               label: { type: string }
-              card_path: { type: string }
+              card_path: { type: string, description: 'Обязателен у prepared-диалогов; у free_text (112-5b) может отсутствовать — нарративный факт без поля карточки.' }
               knowledge: { type: string, enum: [initial, on_question, unknown] }
               value: { type: string }
+              statement: { type: string, description: '112-5b: как заявитель сказал бы этот факт своими словами.' }
+              ask_patterns: { type: array, items: { type: string }, description: '112-5b: RE2-регэкспы классификатора (implicit "(?i)"), \b запрещён.' }
+              ask_exclude_patterns: { type: array, items: { type: string } }
+              disclosure_patterns: { type: array, items: { type: string } }
+              answer_variants:
+                type: array
+                items:
+                  type: object
+                  required: [text]
+                  properties:
+                    when: { type: string, description: 'RE2-регэксп по реплике оператора; пусто — без условия.' }
+                    text: { type: string }
         initial: { $ref: '#/components/schemas/Intake112Utterance' }
         questions:
           type: array
@@ -813,6 +825,13 @@ components:
               topic_id: { type: string }
               available_after: { type: array, items: { type: string } }
               answer: { $ref: '#/components/schemas/Intake112Utterance' }
+        caller:
+          type: object
+          required: [persona, opening]
+          description: '112-5b: включает ИИ-адаптер для free_text-диалога; отсутствие — заглушка, как в 112-5a.'
+          properties:
+            persona: { type: string }
+            opening: { $ref: '#/components/schemas/Intake112Utterance' }
     Intake112Utterance:
       type: object
       required: [id, text, reveals]

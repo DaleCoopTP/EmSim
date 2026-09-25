@@ -64,12 +64,61 @@ type Intake112Call struct {
 
 // CallerKnowledge describes when a fact can become known to the trainee.
 // A fact marked unknown is one the applicant explicitly cannot supply.
+//
+// Statement, AskPatterns, AskExcludePatterns, AnswerVariants and
+// DisclosurePatterns (112-5b) feed the free-text AI caller adapter
+// (internal/training/operator112/aicaller): they are meaningless for
+// caller_mode="prepared" and validate.go rejects them there. CardPath is
+// required for prepared/incoming_call facts (they map onto a card field
+// the trainee fills) but optional for free_text facts, which may be
+// narrative details (a car's plate number, a bystander's name) with no
+// card field of their own — see validateIntake112FreeTextDialogue.
 type Intake112Fact struct {
 	ID        string `json:"id"`
 	Label     string `json:"label"`
-	CardPath  string `json:"card_path"`
+	CardPath  string `json:"card_path,omitempty"`
 	Knowledge string `json:"knowledge"`
 	Value     string `json:"value,omitempty"`
+	// Statement is how the applicant would say this fact in their own
+	// words when the model formulates a reply around it (e.g. "мне
+	// сорок лет" for age=40) — distinct from Value, the structured card
+	// value. Required alongside a caller profile for initial/on_question
+	// facts (unknown facts have nothing to state).
+	Statement string `json:"statement,omitempty"`
+	// AskPatterns/AskExcludePatterns classify whether an operator message
+	// asked about this fact: a RE2 regex (compiled with an implicit
+	// "(?i)" prefix) matches, minus any that also match an exclude
+	// pattern (e.g. an address question that is actually asking for a
+	// landmark). \b is forbidden — Go RE2's \b is ASCII-only and matches
+	// nothing useful against Cyrillic text.
+	AskPatterns        []string                 `json:"ask_patterns,omitempty"`
+	AskExcludePatterns []string                 `json:"ask_exclude_patterns,omitempty"`
+	AnswerVariants     []Intake112AnswerVariant `json:"answer_variants,omitempty"`
+	// DisclosurePatterns detect this fact already being present in a
+	// caller reply (model-authored or scripted), to compute that reply's
+	// Reveals without re-asking the model.
+	DisclosurePatterns []string `json:"disclosure_patterns,omitempty"`
+}
+
+// Intake112AnswerVariant is one scripted phrasing of a fact's answer,
+// used verbatim (no model call) when exactly one fact is asked in an
+// operator message and When (empty, or a RE2 pattern under the same
+// rules as AskPatterns) matches that message.
+type Intake112AnswerVariant struct {
+	When string `json:"when,omitempty"`
+	Text string `json:"text"`
+}
+
+// Intake112CallerProfile (112-5b) turns on the AI caller adapter for a
+// free_text dialogue: Persona seeds the model's system prompt, Opening is
+// the applicant's first line (still said without a model call, same as
+// 112-5a's protocol — see validateIntake112FreeTextDialogue's reveals
+// check). A free_text dialogue without a Caller profile keeps answering
+// through the deterministic stub, same as 112-5a, regardless of
+// CALLER_REPLIER (internal/training/operator112/aicaller.Replier).
+type Intake112CallerProfile struct {
+	Persona string             `json:"persona"`
+	Opening Intake112Utterance `json:"opening"`
 }
 
 type Intake112Utterance struct {
@@ -90,6 +139,9 @@ type Intake112Dialogue struct {
 	Facts     []Intake112Fact     `json:"facts"`
 	Initial   Intake112Utterance  `json:"initial"`
 	Questions []Intake112Question `json:"questions"`
+	// Caller (112-5b) is free_text-only; prepared dialogues must leave it
+	// nil (validate.go).
+	Caller *Intake112CallerProfile `json:"caller,omitempty"`
 }
 
 type Intake112Reference struct {

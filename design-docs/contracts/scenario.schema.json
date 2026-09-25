@@ -61,19 +61,40 @@
           "properties": {
             "facts": {"type": "array", "minItems": 1, "items": {
               "type": "object", "additionalProperties": false,
-              "required": ["id", "label", "card_path", "knowledge"],
+              "required": ["id", "label", "knowledge"],
               "properties": {
                 "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$"},
                 "label": {"type": "string", "minLength": 1},
-                "card_path": {"type": "string", "pattern": "^/[a-z_]+(/[a-z_]+)?$"},
+                "card_path": {"type": "string", "pattern": "^/[a-z_]+(/[a-z_]+)?$", "description": "Обязателен у prepared-диалогов; необязателен у free_text (112-5b) — нарративный факт без своего поля карточки. internal/content.Validate проверяет required по caller_mode структурно эта схема этого не различает."},
                 "knowledge": {"enum": ["initial", "on_question", "unknown"]},
-                "value": {"type": "string", "minLength": 1}
+                "value": {"type": "string", "minLength": 1},
+                "statement": {"type": "string", "minLength": 1, "description": "112-5b: как заявитель сказал бы этот факт своими словами; обязателен у initial/on_question фактов при заданном dialogue.caller (internal/content.Validate)."},
+                "ask_patterns": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "112-5b: RE2-регэкспы (компилируются с неявным \"(?i)\"); \\b запрещён."},
+                "ask_exclude_patterns": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                "disclosure_patterns": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                "answer_variants": {"type": "array", "items": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["text"],
+                  "properties": {
+                    "when": {"type": "string", "minLength": 1, "description": "RE2-регэксп по реплике оператора; пусто — вариант без условия."},
+                    "text": {"type": "string", "minLength": 1}
+                  }
+                }}
               },
               "allOf": [
                 {"if": {"properties": {"knowledge": {"const": "unknown"}}}, "then": {"not": {"required": ["value"]}}},
                 {"if": {"properties": {"knowledge": {"enum": ["initial", "on_question"]}}}, "then": {"required": ["value"]}}
               ]
             }},
+            "caller": {
+              "type": "object", "additionalProperties": false,
+              "required": ["persona", "opening"],
+              "description": "112-5b: включает ИИ-адаптер для free_text-диалога; отсутствие — заглушка, как в 112-5a (internal/content.Validate).",
+              "properties": {
+                "persona": {"type": "string", "minLength": 1},
+                "opening": {"$ref": "#/$defs/intake112Utterance"}
+              }
+            },
             "initial": {"$ref": "#/$defs/intake112Utterance"},
             "questions": {"type": "array", "minItems": 1, "items": {
               "type": "object", "additionalProperties": false,
