@@ -2506,3 +2506,96 @@ Validation: `python3 design-docs/contracts/check.py` (зелёный, все
 Next: коммит 2 — `internal/content`: расширение
 `Intake112Reference`/`Intake112ExpectedCard`, валидация импорта против
 каталога/рубрики, общая нормализация значений (`internal/content/normalize`).
+
+## 2026-09-25 — 112-6, коммиты 2–6: детерминированный конвейер оценки 112 реализован целиком
+
+Продолжение коммита 1 (ADR-026, контракты) без перерыва в этой же
+сессии. Коммиты 2–6 согласованного покоммитного плана
+(`slice-112-6-plan.md`, план Plan Mode) реализованы и закоммичены по
+отдельности; ниже — сводка, детали в собственных commit message
+каждого коммита.
+
+- **c2** (`internal/content`): `Intake112Reference`/`Intake112ExpectedCard`
+  расширены (`Alternatives`, `ExpectedProfiles`, `Scoring`,
+  `ApplicantName`, полный адрес без object/landmark) — все поля
+  необязательны, старые сиды продолжают валидироваться без изменений.
+  Валидация импорта проверяет `expected_profiles` против каталога,
+  `alternatives` против известных путей, `scoring` против критериев
+  `operator112/rubric-v2`, и что `expected_card` не противоречит факту
+  диалога с тем же `card_path`. Новый пакет `internal/content/normalize`
+  (регистр/ё/пунктуация/сокращения/порядок слов) — общий для валидации
+  и будущего оценщика.
+- **c3** (`internal/assessment`): `RuleEvaluator.Evaluate` теперь берёт
+  сырое evidence (`json.RawMessage`) и весь `content.Body` вместо
+  типизированного `training.EvidenceBody` — `assessment/dds` декодирует
+  свою типизированную форму сама, поведение не изменилось.
+  `LoadRubric(exerciseType, version)` грузит рубрику именно по версии
+  занятия (не «текущую»); `sealInputForItem` перестал жёстко звать
+  DDS'ный `LoadDefault()` для 112 — это была прямая причина, по которой
+  112 не мог получить автооценку вообще. `CreateExpertRevision`/`Get`
+  переиспользуют `RubricEffective` уже существующей финальной оценки,
+  когда она есть, и лезут за версией занятия (новый порт `LessonReader`)
+  только для самой первой оценки по item. `Score()` — новый `kind:
+  penalty`, штрафы исключены из нормировки и вычитаются после нее,
+  клампится в [0,100]. `CriterionResult` получил `PenaltyPoints`/
+  `Details` (jsonb, без миграции). Добавлен `*TerminalEvaluationError`
+  — способ оценщика назвать конкретный код отказа задачи, не создавая
+  цикл импорта между `assessment` и `assessment/operator112`.
+- **c4** (`internal/training`): `content.RubricVersionFor(exerciseType)`
+  — новое занятие 112 теперь фиксирует `operator112/rubric-v2` (было
+  жёстко `v1` всегда). `enqueueEvaluateWaiting` ставит
+  `assessment.evaluate` для любого 112-занятия training-режима, кроме
+  оставшихся на `rubric-v1`. Один существующий интеграционный тест
+  (`TestOperator112IntakeTransaction`) обновлён под новое поведение —
+  рубрика v2 при создании занятия, `assessment.evaluate` теперь ставится
+  и для legacy incoming_call/dispatch_intake путей (отличить legacy от
+  обычного можно только на этапе seal, не enqueue). Также найдены и
+  исправлены две интеграционные проверки с устаревшим числом сценариев
+  в сидах (12/13 вместо актуальных 15/16 — не учли три сценария 112-5b,
+  видимо пропущено в той более ранней сессии) и два места, не
+  учитывавшие новый параметр конструктора `assessment.NewService` под
+  тегом `integration` (`go vet`/`go test` без тега их не видят).
+- **c5** (новый пакет `internal/assessment/operator112`): `ADDRESS_FIELDS`,
+  `PROFILE_CARDS`, все четыре штрафа. Оцениваемый снимок —
+  `notification.card_snapshot`, иначе `final_card`. Legacy-маршрут
+  (`intake_state.finale == ""` — это в том числе КАЖДЫЙ `incoming_call`
+  item, не только явно старые) прерывает всю оценку сентинел-ошибкой →
+  `failed/operator112_legacy_route`.
+- **c6** (тот же пакет): `CALLER_TOPICS` (словарь RE2, реплики
+  оператора, недостижимые по сценарию темы — `not_applicable` с
+  перенормировкой блока), `T_ANSWER`/`T_FILL` (линейная шкала N..2N,
+  вычитание ожидания ответа ИИ-заявителя из `T_FILL`), `DESCRIPTION_
+  PRESENT`, карве-аут ИИ-расхождения для `free_text` (несовпадающее с
+  эталоном поле, которое встречается в реплике заявителя с
+  `source=model|fallback` → `unavailable` у всего критерия →
+  `needs_review`). Регистрация в `cmd/emsim/assessment_composition.go`
+  — конвейер теперь реально работает для 112, не только для ДДС.
+
+Validation (сквозная для 2–6): `gofmt -l`, `go vet ./...`, `go vet
+-tags=integration ./test/integration/...`, `go test ./...` (все
+пакеты, включая новые `internal/content/normalize` и
+`internal/assessment/operator112`), `python3 design-docs/contracts/
+check.py`, и дважды полный `go test -tags=integration ./test/
+integration/...` с реальным Postgres (testcontainers) — после c4 и
+повторно после c6 (с реально зарегистрированным оценщиком). Все
+зелёные.
+
+Open / известные упрощения, зафиксированные в коде комментариями:
+- Баллы по полям адреса (35 на 12 полей) и словарь тем разговора в
+  `rubric.operator112.json` — первая рабочая конфигурация, не точное
+  воспроизведение исходного черновика пользователя (тот файл
+  `slice-112-6-plan.md` с точной таблицей был утрачен до начала
+  реализации — см. коммит 1). Меняются одним файлом контракта, без
+  кода.
+- ИИ-расхождение (`aiDivergent`) — консервативная глобальная эвристика
+  (есть ли в принципе реплика заявителя с нужным значением и была ли
+  вообще хоть одна ИИ-реплика в разговоре), не точное сопоставление
+  поля конкретному ходу диалога — транскрипт не хранит номер хода на
+  строке. Задокументировано в коде; при ложноотрицательном срабатывании
+  результат — обычный `not_met`, который ручная проверка всё равно
+  может исправить.
+
+Next: коммит 7 — интеграционные тесты полного конвейера 112 (закрытие
+→ waiting → sealed input → auto rev=1 ready; retry/lease loss; stop до
+оповещения; legacy → failed/operator112_legacy_route + ручная ревизия;
+expert после auto; занятие v1 не ставит задачу). `make test-integration`.
