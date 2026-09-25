@@ -63,19 +63,28 @@ func penaltyAddressRegionRule(ref content.Intake112Reference, snapshot training.
 // only if the applicant's name was actually disclosed in the
 // conversation (interpretation §10.3 — an applicant who never gave a
 // name is not a trainee error) and the filled value disagrees with the
-// reference.
-func penaltyApplicantNameRule(ev trainingintake.EvidenceBody, ref content.Intake112Reference, snapshot training.IntakeCard, facts []content.Intake112Fact, c assessment.RubricCriterion) assessment.CriterionResult {
+// reference. A mismatch that looks like the AI caller's own paraphrase
+// (aiDivergent, c6) makes this criterion unavailable instead of
+// charging it, the same carve-out ADDRESS_FIELDS applies.
+func penaltyApplicantNameRule(ev trainingintake.EvidenceBody, intake *content.Intake112, snapshot training.IntakeCard, c assessment.RubricCriterion) assessment.CriterionResult {
+	ref := intake.Reference
 	points := paramFloat(c.Params, "points", 5)
 	noReference := paramString(c.Params, "no_reference_explanation", "эталон не задан")
 	if ref.ExpectedCard == nil || ref.ExpectedCard.ApplicantName == "" {
 		return penaltyResult(c, 0, noReference, assessment.CriterionMet)
 	}
-	if !factRevealed(facts, ev.IntakeState.Transcript, "/applicant_name") {
+	if !factRevealed(dialogueFactsOf(intake), ev.IntakeState.Transcript, "/applicant_name") {
 		return penaltyResult(c, 0, "заявитель не сообщил ФИО", assessment.CriterionMet)
 	}
 	actual := knownValue(snapshot.ApplicantName)
 	if actual != "" && normalize.Matches(actual, ref.ExpectedCard.ApplicantName, alternativesFor(ref, "applicant_name")) {
 		return penaltyResult(c, 0, "ФИО указано верно", assessment.CriterionMet)
+	}
+	if aiDivergent(ev, intake, actual) {
+		return assessment.CriterionResult{
+			ID: c.ID, Status: assessment.CriterionUnavailable, Weight: c.Weight, Critical: c.Critical,
+			Explanation: "заявитель мог назвать имя иначе, чем в эталоне — требуется проверка преподавателя",
+		}
 	}
 	return penaltyResult(c, points, "ФИО не совпадает с эталоном", assessment.CriterionNotMet)
 }

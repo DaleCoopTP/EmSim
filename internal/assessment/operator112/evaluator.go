@@ -45,13 +45,11 @@ func (evaluator) Evaluate(raw json.RawMessage, body content.Body, effective asse
 	if ev.IntakeState.Finale == "" {
 		return nil, &assessment.TerminalEvaluationError{Code: "operator112_legacy_route"}
 	}
-	ref := body.Intake112.Reference
 	snapshot := scoredCard(ev)
-	dialogueFacts := dialogueFactsOf(body.Intake112)
 
 	results := make([]assessment.CriterionResult, 0, len(effective.Criteria))
 	for _, c := range effective.Criteria {
-		results = append(results, evaluateCriterion(ev, ref, snapshot, dialogueFacts, c))
+		results = append(results, evaluateCriterion(ev, body.Intake112, snapshot, c))
 	}
 	return results, nil
 }
@@ -71,8 +69,9 @@ func scoredCard(ev trainingintake.EvidenceBody) training.IntakeCard {
 }
 
 // dialogueFactsOf returns the scenario's dialogue facts regardless of
-// mode — card_only has none (Dialogue is nil), matching penaltyApplicant
-// NameRule's own "no conversation, so nothing was ever disclosed" logic.
+// mode — card_only has none (Dialogue is nil), matching
+// penaltyApplicantNameRule's own "no conversation, so nothing was ever
+// disclosed" logic.
 func dialogueFactsOf(intake *content.Intake112) []content.Intake112Fact {
 	if intake.Dialogue == nil {
 		return nil
@@ -92,30 +91,33 @@ func evidenceRefs(ev trainingintake.EvidenceBody) []string {
 	return nil
 }
 
-func evaluateCriterion(ev trainingintake.EvidenceBody, ref content.Intake112Reference, snapshot training.IntakeCard, facts []content.Intake112Fact, c assessment.RubricCriterion) assessment.CriterionResult {
+func evaluateCriterion(ev trainingintake.EvidenceBody, intake *content.Intake112, snapshot training.IntakeCard, c assessment.RubricCriterion) assessment.CriterionResult {
+	ref := intake.Reference
 	switch c.Rule {
 	case "operator112_address_fields":
-		return addressFieldsRule(ev, ref, snapshot, c)
+		return addressFieldsRule(ev, intake, snapshot, c)
 	case "operator112_profile_cards":
 		return profileCardsRule(ev, ref, snapshot, c)
+	case "operator112_caller_topics":
+		return callerTopicsRule(ev, intake, c)
+	case "operator112_answer_timing":
+		return answerTimingRule(ev, c)
+	case "operator112_fill_timing":
+		return fillTimingRule(ev, c)
+	case "operator112_description_present":
+		return descriptionPresentRule(ev, snapshot, c)
 	case "operator112_penalty_address_region":
 		return penaltyAddressRegionRule(ref, snapshot, c)
 	case "operator112_penalty_applicant_name":
-		return penaltyApplicantNameRule(ev, ref, snapshot, facts, c)
+		return penaltyApplicantNameRule(ev, intake, snapshot, c)
 	case "operator112_penalty_services":
 		return penaltyServicesRule(ev, ref, c)
 	case "operator112_penalty_extra_profile":
 		return penaltyExtraProfileRule(ev, ref, snapshot, c)
 	default:
-		// caller_topics/t_answer/t_fill/description_present land in
-		// 112-6's c6 (slice-112-6-plan.md) — until that commit registers
-		// this evaluator, this branch is unreachable in practice (nothing
-		// calls Evaluate yet), so it exists only to keep every criterion
-		// in effective.Criteria producing exactly one result, per
-		// RuleEvaluator's own contract.
 		return assessment.CriterionResult{
 			ID: c.ID, Status: assessment.CriterionUnavailable, Weight: c.Weight, Critical: c.Critical,
-			Explanation: "правило ещё не реализовано",
+			Explanation: fmt.Sprintf("неизвестное правило %q", c.Rule),
 		}
 	}
 }

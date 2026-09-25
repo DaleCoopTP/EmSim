@@ -32,6 +32,15 @@ func testRubric() assessment.Rubric {
 				},
 			}},
 			{ID: "PROFILE_CARDS", Kind: "deterministic", Weight: 25, Rule: "operator112_profile_cards", Params: map[string]any{}},
+			{ID: "CALLER_TOPICS", Kind: "deterministic", Weight: 15, Rule: "operator112_caller_topics", Params: map[string]any{
+				"topics": []any{
+					map[string]any{"id": "address", "label": "Адрес", "points": 7.5, "patterns": []any{"адрес", "где"}},
+					map[string]any{"id": "victims", "label": "Пострадавшие", "points": 7.5, "patterns": []any{"пострадав"}},
+				},
+			}},
+			{ID: "T_ANSWER", Kind: "deterministic", Weight: 7.5, Rule: "operator112_answer_timing", Params: map[string]any{"norm_s": 15.0}},
+			{ID: "T_FILL", Kind: "deterministic", Weight: 7.5, Rule: "operator112_fill_timing", Params: map[string]any{"norm_s": 90.0}},
+			{ID: "DESCRIPTION_PRESENT", Kind: "deterministic", Weight: 10, Rule: "operator112_description_present", Params: map[string]any{}},
 			{ID: "P_ADDRESS_REGION", Kind: "penalty", Rule: "operator112_penalty_address_region", Params: map[string]any{"points": 10.0}},
 			{ID: "P_APPLICANT_NAME", Kind: "penalty", Rule: "operator112_penalty_applicant_name", Params: map[string]any{"points": 5.0}},
 			{ID: "P_SERVICES", Kind: "penalty", Rule: "operator112_penalty_services", Params: map[string]any{"points_per": 5.0}},
@@ -77,6 +86,11 @@ func baseBody(ref content.Intake112Reference) content.Body {
 				Facts: []content.Intake112Fact{
 					{ID: "applicant_name_fact", Label: "ФИО", CardPath: "/applicant_name", Knowledge: "on_question", Value: "Иванов Иван Иванович"},
 				},
+				Initial: content.Intake112Utterance{ID: "greeting", Text: "Алло", Reveals: []string{}},
+				Questions: []content.Intake112Question{
+					{ID: "q_address", Text: "По какому адресу это произошло?", TopicID: "address", Answer: content.Intake112Utterance{ID: "a_address", Text: "Тверская 1", Reveals: []string{}}},
+					{ID: "q_victims", Text: "Есть ли пострадавшие?", TopicID: "victims", Answer: content.Intake112Utterance{ID: "a_victims", Text: "Нет", Reveals: []string{}}},
+				},
 			},
 			Reference: ref,
 		},
@@ -91,6 +105,7 @@ func correctCard() training.IntakeCard {
 	card.Address.City = knownField("Москва")
 	card.Address.Street = knownField("Тверская")
 	card.Address.House = knownField("1")
+	card.Complaint = knownField("Чувствуется сильный запах газа в квартире")
 	card.Profiles = map[string]training.IntakeProfile{
 		"104": {DefinitionID: "104", Version: 1, Answers: map[string]training.IntakeProfileAnswer{
 			"smell": {State: "known", Value: "yes"},
@@ -99,20 +114,32 @@ func correctCard() training.IntakeCard {
 	return card
 }
 
+// baseEvidence builds evidence with every timing/topic/description
+// dimension at a "fully correct" baseline: answered well inside the
+// 15s norm, notified well inside the 90s fill norm, both scripted
+// topics (address/victims) actually asked by the operator.
 func baseEvidence(catalog *content.IntakeCatalog, card training.IntakeCard, notify bool, revealApplicantName bool) trainingintake.EvidenceBody {
 	itemID, actionID := uuid.New(), uuid.New()
-	transcript := []training.IntakeLine{}
+	offeredAt := time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)
+	answeredAt := offeredAt.Add(10 * time.Second)
+	transcript := []training.IntakeLine{
+		{ID: "op-1", Speaker: "operator", Text: "По какому адресу это произошло?", ServerAt: answeredAt.Add(1 * time.Second)},
+		{ID: "op-2", Speaker: "operator", Text: "Есть ли пострадавшие?", ServerAt: answeredAt.Add(2 * time.Second)},
+	}
 	if revealApplicantName {
 		transcript = append(transcript, training.IntakeLine{Reveals: []string{"applicant_name_fact"}})
 	}
 	ev := trainingintake.EvidenceBody{
 		Schema: "operator112_intake/v1", ExerciseType: content.ExerciseTypeOperator112Intake,
-		ItemID: itemID, ClosedAt: time.Now(), Mode: "full_case", FinalCard: card,
-		IntakeState: training.IntakeState{Finale: "notify", Catalog: catalog, Transcript: transcript},
+		ItemID: itemID, OfferedAt: offeredAt, ClosedAt: offeredAt.Add(2 * time.Minute), Mode: "full_case", FinalCard: card,
+		IntakeState: training.IntakeState{Finale: "notify", Catalog: catalog, Transcript: transcript, AnsweredAt: &answeredAt},
 	}
 	if notify {
 		services := []training.IntakeNotificationService{{ServiceCode: "pilot_gas_104", Suggested: true}}
-		ev.Notification = &training.IntakeNotification{ItemID: itemID, ActionID: actionID, Services: services, CardSnapshot: card, NotifiedAt: time.Now()}
+		ev.Notification = &training.IntakeNotification{
+			ItemID: itemID, ActionID: actionID, Services: services, CardSnapshot: card,
+			NotifiedAt: answeredAt.Add(60 * time.Second),
+		}
 	}
 	return ev
 }
@@ -352,4 +379,219 @@ func findDetail(t *testing.T, details []assessment.CriterionDetail, key string) 
 	}
 	t.Fatalf("no detail for key %q among %+v", key, details)
 	return assessment.CriterionDetail{}
+}
+
+func TestEvaluateMissedTopic(t *testing.T) {
+	ref := fullReference()
+	body := baseBody(ref)
+	ev := baseEvidence(testCatalog(), correctCard(), true, true)
+	// Only the address question was actually asked; drop the victims one.
+	ev.IntakeState.Transcript = ev.IntakeState.Transcript[:1]
+	results := mustEvaluate(t, ev, body, testRubric())
+
+	topics := findResult(t, results, "CALLER_TOPICS")
+	if topics.Status != assessment.CriterionPartial || topics.Score == nil || *topics.Score != 0.5 {
+		t.Fatalf("CALLER_TOPICS = %+v, want partial/0.5 (address asked, victims missed)", topics)
+	}
+	address := findDetail(t, topics.Details, "address")
+	if address.Status != assessment.CriterionMet {
+		t.Fatalf("address topic detail = %+v, want met", address)
+	}
+	victims := findDetail(t, topics.Details, "victims")
+	if victims.Status != assessment.CriterionNotMet {
+		t.Fatalf("victims topic detail = %+v, want not_met", victims)
+	}
+}
+
+func TestEvaluateTopicUnreachableInPreparedScriptIsNotApplicable(t *testing.T) {
+	ref := fullReference()
+	body := baseBody(ref)
+	// Drop the victims question from the scenario's own script entirely -
+	// the trainee cannot be faulted for not asking a question that does
+	// not exist in a prepared dialogue.
+	body.Intake112.Dialogue.Questions = body.Intake112.Dialogue.Questions[:1]
+	ev := baseEvidence(testCatalog(), correctCard(), true, true)
+	ev.IntakeState.Transcript = ev.IntakeState.Transcript[:1] // only the address question was asked
+	results := mustEvaluate(t, ev, body, testRubric())
+
+	topics := findResult(t, results, "CALLER_TOPICS")
+	victims := findDetail(t, topics.Details, "victims")
+	if victims.Status != assessment.CriterionNotApplicable {
+		t.Fatalf("victims topic detail = %+v, want not_applicable (unreachable in this script)", victims)
+	}
+	// The block renormalizes over just the "address" topic -> fully met.
+	if topics.Status != assessment.CriterionMet || topics.Score == nil || *topics.Score != 1 {
+		t.Fatalf("CALLER_TOPICS = %+v, want met/1 after renormalizing over the one reachable topic", topics)
+	}
+}
+
+func TestEvaluateCardOnlyHasNoConversationTopics(t *testing.T) {
+	ref := fullReference()
+	body := baseBody(ref)
+	body.Intake112.Mode = "card_only"
+	body.Intake112.Dialogue = nil
+	ev := baseEvidence(testCatalog(), correctCard(), true, false)
+	ev.Mode = "card_only"
+	results := mustEvaluate(t, ev, body, testRubric())
+
+	topics := findResult(t, results, "CALLER_TOPICS")
+	if topics.Status != assessment.CriterionNotApplicable {
+		t.Fatalf("CALLER_TOPICS for card_only = %+v, want not_applicable", topics)
+	}
+}
+
+func TestEvaluateTimingBoundaries(t *testing.T) {
+	cases := []struct {
+		name       string
+		elapsed    time.Duration
+		wantScore  float64
+		wantStatus assessment.CriterionStatus
+	}{
+		{"at norm is fully met", 15 * time.Second, 1, assessment.CriterionMet},
+		{"double norm is exactly zero", 30 * time.Second, 0, assessment.CriterionNotMet},
+		{"beyond double norm clamps at zero", 60 * time.Second, 0, assessment.CriterionNotMet},
+		{"halfway between norm and double is half credit", 22500 * time.Millisecond, 0.5, assessment.CriterionPartial},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := linearTimingScore(c.elapsed.Seconds(), 15)
+			if diff := got - c.wantScore; diff > 1e-9 || diff < -1e-9 {
+				t.Fatalf("linearTimingScore(%v, 15) = %v, want %v", c.elapsed, got, c.wantScore)
+			}
+		})
+	}
+}
+
+func TestEvaluateAnswerTimingNotApplicableWhenNeverAnswered(t *testing.T) {
+	ref := fullReference()
+	body := baseBody(ref)
+	ev := baseEvidence(testCatalog(), correctCard(), true, true)
+	ev.IntakeState.AnsweredAt = nil
+	results := mustEvaluate(t, ev, body, testRubric())
+
+	answer := findResult(t, results, "T_ANSWER")
+	if answer.Status != assessment.CriterionNotApplicable {
+		t.Fatalf("T_ANSWER = %+v, want not_applicable when the call was never answered", answer)
+	}
+	fill := findResult(t, results, "T_FILL")
+	if fill.Status != assessment.CriterionNotApplicable {
+		t.Fatalf("T_FILL = %+v, want not_applicable when there is no answered_at anchor", fill)
+	}
+}
+
+func TestEvaluateFillTimingSubtractsCallerTurnWait(t *testing.T) {
+	ref := fullReference()
+	body := baseBody(ref)
+	card := correctCard()
+	ev := baseEvidence(testCatalog(), card, true, true)
+	// Fill anchor is answeredAt+60s (met, well inside 90s). Add 40s of
+	// caller-turn wait so the *raw* elapsed would blow past the 90s norm's
+	// double (100s), but the trainee must not be penalized for it.
+	requested := ev.IntakeState.AnsweredAt.Add(5 * time.Second)
+	resolved := requested.Add(40 * time.Second)
+	ev.IntakeState.CallerTurns = []training.IntakeCallerTurn{
+		{Turn: 1, Status: training.CallerTurnAnswered, RequestedAt: requested, ResolvedAt: &resolved},
+	}
+	ev.Notification.NotifiedAt = ev.IntakeState.AnsweredAt.Add(95 * time.Second) // raw elapsed 95s > 90s norm
+	results := mustEvaluate(t, ev, body, testRubric())
+
+	fill := findResult(t, results, "T_FILL")
+	// Effective elapsed = 95s - 40s = 55s, comfortably under the 90s norm.
+	if fill.Status != assessment.CriterionMet {
+		t.Fatalf("T_FILL = %+v, want met once caller-turn wait is subtracted", fill)
+	}
+}
+
+func TestEvaluateDescriptionAbsent(t *testing.T) {
+	ref := fullReference()
+	body := baseBody(ref)
+	card := correctCard()
+	card.Complaint = training.IntakeField{State: "unanswered"}
+	ev := baseEvidence(testCatalog(), card, true, true)
+	results := mustEvaluate(t, ev, body, testRubric())
+
+	desc := findResult(t, results, "DESCRIPTION_PRESENT")
+	if desc.Status != assessment.CriterionNotMet || desc.Score == nil || *desc.Score != 0 {
+		t.Fatalf("DESCRIPTION_PRESENT = %+v, want not_met/0", desc)
+	}
+}
+
+func TestEvaluateAIDivergenceMakesAddressUnavailable(t *testing.T) {
+	ref := fullReference()
+	body := baseBody(ref)
+	body.Intake112.CallerMode = content.CallerModeFreeText
+	card := correctCard()
+	// The trainee wrote what the model actually said, which is not the
+	// scenario author's own reference spelling.
+	card.Address.Street = knownField("Садовое кольцо")
+	ev := baseEvidence(testCatalog(), card, true, true)
+	ev.IntakeState.Transcript = append(ev.IntakeState.Transcript, training.IntakeLine{
+		Speaker: "caller", Text: "Адрес: Садовое кольцо, дом 1",
+	})
+	ev.IntakeState.CallerTurns = []training.IntakeCallerTurn{
+		{Turn: 1, Status: training.CallerTurnAnswered, Source: training.CallerTurnSourceModel, RequestedAt: time.Now(), ResolvedAt: timePtr(time.Now())},
+	}
+	results := mustEvaluate(t, ev, body, testRubric())
+
+	addr := findResult(t, results, "ADDRESS_FIELDS")
+	if addr.Status != assessment.CriterionUnavailable {
+		t.Fatalf("ADDRESS_FIELDS = %+v, want unavailable (AI-caller divergence)", addr)
+	}
+	score := assessment.Score(results, testRubric())
+	if score.Status != assessment.StatusNeedsReview {
+		t.Fatalf("overall score status = %v, want needs_review", score.Status)
+	}
+}
+
+func TestEvaluateNoAIDivergenceWithoutModelTurn(t *testing.T) {
+	// Same mismatch, but no model/fallback-sourced turn at all (e.g. a
+	// prepared scenario, or a free_text one still answered by the stub) -
+	// an ordinary wrong answer, not a divergence carve-out.
+	ref := fullReference()
+	body := baseBody(ref)
+	body.Intake112.CallerMode = content.CallerModeFreeText
+	card := correctCard()
+	card.Address.Street = knownField("Садовое кольцо")
+	ev := baseEvidence(testCatalog(), card, true, true)
+	ev.IntakeState.Transcript = append(ev.IntakeState.Transcript, training.IntakeLine{
+		Speaker: "caller", Text: "Мы на Садовом кольце",
+	})
+	ev.IntakeState.CallerTurns = []training.IntakeCallerTurn{
+		{Turn: 1, Status: training.CallerTurnAnswered, Source: training.CallerTurnSourceStub, RequestedAt: time.Now(), ResolvedAt: timePtr(time.Now())},
+	}
+	results := mustEvaluate(t, ev, body, testRubric())
+
+	addr := findResult(t, results, "ADDRESS_FIELDS")
+	if addr.Status == assessment.CriterionUnavailable {
+		t.Fatalf("ADDRESS_FIELDS = %+v, must not become unavailable for a stub-sourced turn", addr)
+	}
+}
+
+func timePtr(t time.Time) *time.Time { return &t }
+
+// TestEvaluateWorkedExample combines several dimensions in one item and
+// checks the resulting total by hand: ADDRESS_FIELDS gets city+street
+// right but house wrong (10+15)/35*35=25 of 35; PROFILE_CARDS fully
+// correct (25); CALLER_TOPICS only the address topic asked (7.5 of 15,
+// after renormalizing is 7.5/15*15=7.5... i.e. exactly half of the
+// block, since both topics are reachable and worth equal points here);
+// T_ANSWER/T_FILL/DESCRIPTION_PRESENT all met (7.5+7.5+10); one missing
+// service (-5) and no other penalties. Total =
+// 25 + 25 + 7.5 + 7.5 + 7.5 + 10 - 5 = 77.5.
+func TestEvaluateWorkedExample(t *testing.T) {
+	ref := fullReference()
+	body := baseBody(ref)
+	card := correctCard()
+	card.Address.House = knownField("99") // wrong
+	ev := baseEvidence(testCatalog(), card, true, true)
+	ev.IntakeState.Transcript = ev.IntakeState.Transcript[:1] // victims topic not asked
+	ev.Notification.Services = []training.IntakeNotificationService{}
+	results := mustEvaluate(t, ev, body, testRubric())
+	score := assessment.Score(results, testRubric())
+	if score.Status != assessment.StatusReady || score.Score == nil {
+		t.Fatalf("score = %+v, want a ready numeric score", score)
+	}
+	if *score.Score != 77.5 {
+		t.Fatalf("total score = %v, want 77.5", *score.Score)
+	}
 }

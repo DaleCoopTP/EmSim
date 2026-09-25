@@ -20,7 +20,14 @@ import (
 // whole block a plain not_met/0 (ADR-026's "эталон отсутствует" rule —
 // the same outcome as getting every field wrong, not a different
 // status).
-func addressFieldsRule(ev trainingintake.EvidenceBody, ref content.Intake112Reference, snapshot training.IntakeCard, c assessment.RubricCriterion) assessment.CriterionResult {
+//
+// A mismatched field that looks like the AI caller's own paraphrase
+// (aiDivergent, 112-6's c6) marks the *whole* block unavailable rather
+// than just that one field — CriterionResult has no per-field score of
+// its own, only Details, and Score.Compute's unavailable rule already
+// operates at the criterion level.
+func addressFieldsRule(ev trainingintake.EvidenceBody, intake *content.Intake112, snapshot training.IntakeCard, c assessment.RubricCriterion) assessment.CriterionResult {
+	ref := intake.Reference
 	var fields []addressFieldParam
 	_ = decodeParam(c.Params, "fields", &fields)
 	noReferenceExplanation := paramString(c.Params, "no_reference_explanation", "эталон не задан")
@@ -34,6 +41,7 @@ func addressFieldsRule(ev trainingintake.EvidenceBody, ref content.Intake112Refe
 	}
 
 	var totalPoints, earnedPoints float64
+	var divergent bool
 	details := make([]assessment.CriterionDetail, 0, len(fields))
 	for _, f := range fields {
 		expected := addressExpectedValue(ref.ExpectedCard.Address, f.Path)
@@ -50,6 +58,9 @@ func addressFieldsRule(ev trainingintake.EvidenceBody, ref content.Intake112Refe
 		status := assessment.CriterionNotMet
 		if matched {
 			points, status = f.Points, assessment.CriterionMet
+		} else if aiDivergent(ev, intake, actual) {
+			status = assessment.CriterionUnavailable
+			divergent = true
 		}
 		earnedPoints += points
 		detail := assessment.CriterionDetail{Key: f.Path, Label: f.Label, Points: points, MaxPoints: f.Points, Status: status, Expected: strPtr(expected)}
@@ -57,6 +68,14 @@ func addressFieldsRule(ev trainingintake.EvidenceBody, ref content.Intake112Refe
 			detail.Actual = strPtr(actual)
 		}
 		details = append(details, detail)
+	}
+
+	if divergent {
+		return assessment.CriterionResult{
+			ID: c.ID, Status: assessment.CriterionUnavailable, Weight: c.Weight, Critical: c.Critical,
+			EvidenceRefs: evidenceRefs(ev), Details: details,
+			Explanation: "заявитель мог сообщить иначе, чем в эталоне — требуется проверка преподавателя",
+		}
 	}
 
 	if totalPoints == 0 {

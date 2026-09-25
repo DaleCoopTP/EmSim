@@ -11,6 +11,7 @@ package main
 import (
 	"emsim/internal/assessment"
 	assessmentdds "emsim/internal/assessment/dds"
+	assessmentintake "emsim/internal/assessment/operator112"
 	assessmentpg "emsim/internal/assessment/postgres"
 	"emsim/internal/content"
 	contentpg "emsim/internal/content/postgres"
@@ -25,6 +26,9 @@ func newAssessmentService(pool *pgxpool.Pool, taskStore *tasks.Store) *assessmen
 	contentStore := contentpg.NewStore(pool)
 	return assessment.NewService(
 		assessmentpg.NewStore(pool), trainingStore, trainingStore, trainingStore, contentStore, taskStore,
-		assessment.Registry{content.ExerciseTypeDDSProcessing: assessmentdds.Evaluator},
+		assessment.Registry{
+			content.ExerciseTypeDDSProcessing:     assessmentdds.Evaluator,
+			content.ExerciseTypeOperator112Intake: assessmentintake.Evaluator,
+		},
 	)
 }

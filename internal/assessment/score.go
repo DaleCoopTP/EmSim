@@ -46,12 +46,21 @@ func Score(results []CriterionResult, effective Rubric) ScoreResult {
 		// 112-6/ADR-026: a penalty criterion never enters weight
 		// normalization at all — it has no "correct" fraction of the
 		// 100-point total the way met/partial/not_met criteria do, only
-		// points subtracted after normalization. not_applicable/
-		// unavailable are meaningless for a penalty (ADR-026's "эталон
-		// отсутствует" rule always resolves it to a concrete 0, never
-		// either status), but the switch below still guards them for
-		// safety.
+		// points subtracted after normalization. not_applicable is the
+		// objective-inapplicability case (the milestone this penalty
+		// depends on was never reached) and simply contributes nothing,
+		// same as a nil PenaltyPoints. unavailable is the one status a
+		// penalty and an ordinary criterion share: 112-6's AI-caller
+		// divergence carve-out (ADR-026 — a free_text field that
+		// disagrees with the reference but matches what the model/
+		// fallback caller actually said) can mark a penalty unavailable
+		// too, and that must force needs_review exactly like it does for
+		// any other criterion, not silently charge/skip the penalty.
 		if kindByID[r.ID] == "penalty" {
+			if r.Status == CriterionUnavailable {
+				unavailable = true
+				continue
+			}
 			if r.PenaltyPoints != nil {
 				totalPenalty += *r.PenaltyPoints
 			}
