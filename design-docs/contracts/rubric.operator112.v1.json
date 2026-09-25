@@ -1,0 +1,13 @@
+{
+  "schema": "emsim/rubric/v1",
+  "id": "operator112_default",
+  "version": "operator112/rubric-v1",
+  "exercise_type": "operator112_intake",
+  "pass_threshold": 70,
+  "critical_cap": 100,
+  "criteria": [
+    {"id": "INTAKE_COMPLETENESS", "title": "Полнота основной карточки", "kind": "manual", "weight": 40, "critical": false, "params": {}},
+    {"id": "INTAKE_ACCURACY", "title": "Достоверность сведений", "kind": "manual", "weight": 40, "critical": false, "params": {}},
+    {"id": "INTAKE_DISPATCH", "title": "Передача карточки службе", "kind": "manual", "weight": 20, "critical": false, "params": {}}
+  ]
+}

@@ -2134,9 +2134,43 @@ components:
           type: array
           items:
             type: string
-          description: action:<action_id> | event:<key> | call:<id> | text:<field>:<from>-<to>
+          description: action:<action_id> | event:<key> | call:<id> | text:<field>:<from>-<to> | line:<id>
         explanation:
           type: string
+        penalty_points:
+          type: number
+          minimum: 0
+          nullable: true
+          description: 112-6/ADR-026 — только для kind=penalty критериев; фактически начисленные штрафные баллы (0, если эталон отсутствует или нарушений нет).
+        details:
+          type: array
+          description: 112-6/ADR-026 — построчная детализация блока/штрафа (поле адреса, карта, служба, ...), для разбора преподавателем.
+          items:
+            $ref: '#/components/schemas/CriterionDetail'
+
+    CriterionDetail:
+      type: object
+      required:
+      - key
+      - status
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        points:
+          type: number
+        max_points:
+          type: number
+        status:
+          type: string
+          enum: [met, partial, not_met, not_applicable]
+        actual:
+          type: string
+          nullable: true
+        expected:
+          type: string
+          nullable: true
 
     AssessmentRevision:
       type: object

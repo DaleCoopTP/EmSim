@@ -39,7 +39,7 @@ def load_json(name: str):
 def main() -> int:
     print("JSON")
     schemas = {n: load_json(n) for n in ["scenario.schema.json", "scenario-file.schema.json", "evidence.schema.json", "evidence.operator112.schema.json", "assessment-inputs.schema.json", "rubric.schema.json", "sse-events.schema.json", "tasks.schema.json", "voice-assets-manifest.schema.json"]}
-    examples = {n: load_json(n) for n in ["scenario.example.json", "evidence.example.json", "rubric.default.json", "rubric.operator112.json", "assessment-inputs.example.json"]}
+    examples = {n: load_json(n) for n in ["scenario.example.json", "evidence.example.json", "rubric.default.json", "rubric.operator112.json", "rubric.operator112.v1.json", "assessment-inputs.example.json"]}
     for n, v in {**schemas, **examples}.items():
         if v is not None:
             ok(n)
@@ -90,7 +90,7 @@ def main() -> int:
             if s is not None:
                 V.check_schema(s)
                 ok(f"{n} is a valid draft 2020-12 schema")
-        pairs = [("scenario.schema.json", "scenario.example.json"), ("evidence.schema.json", "evidence.example.json"), ("rubric.schema.json", "rubric.default.json"), ("rubric.schema.json", "rubric.operator112.json"), ("assessment-inputs.schema.json", "assessment-inputs.example.json")]
+        pairs = [("scenario.schema.json", "scenario.example.json"), ("evidence.schema.json", "evidence.example.json"), ("rubric.schema.json", "rubric.default.json"), ("rubric.schema.json", "rubric.operator112.json"), ("rubric.schema.json", "rubric.operator112.v1.json"), ("assessment-inputs.schema.json", "assessment-inputs.example.json")]
         for sn, en in pairs:
             if schemas[sn] is None or examples[en] is None:
                 continue
@@ -188,6 +188,59 @@ def main() -> int:
             ok("rubric.default.json scores ADR-017 field corrections")
         else:
             fail("rubric.default.json is missing D_FIELD_CORRECTIONS (ADR-019)")
+
+        # 112-6 / ADR-026: rubric.operator112.json is rubric-v2 with penalty
+        # criteria; rubric.operator112.v1.json keeps the old manual-only
+        # rubric so in-progress v1 lessons are unaffected.
+        rubric112 = examples["rubric.operator112.json"]
+        if rubric112["version"] == "operator112/rubric-v2" and any(c["kind"] == "penalty" for c in rubric112["criteria"]):
+            ok("rubric.operator112.json is rubric-v2 with penalty criteria (ADR-026)")
+        else:
+            fail("rubric.operator112.json must be rubric-v2 with at least one penalty criterion (ADR-026)")
+        rubric112v1 = examples["rubric.operator112.v1.json"]
+        if rubric112v1["version"] == "operator112/rubric-v1" and all(c["kind"] == "manual" for c in rubric112v1["criteria"]):
+            ok("rubric.operator112.v1.json preserves the manual-only rubric")
+        else:
+            fail("rubric.operator112.v1.json must stay the pre-ADR-026 manual-only rubric")
+        invalid_penalty = copy.deepcopy(rubric112)
+        del invalid_penalty["criteria"][next(i for i, c in enumerate(invalid_penalty["criteria"]) if c["kind"] == "penalty")]["rule"]
+        rejects("penalty criterion without rule", schemas["rubric.schema.json"], invalid_penalty)
+
+        # 112-6 / ADR-026: a fully-referenced intake112 scenario (expected_card
+        # with the extended address, expected_profiles, alternatives, scoring)
+        # must validate — this is the "infrastructure ready for a later
+        # reference" requirement, exercised without touching seed/.
+        full_reference_112 = {
+            "schema": "emsim/scenario/v1", "difficulty": 3, "exercise_type": "operator112_intake",
+            "intake112": {
+                "mode": "full_case",
+                "call": {"aon": "+79991234567", "local_time": "12:00", "time_zone": "Europe/Moscow"},
+                "dialogue": {
+                    "facts": [{"id": "addr", "label": "Адрес", "card_path": "/address", "knowledge": "initial", "value": "x"}],
+                    "initial": {"id": "i1", "text": "Але", "reveals": []},
+                    "questions": [{"id": "q1", "text": "Где?", "topic_id": "address", "answer": {"id": "a1", "text": "Тут", "reveals": ["addr"]}}],
+                },
+                "reference": {
+                    "expected_types": ["gas_explosion"], "case_description": "test", "expected_services": ["pilot_fire_101"],
+                    "expected_card": {
+                        "applicant_status": "witness", "applicant_name": "Иванов Иван Иванович", "age": 30,
+                        "address": {"country": "Россия", "region": "Москва", "okrug": "ЦАО", "district": "Тверской",
+                                    "city": "Москва", "street": "Тверская", "house": "1", "building": "", "structure": "",
+                                    "flat": "5", "entrance": "1", "floor": "3", "landmark": ""},
+                        "incident_type": "gas_explosion", "complaint": "запах газа", "victims_count": 1,
+                    },
+                    "alternatives": {"expected_card.address.street": ["Тверская улица"]},
+                    "expected_profiles": {"104": {"smell": "yes"}},
+                    "scoring": {"disabled": ["DESCRIPTION_PRESENT"], "note": "test"},
+                },
+            },
+        }
+        if V(schemas["scenario.schema.json"], format_checker=V.FORMAT_CHECKER).is_valid(full_reference_112):
+            ok("full intake112.reference (address/profiles/alternatives/scoring) validates (ADR-026)")
+        else:
+            errs = sorted(V(schemas["scenario.schema.json"], format_checker=V.FORMAT_CHECKER).iter_errors(full_reference_112), key=lambda e: str(list(e.path)))
+            for e in errs[:10]:
+                fail(f"full intake112.reference: {'/'.join(map(str, e.path))}: {e.message[:160]}")
         bad_input = copy.deepcopy(examples["assessment-inputs.example.json"])
         bad_input["transcripts"] = [{"call_id": "019230a4-6b1e-7c0a-9a1f-3f2a1b2c3d4e", "recording_sha256": "a" * 64, "state": "ready"}]
         rejects("ready transcript without text/model/parameters", schemas["assessment-inputs.schema.json"], bad_input)

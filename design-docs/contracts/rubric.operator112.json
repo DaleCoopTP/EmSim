@@ -1,13 +1,140 @@
 {
   "schema": "emsim/rubric/v1",
   "id": "operator112_default",
-  "version": "operator112/rubric-v1",
+  "version": "operator112/rubric-v2",
   "exercise_type": "operator112_intake",
   "pass_threshold": 70,
   "critical_cap": 100,
   "criteria": [
-    {"id": "INTAKE_COMPLETENESS", "title": "Полнота основной карточки", "kind": "manual", "weight": 40, "critical": false, "params": {}},
-    {"id": "INTAKE_ACCURACY", "title": "Достоверность сведений", "kind": "manual", "weight": 40, "critical": false, "params": {}},
-    {"id": "INTAKE_DISPATCH", "title": "Передача карточки службе", "kind": "manual", "weight": 20, "critical": false, "params": {}}
+    {
+      "id": "ADDRESS_FIELDS",
+      "title": "Адрес происшествия",
+      "kind": "deterministic",
+      "weight": 35,
+      "critical": false,
+      "rule": "operator112_address_fields",
+      "params": {
+        "no_reference_explanation": "эталон не задан",
+        "field_no_reference_explanation": "поле не входит в заданный эталон",
+        "fields": [
+          {"path": "country", "label": "Страна", "points": 1},
+          {"path": "region", "label": "Субъект", "points": 2},
+          {"path": "okrug", "label": "Округ", "points": 3},
+          {"path": "district", "label": "Район", "points": 3},
+          {"path": "city", "label": "Населённый пункт", "points": 5},
+          {"path": "street", "label": "Улица", "points": 8},
+          {"path": "house", "label": "Дом", "points": 6},
+          {"path": "building", "label": "Корпус", "points": 2},
+          {"path": "structure", "label": "Строение", "points": 1},
+          {"path": "flat", "label": "Квартира", "points": 2},
+          {"path": "entrance", "label": "Подъезд", "points": 1},
+          {"path": "floor", "label": "Этаж", "points": 1}
+        ]
+      }
+    },
+    {
+      "id": "PROFILE_CARDS",
+      "title": "Профильные карты",
+      "kind": "deterministic",
+      "weight": 25,
+      "critical": false,
+      "rule": "operator112_profile_cards",
+      "params": {
+        "no_reference_explanation": "эталон не задан",
+        "missing_reference_card_explanation": "карта не входит в заданный эталон"
+      }
+    },
+    {
+      "id": "CALLER_TOPICS",
+      "title": "Темы разговора с заявителем",
+      "kind": "deterministic",
+      "weight": 15,
+      "critical": false,
+      "rule": "operator112_caller_topics",
+      "params": {
+        "no_dialogue_explanation": "разговора с заявителем не было",
+        "topics": [
+          {"id": "applicant_name", "label": "Кто обращается / ФИО заявителя", "points": 2,
+            "patterns": ["как вас зовут", "представьтесь", "ваше имя", "как к вам обращаться", "ваши фамилия"]},
+          {"id": "callback_phone", "label": "Номер для обратной связи", "points": 2,
+            "patterns": ["ваш номер", "перезвонить", "номер телефона", "с какого телефона", "контактный номер"]},
+          {"id": "address", "label": "Адрес происшествия", "points": 2,
+            "patterns": ["по какому адресу", "где это происходит", "ваш адрес", "укажите адрес", "где находитесь", "где случилось"]},
+          {"id": "incident_description", "label": "Что произошло", "points": 2,
+            "patterns": ["что случилось", "что произошло", "расскажите подробнее", "что у вас"]},
+          {"id": "victims", "label": "Пострадавшие", "points": 2,
+            "patterns": ["пострадавш", "есть ли постра", "кто-то пострадал", "травмы", "жертвы"]},
+          {"id": "hazards", "label": "Дополнительная опасность", "points": 2,
+            "patterns": ["опасност", "угроза", "запах газа", "огонь распростран", "риск для"]},
+          {"id": "access", "label": "Доступ к месту происшествия", "points": 2,
+            "patterns": ["как проехать", "как добраться", "подъезд", "как попасть", "ориентир"]},
+          {"id": "onsite_contact", "label": "Контакт на месте", "points": 1,
+            "patterns": ["кто на месте", "встретит", "останетесь на месте", "будете на месте"]}
+        ]
+      }
+    },
+    {
+      "id": "T_ANSWER",
+      "title": "Норматив ответа на вызов",
+      "kind": "deterministic",
+      "weight": 7.5,
+      "critical": false,
+      "rule": "operator112_answer_timing",
+      "params": {"norm_s": 15}
+    },
+    {
+      "id": "T_FILL",
+      "title": "Норматив заполнения карточки",
+      "kind": "deterministic",
+      "weight": 7.5,
+      "critical": false,
+      "rule": "operator112_fill_timing",
+      "params": {"norm_s": 90}
+    },
+    {
+      "id": "DESCRIPTION_PRESENT",
+      "title": "Описание со слов заявителя",
+      "kind": "deterministic",
+      "weight": 10,
+      "critical": false,
+      "rule": "operator112_description_present",
+      "params": {}
+    },
+    {
+      "id": "P_ADDRESS_REGION",
+      "title": "Штраф: неверная страна или субъект",
+      "kind": "penalty",
+      "weight": 0,
+      "critical": false,
+      "rule": "operator112_penalty_address_region",
+      "params": {"points": 10, "no_reference_explanation": "эталон не задан"}
+    },
+    {
+      "id": "P_APPLICANT_NAME",
+      "title": "Штраф: неверное ФИО заявителя",
+      "kind": "penalty",
+      "weight": 0,
+      "critical": false,
+      "rule": "operator112_penalty_applicant_name",
+      "params": {"points": 5, "no_reference_explanation": "эталон не задан"}
+    },
+    {
+      "id": "P_SERVICES",
+      "title": "Штраф: неверный список служб",
+      "kind": "penalty",
+      "weight": 0,
+      "critical": false,
+      "rule": "operator112_penalty_services",
+      "params": {"points_per": 5, "no_reference_explanation": "эталон не задан"}
+    },
+    {
+      "id": "P_EXTRA_PROFILE",
+      "title": "Штраф: лишняя профильная карта",
+      "kind": "penalty",
+      "weight": 0,
+      "critical": false,
+      "rule": "operator112_penalty_extra_profile",
+      "params": {"points_per": 5, "no_reference_explanation": "эталон не задан"}
+    }
   ]
 }

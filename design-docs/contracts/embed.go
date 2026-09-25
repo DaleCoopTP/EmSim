@@ -9,5 +9,5 @@ package contracts
 
 import "embed"
 
-//go:embed scenario.schema.json scenario-file.schema.json rubric.default.json rubric.operator112.json
+//go:embed scenario.schema.json scenario-file.schema.json rubric.default.json rubric.operator112.json rubric.operator112.v1.json
 var Files embed.FS

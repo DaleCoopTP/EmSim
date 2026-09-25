@@ -62,7 +62,8 @@
             "enum": [
               "deterministic",
               "llm",
-              "manual"
+              "manual",
+              "penalty"
             ]
           },
           "weight": {
@@ -142,6 +143,34 @@
               "not": {
                 "required": [
                   "rule"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "penalty"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "rule"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "prompt"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "sources"
+                    ]
+                  }
                 ]
               }
             }
