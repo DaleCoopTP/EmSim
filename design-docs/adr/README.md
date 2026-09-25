@@ -25,3 +25,7 @@
 | [019](019-slice6-deterministic-assessment.md) | Срез 6: детерминированная авто-оценка, finalizer и экспертные ревизии | accepted |
 | [020](020-slice7-reporting-snapshots.md) | Срез 7: отчётные проекции, CSV и неизменяемые PDF-снимки | accepted |
 | [021](021-operator112-first-intake-slice.md) | Первый входящий вызов 112, отдельное состояние и ручная рубрика | accepted |
+| [022](022-operator112-caller-simulator.md) | Контракт симулятора заявителя для 112 | accepted |
+| [023](023-operator112-notify-and-save.md) | Оповещение служб «Сохранить → оповестить и сохранить карточку» | accepted |
+| [024](024-operator112-async-caller-reply.md) | Асинхронный ход свободного диалога с заявителем | accepted |
+| [025](025-operator112-ai-caller.md) | ИИ-заявитель 112 на интерактивном пути, уточняет ADR-003 | accepted |
