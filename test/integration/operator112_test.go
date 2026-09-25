@@ -226,8 +226,17 @@ func TestOperator112IntakeTransaction(t *testing.T) {
 	if err := json.Unmarshal(noContactEvidence, &exceptional); err != nil || exceptional.CloseReason != training.CloseNoContact || exceptional.Dispatch != nil {
 		t.Fatalf("no-contact evidence: %+v, %v", exceptional, err)
 	}
+	// 112-6/ADR-026: a lesson created today always freezes the current
+	// operator112_intake rubric (rubric-v2), even for this test's own
+	// pre-ADR-023 incoming_call/dispatch_intake items — enqueueEvaluateWaiting
+	// can only tell a legacy-route item from a real one once evidence is
+	// sealed (c5's operator112_legacy_route), not at enqueue time, so a
+	// waiting assessment.evaluate task is expected for both closed items
+	// (item via complete_intake, noContactItem via mark_no_contact) despite
+	// neither ever getting a notify_services snapshot to score. otherItem
+	// stays open, so it gets none.
 	var autoCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM tasks WHERE kind = 'assessment.evaluate'`).Scan(&autoCount); err != nil || autoCount != 0 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM tasks WHERE kind = 'assessment.evaluate'`).Scan(&autoCount); err != nil || autoCount != 2 {
 		t.Fatalf("auto tasks %d: %v", autoCount, err)
 	}
 	preReviewHistory, err := reportingpg.NewStore(pool).ResultsFor(ctx, trainee.ID, content.ExerciseTypeOperator112Intake)
@@ -236,18 +245,26 @@ func TestOperator112IntakeTransaction(t *testing.T) {
 	}
 	assessmentService := newAssessmentServiceForTest(pool, mustTaskEnqueuer(pool))
 	before, err := assessmentService.Get(ctx, item.ID)
-	if err != nil || before.Final != nil || before.RubricEffective.Version != "operator112/rubric-v1" {
+	if err != nil || before.Final != nil || before.RubricEffective.Version != "operator112/rubric-v2" {
 		t.Fatalf("review before manual rating: %+v, %v", before, err)
 	}
+	zeroPenalty := 0.0
 	created, err := assessmentService.CreateExpertRevision(ctx, item.ID, actor.ID, assessment.RevisionInput{
-		BaseRevision: 0, Reason: "Разбор учебного вызова",
+		BaseRevision: 0, Reason: "Разбор учебного вызова (легаси-маршрут dispatch_intake, без эталона)",
 		Criteria: []assessment.CriterionResult{
-			{ID: "INTAKE_COMPLETENESS", Status: assessment.CriterionPartial, Explanation: "Адрес заполнен не полностью"},
-			{ID: "INTAKE_ACCURACY", Status: assessment.CriterionMet, Explanation: "Внесённые сведения соответствуют разговору"},
-			{ID: "INTAKE_DISPATCH", Status: assessment.CriterionMet, Explanation: "Карточка направлена учебной скорой"},
+			{ID: "ADDRESS_FIELDS", Status: assessment.CriterionMet, Explanation: "Адрес заполнен по разговору"},
+			{ID: "PROFILE_CARDS", Status: assessment.CriterionNotApplicable, Explanation: "incoming_call без профильных карт"},
+			{ID: "CALLER_TOPICS", Status: assessment.CriterionMet, Explanation: "Основные темы разговора затронуты"},
+			{ID: "T_ANSWER", Status: assessment.CriterionMet, Explanation: "Вызов принят вовремя"},
+			{ID: "T_FILL", Status: assessment.CriterionMet, Explanation: "Карточка заполнена вовремя"},
+			{ID: "DESCRIPTION_PRESENT", Status: assessment.CriterionMet, Explanation: "Жалоба указана"},
+			{ID: "P_ADDRESS_REGION", PenaltyPoints: &zeroPenalty},
+			{ID: "P_APPLICANT_NAME", PenaltyPoints: &zeroPenalty},
+			{ID: "P_SERVICES", PenaltyPoints: &zeroPenalty},
+			{ID: "P_EXTRA_PROFILE", PenaltyPoints: &zeroPenalty},
 		},
 	}, "112-assess")
-	if err != nil || created.Revision != 2 || created.Score == nil || *created.Score != 80 {
+	if err != nil || created.Revision != 2 || created.Score == nil || *created.Score != 100 {
 		t.Fatalf("manual rating: %+v, %v", created, err)
 	}
 	after, err := assessmentService.Get(ctx, item.ID)
@@ -264,11 +281,11 @@ func TestOperator112IntakeTransaction(t *testing.T) {
 		t.Fatalf("DDS history mixed with 112: %+v, %v", ddsHistory, err)
 	}
 	intakeHistory, err := reports.ResultsFor(ctx, trainee.ID, content.ExerciseTypeOperator112Intake)
-	if err != nil || len(intakeHistory) != 1 || intakeHistory[0].Score == nil || *intakeHistory[0].Score != 80 {
+	if err != nil || len(intakeHistory) != 1 || intakeHistory[0].Score == nil || *intakeHistory[0].Score != 100 {
 		t.Fatalf("112 history: %+v, %v", intakeHistory, err)
 	}
 	progress, err := reports.ProgressFor(ctx, trainee.ID, content.ExerciseTypeOperator112Intake)
-	if err != nil || progress.CompletedItems != 1 || progress.AvgScore == nil || *progress.AvgScore != 80 {
+	if err != nil || progress.CompletedItems != 1 || progress.AvgScore == nil || *progress.AvgScore != 100 {
 		t.Fatalf("112 progress: %+v, %v", progress, err)
 	}
 	otherCommand := func(typ training.CommandType, payload any, seq int64) training.Receipt {

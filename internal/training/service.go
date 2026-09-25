@@ -154,13 +154,15 @@ func (s *Service) CreateLesson(ctx context.Context, actor auth.Principal, in Les
 		}
 	}
 
-	rubricVersion := "operator112/rubric-v1"
-	if in.ExerciseType == content.ExerciseTypeDDSProcessing {
-		var err error
-		rubricVersion, err = content.RubricVersion()
-		if err != nil {
-			return Lesson{}, fmt.Errorf("training: read rubric version: %w", err)
-		}
+	// 112-6/ADR-026: a new 112 lesson freezes the current
+	// operator112_intake rubric version (today operator112/rubric-v2)
+	// the same way DDS already freezes its own current version — never
+	// hardcoded to v1. An in-progress lesson created before this change
+	// keeps whatever version its own row already has; RubricVersionFor is
+	// only ever consulted here, at creation.
+	rubricVersion, err := content.RubricVersionFor(in.ExerciseType)
+	if err != nil {
+		return Lesson{}, fmt.Errorf("training: read rubric version: %w", err)
 	}
 
 	lesson := Lesson{
@@ -177,7 +179,7 @@ func (s *Service) CreateLesson(ctx context.Context, actor auth.Principal, in Les
 	}
 
 	var created Lesson
-	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+	err = s.store.WithTx(ctx, func(tx pgx.Tx) error {
 		var err error
 		created, err = s.store.InsertLesson(ctx, tx, lesson)
 		if err != nil {
@@ -692,7 +694,18 @@ func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise 
 // internal/assessment's composition, never by training — this package
 // only ever enqueues, per KindAssessmentEvaluate's own doc comment.
 func (s *Service) enqueueEvaluateWaiting(ctx context.Context, tx pgx.Tx, lesson Lesson, item Item, evidence Evidence, now time.Time) error {
-	if lesson.Mode != ModeTraining || lesson.ExerciseType == content.ExerciseTypeOperator112Intake {
+	if lesson.Mode != ModeTraining {
+		return nil
+	}
+	// 112-6/ADR-026's c4: operator112/rubric-v1 (the pre-112-6 manual-only
+	// rubric) still gets no automatic task at all — internal/assessment/
+	// operator112 (c5/c6) can only score a v2+ lesson's evidence, and a
+	// v1 lesson still in progress when this ships must keep its old
+	// manual-review-only behavior rather than start failing tasks it
+	// never had before. A v1 lesson's items stay reachable for manual
+	// review the same way they always were (assessment.Service.Get/
+	// CreateExpertRevision work without any auto/evaluate task existing).
+	if lesson.ExerciseType == content.ExerciseTypeOperator112Intake && lesson.RubricVersion == "operator112/rubric-v1" {
 		return nil
 	}
 	payload, err := json.Marshal(map[string]any{

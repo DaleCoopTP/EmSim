@@ -149,15 +149,17 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportScenarios: %v", err)
 	}
-	if scenarioResult.NewScenarios != 12 || scenarioResult.NewVersions != 13 || scenarioResult.Unchanged != 0 {
-		t.Fatalf("ImportScenarios = %+v, want NewScenarios=12 NewVersions=13 Unchanged=0", scenarioResult)
+	// 15 scenarios/16 versions (112-5b added three AI-caller scenarios,
+	// commit 3da6db3, on top of the pre-112-5b 12/13).
+	if scenarioResult.NewScenarios != 15 || scenarioResult.NewVersions != 16 || scenarioResult.Unchanged != 0 {
+		t.Fatalf("ImportScenarios = %+v, want NewScenarios=15 NewVersions=16 Unchanged=0", scenarioResult)
 	}
 	scenarioResult2, err := svc.ImportScenarios(ctx, openScenarioDir(t, "../../seed/scenarios"), actorID, actorRole, "req-6")
 	if err != nil {
 		t.Fatalf("ImportScenarios (replay): %v", err)
 	}
-	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 13 {
-		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=13", scenarioResult2)
+	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 16 {
+		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=16", scenarioResult2)
 	}
 
 	// --- read side ---
@@ -165,8 +167,8 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListScenarios: %v", err)
 	}
-	if total != 12 || len(items) != 12 {
-		t.Fatalf("ListScenarios: total=%d len=%d, want 12 including three card-only cases and two full_case (prepared + free_text)", total, len(items))
+	if total != 15 || len(items) != 15 {
+		t.Fatalf("ListScenarios: total=%d len=%d, want 15 including three card-only cases, two full_case (prepared + free_text) and three 112-5b AI-caller cases", total, len(items))
 	}
 
 	var case02ID uuid.UUID
@@ -189,7 +191,7 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 		t.Fatalf("pilot-112-medical-01 not found in ListScenarios: %+v", items)
 	}
 	intakeItems, intakeTotal, err := svc.ListScenarios(ctx, content.ScenarioFilter{ExerciseType: content.ExerciseTypeOperator112Intake})
-	if err != nil || intakeTotal != 8 || len(intakeItems) != 8 {
+	if err != nil || intakeTotal != 11 || len(intakeItems) != 11 {
 		t.Fatalf("112 catalogue filter: items=%+v total=%d err=%v", intakeItems, intakeTotal, err)
 	}
 	intakeDetail, err := svc.ScenarioDetail(ctx, intakeID)

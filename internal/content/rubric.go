@@ -56,18 +56,39 @@ func loadRubricCriterionIDs(name string) (map[string]bool, error) {
 // rubricCriterionIDs: it is one string field, not worth a sync.
 // OnceValues of its own next to that larger, structurally shaped read.
 func RubricVersion() (string, error) {
-	raw, err := contracts.Files.ReadFile("rubric.default.json")
+	return readRubricVersion("rubric.default.json")
+}
+
+// RubricVersionFor is RubricVersion's own generalization across
+// exercise_type (112-6/ADR-026's c4): operator112_intake's *current*
+// rubric version (today "operator112/rubric-v2") is what a newly
+// created 112 lesson freezes into lessons.rubric_version, exactly the
+// way DDS's own lesson creation already freezes RubricVersion(). An
+// existing lesson's own frozen version is never re-derived from this —
+// only a new lesson's creation ever calls it.
+func RubricVersionFor(exerciseType ExerciseType) (string, error) {
+	switch exerciseType {
+	case ExerciseTypeDDSProcessing:
+		return readRubricVersion("rubric.default.json")
+	case ExerciseTypeOperator112Intake:
+		return readRubricVersion("rubric.operator112.json")
+	}
+	return "", fmt.Errorf("content: unsupported exercise_type %q", exerciseType)
+}
+
+func readRubricVersion(filename string) (string, error) {
+	raw, err := contracts.Files.ReadFile(filename)
 	if err != nil {
-		return "", fmt.Errorf("read rubric.default.json: %w", err)
+		return "", fmt.Errorf("read %s: %w", filename, err)
 	}
 	var rubric struct {
 		Version string `json:"version"`
 	}
 	if err := json.Unmarshal(raw, &rubric); err != nil {
-		return "", fmt.Errorf("parse rubric.default.json: %w", err)
+		return "", fmt.Errorf("parse %s: %w", filename, err)
 	}
 	if rubric.Version == "" {
-		return "", fmt.Errorf("rubric.default.json: empty version")
+		return "", fmt.Errorf("%s: empty version", filename)
 	}
 	return rubric.Version, nil
 }
