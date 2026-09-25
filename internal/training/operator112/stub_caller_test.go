@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"emsim/internal/training"
 )
 
 func TestStubCallerReplierSequenceAndRepeat(t *testing.T) {
@@ -13,6 +15,9 @@ func TestStubCallerReplierSequenceAndRepeat(t *testing.T) {
 		reply, err := r.Reply(context.Background(), CallerReplyRequest{Turn: turn})
 		if err != nil {
 			t.Fatalf("turn %d: %v", turn, err)
+		}
+		if reply.Adapter != StubCallerReplierAdapter || reply.Source != training.CallerTurnSourceStub {
+			t.Fatalf("turn %d: got adapter=%q source=%q", turn, reply.Adapter, reply.Source)
 		}
 		seen = append(seen, reply.Text)
 	}

@@ -2138,3 +2138,66 @@ Next: коммит c3 — расширить результат хода (`Calle
 Reveals/Generation`, `IntakeCallerTurn.Source/Generation`,
 `ApplyCallerReply`) в `internal/training`/`operator112`, метка адаптера
 переезжает из `CallerReplier.Adapter()` в сам `CallerReply`.
+
+## 2026-09-25 — Срез 112-5b, коммит 3: source/reveals/generation в результате хода
+
+Расширяет результат `caller.reply`, не подключая ещё ни модель, ни
+классификатор — `StubCallerReplier` остаётся единственной реализацией
+`CallerReplier`, но теперь сама называет свой `adapter`/`source`, а не
+через отдельный метод интерфейса:
+
+- `internal/training/operator112/caller.go`: `CallerReplyRequest`
+  получил `Caller *content.Intake112CallerProfile`. `CallerReply` —
+  `{Text, Adapter, Source, Reveals, Generation
+  *training.IntakeCallerGeneration}`. `CallerReplier.Adapter()` убран из
+  интерфейса — адаптер и источник теперь называет сам ответ, поэтому
+  один будущий `aicaller.Replier` сможет в одном и том же `Reply` для
+  одного хода вернуть `source=model`, а для другого (сценарий без
+  профиля заявителя) — `source=stub`.
+- `internal/training/intake.go`: `IntakeCallerTurn.Source` и
+  `.Generation *IntakeCallerGeneration` (`omitempty`); константы
+  `CallerTurnSourceOpening/Scripted/Model/Fallback/Stub`;
+  `IntakeCallerGeneration{Model, PromptVersion, Temperature, TopP,
+  RepeatPenalty, MaxTokens}` — заполняется только для `model`/`fallback`
+  (RFC-001 §6 «производные входы оценки тоже фиксируются» — то же
+  правило распространено на реплики заявителя).
+- `internal/training/service.go`: новый `CallerReplyOutcome{Text,
+  Adapter, Source, Reveals, Generation}`; `ApplyCallerReply` принимает
+  его вместо пары `text, adapter string` — пишет `Source`/`Generation`
+  в ход и `Reveals` в новую строку `transcript` (поле `reveals` там уже
+  существовало для сценарного 112-2/112-3, теперь используется и здесь).
+- `internal/training/operator112/stub_caller.go`: `Reply` сам
+  возвращает `Adapter: StubCallerReplierAdapter, Source:
+  training.CallerTurnSourceStub` вместе с текстом; метод `Adapter()`
+  удалён.
+- `cmd/emsim/worker_composition.go` (`callerReplyHandler`): передаёт
+  `Caller: replyCtx.Dialogue.Caller` в запрос, строит
+  `training.CallerReplyOutcome` из ответа `CallerReplier` вместо
+  `reply.Text, replier.Adapter()`.
+- Контракты: `evidence.operator112.schema.json` и `openapi.yaml`
+  (`Intake112State`) — `caller_turns[].source` (enum) и `.generation`
+  (`model`, `prompt_version` обязательны; `temperature`/`top_p`/
+  `repeat_penalty`/`max_tokens` опциональны); старые evidence и API-ответы
+  без этих полей остаются валидны (оба необязательны).
+- Тесты: `internal/training/operator112/stub_caller_test.go` —
+  `TestStubCallerReplierSequenceAndRepeat` теперь проверяет
+  `Adapter`/`Source` на каждом ходе. `test/integration/
+  operator112_caller_chat_test.go` — обновлён вызов `ApplyCallerReply`
+  под новую сигнатуру (`CallerReplyOutcome`); ассерт на ответ реального
+  worker дополнен проверкой `Source == training.CallerTurnSourceStub`.
+
+Validation: `gofmt -l` (чисто), `go build ./...`, `go vet ./...` и
+`go vet -tags integration ./...` (оба чистые), `make verify` (зелёный),
+`python3 design-docs/contracts/check.py` (все проверки прошли), `make
+test-integration` — зелёный, включая `TestCallerChat*` набор
+(153.975s, Docker Postgres). `make verify-web` не запускался — TS-код
+не менялся (только `Intake112Dialogue.caller` из коммита 2, уже
+перегенерирован).
+
+Next: коммит c4 — `internal/platform/llm/` (минимальный клиент
+OpenAI-совместимого `/v1/chat/completions`) и
+`internal/training/operator112/aicaller/` (state/classify/prompt/
+replier), fallback на нейтральную реплику при исчерпании попыток в
+`callerReplyHandler`, новые поля `config.Worker`
+(`CallerReplier`/`CallerLLMURL`/`CallerLLMModel`/генерационные
+параметры), `compose.yaml`.

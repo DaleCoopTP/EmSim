@@ -72,43 +72,61 @@ func (p preparedCaller) Turn(req CallerRequest) (CallerTurn, bool) {
 }
 
 // CallerReplyRequest is one pending free-text caller-chat turn's input
-// (112-5a/ADR-024) — what a CallerReplier answers. Facts and Transcript
-// come from training.CallerReplyContext (the worker's own read, taken
-// without any lock before calling Reply); Turn identifies which pending
-// IntakeCallerTurn this reply is for, so ApplyCallerReply can no-op a
-// reply for a turn that is no longer pending by the time it is applied.
-// Unlike CallerRequest/CallerTurn above, there is no AskedQuestionIDs or
-// QuestionID — a free-text turn has no scripted question to select.
+// (112-5a/ADR-024, 112-5b/ADR-025) — what a CallerReplier answers. Facts,
+// Caller and Transcript come from training.CallerReplyContext (the
+// worker's own read, taken without any lock before calling Reply); Turn
+// identifies which pending IntakeCallerTurn this reply is for, so
+// ApplyCallerReply can no-op a reply for a turn that is no longer
+// pending by the time it is applied. Unlike CallerRequest/CallerTurn
+// above, there is no AskedQuestionIDs or QuestionID — a free-text turn
+// has no scripted question to select.
+//
+// Caller is nil for a scenario written before 112-5b or one that omits
+// the profile on purpose — a CallerReplier must fall back to
+// StubCallerReplier's behavior in that case (slice-112-5b-plan.md's
+// decision 7), never invent a persona.
 type CallerReplyRequest struct {
 	Facts      []content.Intake112Fact
+	Caller     *content.Intake112CallerProfile
 	Transcript []training.IntakeLine
 	Turn       int
 }
 
-// CallerReply is a CallerReplier's own result — just the applicant's
-// reply text. It carries no reveals/reasons the way CallerTurn's
-// scripted Answer does, since a free-text turn has no fixed fact list
-// to track: 112-6's LLM-based assessment, not this port, will be
-// responsible for judging what a free-text conversation actually
-// established.
+// CallerReply is a CallerReplier's own result. Adapter/Source/Generation
+// carry the implementation's own identity and provenance
+// (training.IntakeCallerTurn's own fields of the same names — see
+// training.CallerReplyOutcome, which the worker builds from this struct);
+// unlike CallerTurn's scripted Answer, this is not a closed-book field
+// list, so Reveals is computed by the CallerReplier itself (via
+// disclosure_patterns, 112-5b) rather than by the caller of Reply.
+// 112-6's LLM-based assessment is still responsible for judging what a
+// free-text conversation actually established — Reveals only drives
+// which facts training/operator112 considers "the applicant has said
+// this", not scoring.
 type CallerReply struct {
-	Text string
+	Text    string
+	Adapter string
+	Source  string
+	Reveals []string
+	// Generation is set only when Source is "model" or "fallback" — an
+	// opening/scripted/stub reply never calls a model
+	// (training.IntakeCallerTurn's own doc comment).
+	Generation *training.IntakeCallerGeneration
 }
 
-// CallerReplier answers one free-text caller-chat turn (112-5a/ADR-024).
-// Reply is called entirely outside any command transaction, from a
-// worker's caller.reply task handler (ADR-003/ADR-024) — an
-// implementation may take real wall-clock time (StubCallerReplier
-// deliberately does, so 112-5a exercises the exact asynchronous
-// protocol 112-5b's model adapter will use) and must honor ctx
+// CallerReplier answers one free-text caller-chat turn (112-5a/ADR-024,
+// 112-5b/ADR-025). Reply is called entirely outside any command
+// transaction, from a worker's caller.reply task handler (ADR-003/
+// ADR-024) — an implementation may take real wall-clock time
+// (StubCallerReplier deliberately does, so 112-5a exercises the exact
+// asynchronous protocol 112-5b's model adapter uses) and must honor ctx
 // cancellation (the handler's own lease-bound timeout) rather than
-// touching PostgreSQL or blocking indefinitely.
+// touching PostgreSQL or blocking indefinitely. Unlike 112-5a, the
+// implementation itself now names each reply's own adapter/source
+// through CallerReply rather than a fixed Adapter() method — a single
+// aicaller.Replier can answer some turns as "model" and others (no
+// caller profile in the scenario) as "stub", both from the same Reply
+// call (slice-112-5b-plan.md's decision 7).
 type CallerReplier interface {
-	// Adapter names this implementation for IntakeCallerTurn.Adapter —
-	// "stub/v1" for StubCallerReplier; 112-5b's model adapter names
-	// itself and its model version, so the instructor's review can tell
-	// a stub-generated reply from a model's without a separate
-	// server-side setting (ADR-024).
-	Adapter() string
 	Reply(ctx context.Context, req CallerReplyRequest) (CallerReply, error)
 }

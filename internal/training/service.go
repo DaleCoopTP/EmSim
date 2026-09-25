@@ -783,34 +783,50 @@ func (s *Service) CallerReplyContext(ctx context.Context, itemID uuid.UUID) (Cal
 	return result, err
 }
 
+// CallerReplyOutcome is a CallerReplier's result, translated into what
+// ApplyCallerReply needs to write (112-5b/ADR-025). operator112 imports
+// training (see caller.go), not the reverse, so operator112.CallerReply
+// is converted to this shape by the worker's callerReplyHandler
+// (cmd/emsim/worker_composition.go), the same boundary
+// CallerReplyContext already crosses the other way.
+type CallerReplyOutcome struct {
+	Text       string
+	Adapter    string
+	Source     string
+	Reveals    []string
+	Generation *IntakeCallerGeneration
+}
+
 // ApplyCallerReply resolves one free-text caller-chat turn (112-5a/
-// ADR-024): CallerTurnPending -> CallerTurnAnswered, appending the
-// applicant's reply to the transcript. It is a no-op — no error, no
-// write beyond the transaction the caller already opened — when the
-// turn can no longer be answered: already resolved (by a previous
-// attempt, or by hold/end/mark_call_dropped's own cancellation), the
-// call is no longer connected, the item is past stop's barrier, or the
-// lesson is no longer running. text/adapter are the CallerReplier's own
-// result, computed by the caller entirely outside this transaction —
-// this method's only job is the short, lock-ordered write ADR-024
-// specifies (lessons FOR SHARE -> items FOR UPDATE), matching
-// lockForCommand's own order for an ordinary command. Unlike an
+// ADR-024, 112-5b/ADR-025): CallerTurnPending -> CallerTurnAnswered,
+// appending the applicant's reply to the transcript. It is a no-op — no
+// error, no write beyond the transaction the caller already opened —
+// when the turn can no longer be answered: already resolved (by a
+// previous attempt, or by hold/end/mark_call_dropped's own
+// cancellation), the call is no longer connected, the item is past
+// stop's barrier, or the lesson is no longer running. outcome is the
+// CallerReplier's own result, computed by the caller entirely outside
+// this transaction — this method's only job is the short, lock-ordered
+// write ADR-024 specifies (lessons FOR SHARE -> items FOR UPDATE),
+// matching lockForCommand's own order for an ordinary command. Unlike an
 // ordinary command's ApplyItemDecision call, log_seq/seq are written
 // back unchanged: the applicant's reply is not the trainee's own
 // effect (ADR-024 — the same principle item_events already applies to
 // a scenario event's delivery).
-func (s *Service) ApplyCallerReply(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, turn int, text, adapter string, now time.Time) error {
+func (s *Service) ApplyCallerReply(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, turn int, outcome CallerReplyOutcome, now time.Time) error {
 	item, state, idx, ok, err := s.lockPendingCallerTurn(ctx, tx, itemID, turn)
 	if err != nil || !ok {
 		return err
 	}
 	state.Transcript = append(make([]IntakeLine, 0, len(item.IntakeState.Transcript)), item.IntakeState.Transcript...)
 	state.Transcript = append(state.Transcript, IntakeLine{
-		ID: uuid.New().String(), Speaker: "caller", CallID: itemID.String(), Text: text, ServerAt: now,
+		ID: uuid.New().String(), Speaker: "caller", CallID: itemID.String(), Text: outcome.Text, Reveals: outcome.Reveals, ServerAt: now,
 	})
 	resolvedAt := now
 	state.CallerTurns[idx].Status = CallerTurnAnswered
-	state.CallerTurns[idx].Adapter = adapter
+	state.CallerTurns[idx].Adapter = outcome.Adapter
+	state.CallerTurns[idx].Source = outcome.Source
+	state.CallerTurns[idx].Generation = outcome.Generation
 	state.CallerTurns[idx].ResolvedAt = &resolvedAt
 	return s.writeCallerTurnState(ctx, tx, item, state)
 }

@@ -3,6 +3,8 @@ package operator112
 import (
 	"context"
 	"time"
+
+	"emsim/internal/training"
 )
 
 // StubCallerReplierAdapter is what StubCallerReplier reports as its own
@@ -41,8 +43,6 @@ type StubCallerReplier struct {
 	Delay time.Duration
 }
 
-func (StubCallerReplier) Adapter() string { return StubCallerReplierAdapter }
-
 func (r StubCallerReplier) Reply(ctx context.Context, req CallerReplyRequest) (CallerReply, error) {
 	if r.Delay > 0 {
 		timer := time.NewTimer(r.Delay)
@@ -60,5 +60,5 @@ func (r StubCallerReplier) Reply(ctx context.Context, req CallerReplyRequest) (C
 	if index >= len(stubCallerPhrases) {
 		index = len(stubCallerPhrases) - 1
 	}
-	return CallerReply{Text: stubCallerPhrases[index]}, nil
+	return CallerReply{Text: stubCallerPhrases[index], Adapter: StubCallerReplierAdapter, Source: training.CallerTurnSourceStub}, nil
 }

@@ -71,6 +71,12 @@
       "caller_turns": {"type": "array", "items": {"type": "object", "required": ["turn", "status", "requested_at"], "properties": {
         "turn": {"type": "integer", "minimum": 1}, "operator_line_id": {"type": "string"},
         "status": {"enum": ["pending", "answered", "cancelled", "failed"]}, "adapter": {"type": "string"},
+        "source": {"enum": ["opening", "scripted", "model", "fallback", "stub"], "description": "112-5b/ADR-025: set only for status=answered. opening/scripted/stub never call a model; model/fallback do and carry generation."},
+        "generation": {"type": "object", "required": ["model", "prompt_version"], "description": "112-5b/ADR-025: set only for source=model or source=fallback.", "properties": {
+          "model": {"type": "string"}, "prompt_version": {"type": "string"},
+          "temperature": {"type": "number"}, "top_p": {"type": "number"},
+          "repeat_penalty": {"type": "number"}, "max_tokens": {"type": "integer"}
+        }},
         "requested_at": {"type": "string", "format": "date-time"}, "resolved_at": {"type": "string", "format": "date-time"},
         "reason": {"type": "string"}
       }}},

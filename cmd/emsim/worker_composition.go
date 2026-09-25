@@ -192,7 +192,7 @@ func callerReplyHandler(pool *pgxpool.Pool, store *tasks.Store, trainingService 
 		callCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		reply, err := replier.Reply(callCtx, operator112.CallerReplyRequest{
-			Facts: replyCtx.Dialogue.Facts, Transcript: replyCtx.Transcript, Turn: payload.Turn,
+			Facts: replyCtx.Dialogue.Facts, Caller: replyCtx.Dialogue.Caller, Transcript: replyCtx.Transcript, Turn: payload.Turn,
 		})
 		if err != nil {
 			failure, ferr := tasks.NewHandlerFailure(tasks.Retryable, "caller_reply_unavailable")
@@ -206,7 +206,11 @@ func callerReplyHandler(pool *pgxpool.Pool, store *tasks.Store, trainingService 
 			return errors.New("caller.reply transaction failed")
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
-		if err := trainingService.ApplyCallerReply(ctx, tx, payload.ItemID, payload.Turn, reply.Text, replier.Adapter(), time.Now().UTC()); err != nil {
+		outcome := training.CallerReplyOutcome{
+			Text: reply.Text, Adapter: reply.Adapter, Source: reply.Source,
+			Reveals: reply.Reveals, Generation: reply.Generation,
+		}
+		if err := trainingService.ApplyCallerReply(ctx, tx, payload.ItemID, payload.Turn, outcome, time.Now().UTC()); err != nil {
 			return err
 		}
 		if _, err := store.Terminal(ctx, tx, tasks.TerminalRequest{

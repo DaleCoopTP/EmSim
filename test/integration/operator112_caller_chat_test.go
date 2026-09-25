@@ -309,7 +309,7 @@ func TestCallerChatAsyncReplySequence(t *testing.T) {
 			t.Fatalf("turn %d: caller_turns = %+v", turn, item.IntakeState.CallerTurns)
 		}
 		got := item.IntakeState.CallerTurns[turn-1]
-		if got.Status != training.CallerTurnAnswered || got.Adapter != "stub/v1" || got.ResolvedAt == nil {
+		if got.Status != training.CallerTurnAnswered || got.Adapter != "stub/v1" || got.Source != training.CallerTurnSourceStub || got.ResolvedAt == nil {
 			t.Fatalf("turn %d: %+v", turn, got)
 		}
 		wantPhrase := phrases[len(phrases)-1]
@@ -369,7 +369,8 @@ func TestCallerChatHoldCancelsPendingTurnAndLateReplyIsANoOp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.service.ApplyCallerReply(ctx, tx, fixture.itemID, 1, "поздний ответ", "stub/v1", time.Now().UTC()); err != nil {
+	outcome := training.CallerReplyOutcome{Text: "поздний ответ", Adapter: "stub/v1", Source: training.CallerTurnSourceStub}
+	if err := fixture.service.ApplyCallerReply(ctx, tx, fixture.itemID, 1, outcome, time.Now().UTC()); err != nil {
 		t.Fatalf("late ApplyCallerReply: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -1007,6 +1007,18 @@ components:
               operator_line_id: { type: string, description: ID реплики оператора в transcript, начавшей этот ход. }
               status: { type: string, enum: [pending, answered, cancelled, failed] }
               adapter: { type: string, description: 'Реализация CallerReplier, давшая ответ (например "stub/v1"). Заполнено только при status=answered.' }
+              source: { type: string, enum: [opening, scripted, model, fallback, stub], description: '112-5b/ADR-025: как получен ответ. opening/scripted/stub — без вызова модели; model/fallback — с генерацией, см. generation. Заполнено только при status=answered.' }
+              generation:
+                type: object
+                required: [model, prompt_version]
+                description: '112-5b/ADR-025: заполнено только при source=model или source=fallback.'
+                properties:
+                  model: { type: string }
+                  prompt_version: { type: string }
+                  temperature: { type: number }
+                  top_p: { type: number }
+                  repeat_penalty: { type: number }
+                  max_tokens: { type: integer }
               requested_at: { type: string, format: date-time }
               resolved_at: { type: string, format: date-time }
               reason: { type: string, description: Причина cancelled (held/ended/dropped) или короткая техническая причина failed. }

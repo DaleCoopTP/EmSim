@@ -192,9 +192,18 @@ type IntakeCallerTurn struct {
 	// "stub/v1") — set only once Status=answered, so the instructor's
 	// review can tell a stub-generated reply from a future model's
 	// without a separate server-side setting.
-	Adapter     string     `json:"adapter,omitempty"`
-	RequestedAt time.Time  `json:"requested_at"`
-	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
+	Adapter string `json:"adapter,omitempty"`
+	// Source (112-5b/ADR-025) is one of the CallerTurnSource* constants —
+	// set only once Status=answered. Generation is set only when Source
+	// is CallerTurnSourceModel or CallerTurnSourceFallback: opening/
+	// scripted/stub replies never call a model, so recording generation
+	// parameters for them would be meaningless. Both exist so a replayed
+	// evaluation (RFC-001 §6 — derived assessment inputs are sealed) can
+	// tell exactly how a reply was produced without re-deriving it.
+	Source      string                  `json:"source,omitempty"`
+	Generation  *IntakeCallerGeneration `json:"generation,omitempty"`
+	RequestedAt time.Time               `json:"requested_at"`
+	ResolvedAt  *time.Time              `json:"resolved_at,omitempty"`
 	// Reason is set for Status=cancelled ("held"/"ended"/"dropped"/
 	// "closed") or Status=failed (a short technical cause, never a raw
 	// error — RFC-001 §9 forbids operational detail leaking to a
@@ -209,6 +218,35 @@ const (
 	CallerTurnCancelled = "cancelled"
 	CallerTurnFailed    = "failed"
 )
+
+// IntakeCallerTurn.Source values (112-5b/ADR-025). Opening/Scripted/Stub
+// answer without a model call; Model/Fallback do, and are the only two
+// that carry a Generation. Which of these a turn gets is decided by the
+// CallerReplier implementation (internal/training/operator112), not by
+// this package.
+const (
+	CallerTurnSourceOpening  = "opening"
+	CallerTurnSourceScripted = "scripted"
+	CallerTurnSourceModel    = "model"
+	CallerTurnSourceFallback = "fallback"
+	CallerTurnSourceStub     = "stub"
+)
+
+// IntakeCallerGeneration records a model-produced (or fallback) caller
+// reply's own provenance — RFC-001 §6's "derived assessment inputs are
+// also sealed" extended to caller replies, not just assessment_inputs:
+// PromptVersion identifies the prompt layout (slice-112-5b-plan.md's
+// decision 4), the rest are the request's own generation parameters.
+// Regenerating the same turn is not expected to reproduce this exact
+// text — it documents what was asked for, not a cache key.
+type IntakeCallerGeneration struct {
+	Model         string  `json:"model"`
+	PromptVersion string  `json:"prompt_version"`
+	Temperature   float64 `json:"temperature,omitempty"`
+	TopP          float64 `json:"top_p,omitempty"`
+	RepeatPenalty float64 `json:"repeat_penalty,omitempty"`
+	MaxTokens     int     `json:"max_tokens,omitempty"`
+}
 
 type IntakeState struct {
 	Mode string `json:"mode,omitempty"`
