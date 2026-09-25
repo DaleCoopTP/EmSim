@@ -2295,3 +2295,61 @@ Next: коммит c5 — три новых сида в `seed/scenarios/` с п�
 заявителя, перенесённые из YAML пользователя
 (`claude_caller_mvp_20260925.zip`), с заглушкой-эталоном там, где
 каталог типов происшествий не покрывает сценарий; `seed/README.md`.
+
+## 2026-09-25 — Срез 112-5b, коммит 5: сценарии для ручной проверки ИИ-заявителя
+
+Три новых `full_case`/`caller_mode=free_text` сценария в `seed/scenarios/`
+с заданным `dialogue.caller` (профиль появился в коммите 2, но
+`pilot-112-free-text-chat-01` его не использует — эти три первые
+сценарии в проекте, где под `CALLER_REPLIER=llm` отвечает
+`aicaller.Replier`, а не заглушка). Персонажи, факты, фразы и
+регэкспы перенесены из локального MVP пользователя
+(`claude_caller_mvp_20260925.zip`, `handoff/README.md` 2026-09-25) —
+`toyota_fire_driver_burns_01`/`car_in_water_01`/
+`argument_mobile_shop_01.yaml`; `leak_keywords` (тестовое поле MVP) не
+переносится:
+
+- `pilot-112-ai-toyota-fire-01.json` — свидетель возгорания автомобиля
+  с ожогами у водителя; 12 фактов (5 `initial`, 7 `on_question`, узлы
+  без `card_path` для номера машины и имени пострадавшего водителя —
+  нарративные факты без поля карточки, решение c2). `expected_types:
+  ["road_traffic_fire"]`, `expected_services: ["pilot_fire_101"]` — не
+  заглушка, реальное соответствие ситуации.
+- `pilot-112-ai-car-in-water-01.json` — падение автомобиля в воду;
+  факт `ambulance` с `answer_variants: [{text: "..."}]` без `when`
+  (безусловный вариант, ответ «не знаю, есть ли люди в машине» без
+  вызова модели — проверка решения 3 плана). `address`-факт получил
+  `ask_exclude_patterns: ["ориентировк","местоположени"]`, отдельный
+  `landmark`-факт — их и проверяет решение 5 плана (адрес не
+  перехватывает вопрос про ориентир). `expected_types`/
+  `expected_services` — заглушка (тип «падение в воду» не входит в
+  каталог), `case_description` явно это называет.
+- `pilot-112-ai-mobile-shop-01.json` — ссора с продавцом салона связи;
+  намеренно без отдельного факта-ориентира (в отличие от двух других) —
+  прямая проверка риска выдумывания места, зафиксированного в
+  `slice-112-5b-plan.md`'s «Риски». `expected_types`/`expected_services`
+  — тоже заглушка, `applicant_status="participant"` (заявитель сам
+  участник конфликта, а не свидетель/пострадавший).
+- `pilot-112-free-text-chat-01.json` не менялся — 112-5a e2e и `stub/v1`
+  без `dialogue.caller` остаются прежними.
+- `seed/README.md` — описание всех трёх файлов, явное указание, у каких
+  двух эталон-заглушка и почему.
+
+Validation: `go test ./internal/content/... -run TestSeedFilesAreValid`
+(схемная и семантическая валидация всех файлов `seed/scenarios/`,
+включая три новых — зелёный), `make verify` (зелёный), `python3
+design-docs/contracts/check.py` (зелёный). Ручной прогон:
+`docker compose up --build` (после `down -v` для чистого тома) —
+контейнер `seed` завершился с кодом 0, лог `scenarios: new_scenarios=15
+new_versions=16 unchanged=0`; прямой запрос к БД подтвердил все три
+новых `source_key` со статусом `approved`. Стек остановлен и очищен
+(`docker compose down -v`) после проверки. С реальной моделью
+(`CALLER_REPLIER=llm` + Ollama) кейсы не прогонялись в рамках этого
+коммита — это ручная проверка пользователя на платформе (вне объёма
+автоматических коммитов c1–c6, см. `slice-112-5b-plan.md`).
+
+Next: коммит c6 — UI разбора преподавателя (`ItemReview.tsx`: источник
+хода и модель/версия промпта из `generation`), `README.md` (запуск с
+Ollama на Mac), `slice-planning-112.md`/`CLAUDE.md`/`LOG.MD` — этап 1
+среза 112-5b объявляется реализованным (этап 2 — W0/`llama-server` —
+остаётся планом).

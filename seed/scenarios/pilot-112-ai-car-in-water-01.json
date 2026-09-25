@@ -1,0 +1,80 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "pilot-112-ai-car-in-water-01",
+  "version": 1,
+  "title": "ИИ-заявитель: автомобиль упал в воду",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "exercise_type": "operator112_intake",
+    "difficulty": 4,
+    "intake112": {
+      "mode": "full_case",
+      "caller_mode": "free_text",
+      "call": {"aon": "+79161313133", "local_time": "02:03", "time_zone": "Europe/Moscow"},
+      "dialogue": {
+        "caller": {
+          "persona": "Ты — очевидец падения автомобиля в воду. Сильно встревожен и говоришь короткими фразами; детали сообщаешь только если оператор уточняет.",
+          "opening": {
+            "id": "opening", "text": "Автомобиль упал в воду! Пожалуйста, пришлите помощь!",
+            "reveals": ["complaint", "applicant_status"]
+          }
+        },
+        "facts": [
+          {
+            "id": "complaint", "label": "Жалобы", "card_path": "/complaint", "knowledge": "initial", "value": "автомобиль упал в воду",
+            "statement": "Автомобиль упал в воду.",
+            "disclosure_patterns": ["упал.*вод", "в воду", "падени.*вод"]
+          },
+          {
+            "id": "applicant_status", "label": "Статус заявителя", "card_path": "/applicant_status", "knowledge": "initial", "value": "witness",
+            "statement": "Я свидетель, сам не пострадал.",
+            "disclosure_patterns": ["свидетел", "не пострадал"]
+          },
+          {
+            "id": "ambulance", "label": "Скорая и пассажиры", "knowledge": "on_question", "value": "неизвестно, есть ли люди в машине; скорую нужно направить обязательно",
+            "statement": "Не знаю, есть ли люди в машине, но скорую нужно направить обязательно.",
+            "ask_patterns": ["скор(ая|ую|ой)", "другие пострадавш", "есть ли люди в (машине|автомобиле)"],
+            "answer_variants": [{"text": "Не знаю, есть ли люди в машине. Скорую направьте обязательно."}],
+            "disclosure_patterns": ["скорую.*обязательно", "не знаю.*люди"]
+          },
+          {
+            "id": "address", "label": "Адрес", "card_path": "/address/descriptive", "knowledge": "on_question", "value": "Москва, набережная Яузы, напротив Большого Нижегородского пруда",
+            "statement": "Адрес: Москва, набережная Яузы, напротив Большого Нижегородского пруда.",
+            "ask_patterns": ["адрес", "где (вы |ты )?(находитесь|находишься|сейчас|стоите|находится)", "какая улица", "назовите.*(дом|улицу)"],
+            "ask_exclude_patterns": ["ориентировк", "местоположени"],
+            "disclosure_patterns": ["яуз", "нижегородск", "адрес"]
+          },
+          {
+            "id": "landmark", "label": "Ориентир", "card_path": "/address/landmark", "knowledge": "on_question", "value": "набережная со стороны области, у пруда",
+            "statement": "Мы на набережной со стороны области.",
+            "ask_patterns": ["где именно", "в каком именно месте", "ориентир", "что рядом", "как вас найти"],
+            "disclosure_patterns": ["со стороны области", "пруд", "набережн"]
+          },
+          {
+            "id": "name", "label": "ФИО заявителя", "card_path": "/applicant_name", "knowledge": "on_question", "value": "Иванова Елена Сергеевна",
+            "statement": "Меня зовут Иванова Елена Сергеевна.",
+            "ask_patterns": ["как вас зовут", "представьтесь", "назовите.*(ваше )?имя"],
+            "disclosure_patterns": ["иванова"]
+          },
+          {
+            "id": "phone", "label": "Телефон заявителя", "card_path": "/provided_phone", "knowledge": "on_question", "value": "+79168963254",
+            "statement": "Мой номер телефона: +7 916 896-32-54.",
+            "ask_patterns": ["номер телефона", "ваш телефон", "номер для связи", "перезвонить"]
+          },
+          {
+            "id": "age", "label": "Возраст заявителя", "card_path": "/age", "knowledge": "on_question", "value": "36",
+            "statement": "Мне 36 лет.",
+            "ask_patterns": ["сколько вам лет", "ваш возраст", "назовите.*возраст"],
+            "disclosure_patterns": ["36 лет", "тридцать шесть"]
+          }
+        ]
+      },
+      "reference": {
+        "expected_types": ["road_traffic_fire"],
+        "case_description": "Падение автомобиля в воду не входит ни в один тип каталога 112 (нет ни взрыва газа, ни возгорания при ДТП). expected_types/expected_services — эталон-заглушка до 112-6, реальным основанием оценки не является. Кейс проверяет `answer_variants` (сценарный ответ «не знаю, есть ли люди в машине» без вызова модели) и общее поведение ИИ-адаптера на случае, для которого нет учебной службы.",
+        "expected_services": ["pilot_fire_101"]
+      }
+    }
+  }
+}

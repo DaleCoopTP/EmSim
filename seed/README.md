@@ -82,6 +82,38 @@
   112-5b). Учебной ценности содержанием разговора кейс не несёт —
   проверяется асинхронный протокол хода (задача `caller.reply`,
   отмена при удержании/завершении вызова, stop, таймаут).
+- `scenarios/pilot-112-ai-toyota-fire-01.json`,
+  `pilot-112-ai-car-in-water-01.json` и `pilot-112-ai-mobile-shop-01.json` —
+  срез 112-5b, этап 1 (`slice-112-5b-plan.md`, ADR-025): те же
+  `caller_mode="free_text"` окно чата, что у
+  `pilot-112-free-text-chat-01`, но с заданным `dialogue.caller`
+  (`persona`, `opening`) и расширенными фактами
+  (`statement`/`ask_patterns`/`ask_exclude_patterns`/`answer_variants`/
+  `disclosure_patterns`) — под `CALLER_REPLIER=llm` их отвечает
+  `aicaller.Replier`, а не заглушка. Персонажи, факты и фразы перенесены
+  из локального MVP пользователя (`caller_mvp_20260925.zip`:
+  `toyota_fire_driver_burns_01`/`car_in_water_01`/
+  `argument_mobile_shop_01.yaml`), без `leak_keywords` (тестовое поле
+  MVP, на продакшн-пути не используется).
+  - **toyota-fire** — свидетель возгорания автомобиля с пострадавшим
+    водителем; ложится на реальный тип `road_traffic_fire` и службу
+    `pilot_fire_101` — почти настоящий эталон, в отличие от двух
+    следующих кейсов.
+  - **car-in-water** — проверяет `answer_variants` без условия
+    (`when` не задан): на вопрос о скорой заявитель отвечает сценарной
+    фразой «не знаю, есть ли люди в машине» без вызова модели.
+  - **mobile-shop** — ссора с продавцом салона связи, у сценария
+    намеренно нет отдельного факта-ориентира: проверка того, что
+    ИИ-заявитель не выдумывает точное место, которого нет в фактах.
+
+  У **car-in-water** и **mobile-shop** ни один из трёх типов каталога
+  (`intake-catalog.json`: взрыв газа, ДТП с пламенем, их комбинация) не
+  описывает ситуацию сценария — `reference.expected_types`/
+  `expected_services` в обоих файлах эталон-заглушка (существующий код
+  службы ради прохождения схемной проверки), `case_description` явно
+  говорит об этом; реальным основанием разбора/оценки до 112-6 это поле
+  не является. `pilot-112-free-text-chat-01` не меняется (e2e 112-5a,
+  заглушка `stub/v1` без `dialogue.caller`).
 - `voice-assets/manifest.json` и два PCM WAV-файла — greeting/ack этого
   контакта (mono, 16-bit, 16 kHz). `import seed` после сценариев импортирует
   их идемпотентно в content-addressed `BLOB_ROOT`.
