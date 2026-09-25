@@ -12,7 +12,8 @@ type Item = components["schemas"]["Item"];
 type IntakeField = { state: string; value?: string };
 type IntakeCard = { number: string; aon: string; call_local_time: string; call_time_zone: string; applicant_name: IntakeField; applicant_status: IntakeField; age: IntakeField; address: Record<string, IntakeField>; incident_type: IntakeField; incident_types?: string[]; profiles?: Record<string, { definition_id: string; version: number; answers: Record<string, { state: string; value?: string; values?: string[] }> }>; complaint: IntakeField; victims_present: IntakeField; victims_count: IntakeField; provided_phone: IntakeField; on_site_phone?: IntakeField; channel?: IntakeField; foreign_language?: IntakeField; no_on_site?: IntakeField; no_access?: IntakeField };
 type IntakeReviewLine = { id?: string; speaker?: "caller" | "operator"; text: string; server_at: string; reveals?: string[]; topic_id?: string };
-type IntakeReviewCallerTurn = { turn: number; operator_line_id?: string; status: "pending" | "answered" | "cancelled" | "failed"; adapter?: string; requested_at: string; resolved_at?: string; reason?: string };
+type IntakeReviewGeneration = { model: string; prompt_version: string; temperature?: number; top_p?: number; repeat_penalty?: number; max_tokens?: number };
+type IntakeReviewCallerTurn = { turn: number; operator_line_id?: string; status: "pending" | "answered" | "cancelled" | "failed"; adapter?: string; source?: "opening" | "scripted" | "model" | "fallback" | "stub"; generation?: IntakeReviewGeneration; requested_at: string; resolved_at?: string; reason?: string };
 type IntakeReviewAction = { type: string; accepted: boolean; server_at: string; log_seq: number; payload?: { draft?: IntakeCard; type_id?: string; services?: string[]; reason?: string }; effect?: { suggested?: { service_code: string; reasons: string[] }[] } };
 type DialogueFact = { id: string; label: string; card_path: string; knowledge: "initial" | "on_question" | "unknown"; value?: string };
 type ReviewCatalog = { version: number; types: { id: string; name: string }[]; profiles: { id: string; name: string; fields: { id: string; label: string; kind: string; shared?: string }[] }[] };
@@ -139,8 +140,17 @@ function IntakeProfileReviewPanel({ item, evidence }: { item: IntakeReviewItem; 
   };
   const answerText = (answer: { state: string; value?: string; values?: string[] } | undefined) => answer?.state === "known" ? answer.values?.join(", ") ?? answer.value ?? "" : answer?.state === "unknown" ? "неизвестно" : "не заполнено";
   const callerTurns = state?.caller_turns ?? [];
+  // 112-5b/ADR-025: source/generation are absent from evidence sealed
+  // before this slice (112-5a), so both fall back to showing just the
+  // adapter, exactly as this label read before.
+  const sourceLabels: Record<string, string> = { opening: "вступление", scripted: "фиксированный ответ", model: "модель", fallback: "нейтральная реплика — модель недоступна", stub: "заглушка" };
   const turnStatusText = (turn: IntakeReviewCallerTurn) => {
-    if (turn.status === "answered") return `Отвечено${turn.adapter ? ` (${turn.adapter})` : ""}`;
+    if (turn.status === "answered") {
+      const source = turn.source ? sourceLabels[turn.source] ?? turn.source : undefined;
+      const generation = turn.generation ? `${turn.generation.model} · ${turn.generation.prompt_version}` : undefined;
+      const details = [source, generation].filter(Boolean).join(", ") || turn.adapter;
+      return `Отвечено${details ? ` (${details})` : ""}`;
+    }
     if (turn.status === "failed") return "Нет ответа — техническая причина";
     if (turn.status === "cancelled") return `Отменён: ${turn.reason === "held" ? "удержание" : turn.reason === "ended" ? "завершение" : turn.reason === "dropped" ? "срыв звонка" : turn.reason ?? "—"}`;
     return "Без ответа на момент остановки";

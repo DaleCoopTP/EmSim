@@ -503,9 +503,12 @@ test("operator 112: free-text caller chat — async stub replies, draft survives
 
   const finished = await (await ok(await page.request.get(`/api/v1/items/${itemID}`))).json();
   expect(finished.notification.services.map((entry: { service_code: string }) => entry.service_code).sort()).toEqual(["pilot_fire_101", "pilot_gas_104"]);
-  const turns = finished.intake_state.caller_turns as Array<{ status: string; adapter?: string; reason?: string }>;
+  const turns = finished.intake_state.caller_turns as Array<{ status: string; adapter?: string; source?: string; reason?: string }>;
   expect(turns.filter((turn) => turn.status === "answered")).toHaveLength(7);
   expect(turns.every((turn) => turn.status !== "answered" || turn.adapter === "stub/v1")).toBeTruthy();
+  // 112-5b/ADR-025: the stub always answers with source="stub", never
+  // "model"/"fallback" — those only ever come from aicaller.Replier.
+  expect(turns.every((turn) => turn.status !== "answered" || turn.source === "stub")).toBeTruthy();
   expect(turns.filter((turn) => turn.status === "cancelled" && turn.reason === "held")).toHaveLength(1);
   await page.getByRole("button", { name: "Выйти" }).click();
 
@@ -518,7 +521,7 @@ test("operator 112: free-text caller chat — async stub replies, draft survives
   await expect(page.getByText(/Оператор: Что случилось\? Где вы находитесь\?/)).toBeVisible();
   await expect(page.getByText(/Заявитель: Я упал\.\.\. Глаз очень болит/)).toBeVisible();
   await expect(page.getByRole("heading", { name: "Ходы свободного диалога" })).toBeVisible();
-  await expect(page.getByText(/Отвечено \(stub\/v1\)/).first()).toBeVisible();
+  await expect(page.getByText(/Отвечено \(заглушка\)/).first()).toBeVisible();
   await expect(page.getByText(/Отменён: удержание/)).toBeVisible();
   await expect(page.getByText(/Сообщение заявителю/).first()).toBeVisible();
 });
