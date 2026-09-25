@@ -450,6 +450,14 @@ func (c storeCatalog) ScenarioVersion(key string, version int) (ScenarioVersionR
 	return ref, true
 }
 
+func (c storeCatalog) IntakeCatalog() (IntakeCatalog, bool) {
+	cat, err := c.store.LatestIntakeCatalog(c.ctx, c.tx)
+	if err != nil {
+		return IntakeCatalog{}, false
+	}
+	return cat, true
+}
+
 // batchCatalog overlays versions decoded from the import batch on the
 // transactional database catalogue. It makes a stable spawn reference
 // independent of source-file ordering while retaining database values for
@@ -467,6 +475,10 @@ func (c batchCatalog) Service(code string) (ServiceRecord, bool) {
 
 func (c batchCatalog) ClassifierType(code string) (string, bool) {
 	return c.base.ClassifierType(code)
+}
+
+func (c batchCatalog) IntakeCatalog() (IntakeCatalog, bool) {
+	return c.base.IntakeCatalog()
 }
 
 func (c batchCatalog) ScenarioVersion(key string, version int) (ScenarioVersionReference, bool) {

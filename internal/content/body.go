@@ -149,28 +149,100 @@ type Intake112Reference struct {
 	RecipientService string                 `json:"recipient_service"`
 	ExpectedTypes    []string               `json:"expected_types,omitempty"`
 	CaseDescription  string                 `json:"case_description,omitempty"`
-	// ExpectedServices is full_case's own closed reference — the
-	// service codes a correct notify_services call should include —
-	// used for manual review only (ADR-023, slice 112-4); it is not
-	// yet consulted by any automatic rule.
+	// ExpectedServices is the closed reference list of service codes a
+	// correct notify_services call should include: used for manual
+	// review since ADR-023 (slice 112-4), and by 112-6/ADR-026's
+	// P_SERVICES penalty. Allowed for card_only and full_case.
 	ExpectedServices []string `json:"expected_services,omitempty"`
+	// Alternatives (112-6/ADR-026) maps a reference field's own path —
+	// the same spelling as ExpectedCard's own field, e.g.
+	// "expected_card.address.street" or "expected_card.applicant_name"
+	// — to additional values internal/content/normalize also accepts as
+	// correct. A path with no entry here has no alternative beyond
+	// ExpectedCard's own value (still matched via normalize.TokenSetEqual,
+	// so word order and known abbreviations never need an alternative).
+	Alternatives map[string][]string `json:"alternatives,omitempty"`
+	// ExpectedProfiles (112-6/ADR-026) maps a profile card id
+	// (intake_state.catalog's IntakeProfile.ID, e.g. "104") to that
+	// card's own field id -> expected answer. A card in ExpectedTypes
+	// with no entry here has no reference yet (ADR-026's "эталон
+	// отсутствует" rule) — PROFILE_CARDS scores its share as 0, not as
+	// not_applicable.
+	ExpectedProfiles map[string]map[string]Intake112ExpectedProfileValue `json:"expected_profiles,omitempty"`
+	// Scoring (112-6/ADR-026) is operator112/rubric-v2's own reference.
+	// scoring override — same Scoring shape and Merge semantics DDS
+	// already uses (ADR-013), validated against rubric.operator112.json's
+	// criterion ids rather than rubric.default.json's.
+	Scoring *Scoring `json:"scoring,omitempty"`
 }
 
 type Intake112ExpectedCard struct {
-	ApplicantStatus string           `json:"applicant_status"`
-	Age             int              `json:"age"`
-	Address         Intake112Address `json:"address"`
-	IncidentType    string           `json:"incident_type"`
-	Complaint       string           `json:"complaint"`
-	VictimsCount    int              `json:"victims_count"`
+	ApplicantStatus string `json:"applicant_status"`
+	// ApplicantName (112-6/ADR-026) is compared only when the fact was
+	// actually disclosed in the conversation (P_APPLICANT_NAME,
+	// interpretation §10.3) — an applicant who never gave a name is not
+	// penalized for the trainee not knowing it.
+	ApplicantName string           `json:"applicant_name,omitempty"`
+	Age           int              `json:"age"`
+	Address       Intake112Address `json:"address"`
+	IncidentType  string           `json:"incident_type"`
+	Complaint     string           `json:"complaint"`
+	VictimsCount  int              `json:"victims_count"`
 }
 
+// Intake112Address is the operator's own IntakeAddress
+// (internal/training.IntakeAddress) minus Object/Landmark/Code/
+// Descriptive — 112-6/ADR-026 excludes Object and Landmark from scoring
+// by the user's own decision ("объект и ориентир не оцениваем"); Code and
+// Descriptive have no fixed reference shape to compare against and stay
+// unscored for the same reason. Every field is optional: an absent one is
+// simply not part of this scenario's reference (ADR-026's "эталон
+// отсутствует" rule applies per-field within ADDRESS_FIELDS).
 type Intake112Address struct {
-	City     string `json:"city"`
-	Street   string `json:"street"`
-	House    string `json:"house"`
-	Building string `json:"building"`
-	Landmark string `json:"landmark"`
+	Country   string `json:"country,omitempty"`
+	Region    string `json:"region,omitempty"`
+	Okrug     string `json:"okrug,omitempty"`
+	District  string `json:"district,omitempty"`
+	City      string `json:"city,omitempty"`
+	Street    string `json:"street,omitempty"`
+	House     string `json:"house,omitempty"`
+	Building  string `json:"building,omitempty"`
+	Structure string `json:"structure,omitempty"`
+	Flat      string `json:"flat,omitempty"`
+	Entrance  string `json:"entrance,omitempty"`
+	Floor     string `json:"floor,omitempty"`
+	Landmark  string `json:"landmark,omitempty"`
+}
+
+// Intake112ExpectedProfileValue is one profile field's expected answer —
+// a single string for the catalog's "single"/"text" field kinds, or a set
+// of strings for "multiple" (scenario.schema.json's intake112.reference.
+// expected_profiles: string | string[]). Exactly one of Value/Values is
+// set after DecodeFile — see UnmarshalJSON.
+type Intake112ExpectedProfileValue struct {
+	Value  string
+	Values []string
+}
+
+func (v *Intake112ExpectedProfileValue) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		v.Value, v.Values = s, nil
+		return nil
+	}
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err != nil {
+		return err
+	}
+	v.Value, v.Values = "", arr
+	return nil
+}
+
+func (v Intake112ExpectedProfileValue) MarshalJSON() ([]byte, error) {
+	if v.Values != nil {
+		return json.Marshal(v.Values)
+	}
+	return json.Marshal(v.Value)
 }
 
 // Card is scenario.schema.json's $defs.card — the incoming card as the

@@ -3,18 +3,29 @@ package content
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
+
+	"emsim/internal/content/normalize"
 )
 
 // Catalog is the domain-facing reference-data lookup Validate needs for
-// services, classifier types, and referenced scenario versions. It exposes
-// plain values rather than contexts, transactions, or SQL; the production
-// adapter resolves those values through the import transaction while unit
-// tests use maps. Validate therefore remains independent of persistence.
+// services, classifier types, referenced scenario versions, and (112-6/
+// ADR-026) the intake profile-card catalog. It exposes plain values
+// rather than contexts, transactions, or SQL; the production adapter
+// resolves those values through the import transaction while unit tests
+// use maps. Validate therefore remains independent of persistence.
 type Catalog interface {
 	Service(code string) (ServiceRecord, bool)
 	ClassifierType(code string) (name string, known bool)
 	ScenarioVersion(key string, version int) (ScenarioVersionReference, bool)
+	// IntakeCatalog returns the latest imported operator-112 profile
+	// catalog (seed/intake-catalog.json), or false if none has been
+	// imported yet. A scenario referencing expected_profiles before any
+	// catalog import fails validation the same way an unknown service
+	// code does (ErrValidation), rather than silently accepting an
+	// unverifiable reference.
+	IntakeCatalog() (IntakeCatalog, bool)
 }
 
 // Validate checks a decoded Body against every semantic rule
@@ -79,11 +90,10 @@ func validateIntake112(intake *Intake112, catalog Catalog) error {
 	if intake.Mode == "card_only" {
 		if intake.CallerMode != "" || intake.Dialogue != nil || intake.Call != nil || len(intake.RecipientServices) != 0 ||
 			len(intake.Reference.ExpectedTypes) == 0 || intake.Reference.CaseDescription == "" ||
-			len(intake.Reference.ExpectedServices) != 0 ||
-			intake.Reference.RecipientService != "" || intake.Reference.ExpectedCard != nil {
+			intake.Reference.RecipientService != "" {
 			return invalid("intake112", "invalid_card_only_case")
 		}
-		return nil
+		return validateIntake112Reference(intake, catalog)
 	}
 	if intake.Mode == "full_case" {
 		return validateIntake112FullCase(intake, catalog)
@@ -135,11 +145,29 @@ func validateIntake112FullCase(intake *Intake112, catalog Catalog) error {
 	}
 	if intake.Call == nil || intake.Dialogue == nil || len(intake.Call.Script) > 0 ||
 		len(intake.RecipientServices) != 0 ||
-		intake.Reference.ExpectedCard != nil || intake.Reference.RecipientService != "" ||
+		intake.Reference.RecipientService != "" ||
 		len(intake.Reference.ExpectedTypes) == 0 || intake.Reference.CaseDescription == "" ||
 		len(intake.Reference.ExpectedServices) == 0 {
 		return invalid("intake112", "invalid_full_case")
 	}
+	if err := validateIntake112Reference(intake, catalog); err != nil {
+		return err
+	}
+	if intake.CallerMode == CallerModeFreeText {
+		return validateIntake112FreeTextDialogue(*intake.Dialogue)
+	}
+	return validateIntake112Dialogue(*intake.Dialogue)
+}
+
+// validateIntake112Reference is 112-6/ADR-026's own semantic validation
+// over intake112.reference, shared by every mode: it does not care
+// whether ExpectedCard/ExpectedServices/ExpectedProfiles/Alternatives/
+// Scoring are present at all (every one of them is optional — ADR-026's
+// "эталон отсутствует" rule is exactly for the case where they are not),
+// only that whatever IS present is internally consistent and resolvable
+// against the catalog/rubric/dialogue. incoming_call's own required
+// expected_card is checked by its own caller before this runs.
+func validateIntake112Reference(intake *Intake112, catalog Catalog) error {
 	seen := make(map[string]bool, len(intake.Reference.ExpectedServices))
 	for i, code := range intake.Reference.ExpectedServices {
 		field := fmt.Sprintf("intake112.reference.expected_services[%d]", i)
@@ -155,10 +183,180 @@ func validateIntake112FullCase(intake *Intake112, catalog Catalog) error {
 			return invalid(field, "inactive")
 		}
 	}
-	if intake.CallerMode == CallerModeFreeText {
-		return validateIntake112FreeTextDialogue(*intake.Dialogue)
+	for path := range intake.Reference.Alternatives {
+		if !validExpectedCardFieldPath(path) {
+			return invalid("intake112.reference.alternatives", fmt.Sprintf("unknown_path:%s", path))
+		}
 	}
-	return validateIntake112Dialogue(*intake.Dialogue)
+	if len(intake.Reference.ExpectedProfiles) > 0 {
+		ic, ok := catalog.IntakeCatalog()
+		if !ok {
+			return invalid("intake112.reference.expected_profiles", "no_intake_catalog_imported")
+		}
+		profiles := make(map[string]IntakeProfile, len(ic.Profiles))
+		for _, p := range ic.Profiles {
+			profiles[p.ID] = p
+		}
+		for profileID, answers := range intake.Reference.ExpectedProfiles {
+			profile, ok := profiles[profileID]
+			if !ok {
+				return invalid("intake112.reference.expected_profiles", fmt.Sprintf("unknown_profile:%s", profileID))
+			}
+			fields := make(map[string]IntakeProfileField, len(profile.Fields))
+			for _, f := range profile.Fields {
+				fields[f.ID] = f
+			}
+			for fieldID, expected := range answers {
+				field, ok := fields[fieldID]
+				if !ok {
+					return invalid("intake112.reference.expected_profiles", fmt.Sprintf("unknown_field:%s.%s", profileID, fieldID))
+				}
+				values := expected.Values
+				if expected.Values == nil {
+					values = []string{expected.Value}
+				}
+				if field.Kind == "multiple" && expected.Values == nil {
+					return invalid("intake112.reference.expected_profiles", fmt.Sprintf("expected_array:%s.%s", profileID, fieldID))
+				}
+				if field.Kind != "multiple" && expected.Values != nil {
+					return invalid("intake112.reference.expected_profiles", fmt.Sprintf("expected_scalar:%s.%s", profileID, fieldID))
+				}
+				if field.Kind == "single" || field.Kind == "multiple" {
+					options := make(map[string]bool, len(field.Options))
+					for _, o := range field.Options {
+						options[o] = true
+					}
+					for _, v := range values {
+						if !options[v] {
+							return invalid("intake112.reference.expected_profiles", fmt.Sprintf("unknown_option:%s.%s=%s", profileID, fieldID, v))
+						}
+					}
+				}
+			}
+		}
+	}
+	if intake.Reference.Scoring != nil {
+		if err := validateScoringAgainst(intake.Reference.Scoring, operator112RubricCriterionIDs); err != nil {
+			return err
+		}
+	}
+	return validateIntake112ExpectedCardAgainstFacts(intake)
+}
+
+// validateIntake112ExpectedCardAgainstFacts is 112-6/ADR-026/slice-
+// 112-6-plan.md's c2 cross-check: a scenario author who fills in both a
+// dialogue fact and the closed reference for the same card field must
+// not contradict themselves — the trainee has no way to reconcile a
+// caller who says one address and a reference that scores another. Only
+// facts with a non-empty Value are compared (an "unknown" fact has
+// nothing to compare); a card_path outside ExpectedCard's own fields
+// (e.g. a free_text narrative fact with no card_path at all) is skipped.
+func validateIntake112ExpectedCardAgainstFacts(intake *Intake112) error {
+	if intake.Reference.ExpectedCard == nil || intake.Dialogue == nil {
+		return nil
+	}
+	for _, fact := range intake.Dialogue.Facts {
+		if fact.CardPath == "" || fact.Value == "" {
+			continue
+		}
+		expected, ok := expectedCardFieldValue(intake.Reference.ExpectedCard, fact.CardPath)
+		if !ok || expected == "" {
+			continue
+		}
+		if !normalize.TokenSetEqual(fact.Value, expected) {
+			return invalid("intake112.reference.expected_card", fmt.Sprintf("contradicts_fact:%s", fact.CardPath))
+		}
+	}
+	return nil
+}
+
+// expectedCardFieldValue maps a dialogue fact's card_path (the same
+// vocabulary validIntake112CardPath accepts) onto the matching
+// Intake112ExpectedCard field, or ("", false) for a path ExpectedCard has
+// no field for (object/code/descriptive — 112-6/ADR-026 does not score
+// them, so there is nothing to contradict).
+func expectedCardFieldValue(card *Intake112ExpectedCard, path string) (string, bool) {
+	switch path {
+	case "/applicant_name":
+		return card.ApplicantName, true
+	case "/applicant_status":
+		return card.ApplicantStatus, true
+	case "/age":
+		if card.Age == 0 {
+			return "", false
+		}
+		return strconv.Itoa(card.Age), true
+	case "/incident_type":
+		return card.IncidentType, true
+	case "/complaint":
+		return card.Complaint, true
+	case "/victims_count":
+		if card.VictimsCount == 0 {
+			return "", false
+		}
+		return strconv.Itoa(card.VictimsCount), true
+	}
+	const prefix = "/address/"
+	if len(path) <= len(prefix) || path[:len(prefix)] != prefix {
+		return "", false
+	}
+	a := card.Address
+	switch path[len(prefix):] {
+	case "country":
+		return a.Country, true
+	case "region":
+		return a.Region, true
+	case "okrug":
+		return a.Okrug, true
+	case "district":
+		return a.District, true
+	case "city":
+		return a.City, true
+	case "street":
+		return a.Street, true
+	case "house":
+		return a.House, true
+	case "building":
+		return a.Building, true
+	case "structure":
+		return a.Structure, true
+	case "flat":
+		return a.Flat, true
+	case "entrance":
+		return a.Entrance, true
+	case "floor":
+		return a.Floor, true
+	case "landmark":
+		return a.Landmark, true
+	}
+	return "", false
+}
+
+// validExpectedCardFieldPath reports whether path is one
+// Intake112Reference.Alternatives may key on — the same vocabulary
+// expectedCardFieldValue reads from, prefixed by "expected_card." (the
+// scenario-author-facing spelling, distinct from a dialogue fact's own
+// card_path which has no such prefix).
+func validExpectedCardFieldPath(path string) bool {
+	const prefix = "expected_card."
+	if len(path) <= len(prefix) || path[:len(prefix)] != prefix {
+		return false
+	}
+	suffix := path[len(prefix):]
+	switch suffix {
+	case "applicant_name", "applicant_status", "age", "incident_type", "complaint", "victims_count":
+		return true
+	}
+	const addrPrefix = "address."
+	if len(suffix) <= len(addrPrefix) || suffix[:len(addrPrefix)] != addrPrefix {
+		return false
+	}
+	switch suffix[len(addrPrefix):] {
+	case "country", "region", "okrug", "district", "city", "street", "house", "building",
+		"structure", "flat", "entrance", "floor", "landmark":
+		return true
+	}
+	return false
 }
 
 // validateIntake112FreeTextDialogue is CallerModeFreeText's own dialogue
@@ -546,7 +744,15 @@ func validateScoring(scoring *Scoring) error {
 	if scoring == nil {
 		return nil
 	}
-	ids, err := rubricCriterionIDs()
+	return validateScoringAgainst(scoring, rubricCriterionIDs)
+}
+
+// validateScoringAgainst checks scoring's criterion ids against idsFunc
+// (rubricCriterionIDs for DDS, operator112RubricCriterionIDs for 112 —
+// 112-6/ADR-026) — the same three-field check either rubric's reference.
+// scoring must satisfy. scoring is assumed non-nil; callers check that.
+func validateScoringAgainst(scoring *Scoring, idsFunc func() (map[string]bool, error)) error {
+	ids, err := idsFunc()
 	if err != nil {
 		return fmt.Errorf("load rubric criteria: %w", err)
 	}

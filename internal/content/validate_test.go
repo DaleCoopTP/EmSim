@@ -9,9 +9,10 @@ import (
 // no I/O, matching Catalog's doc comment that Validate itself performs
 // none.
 type fakeCatalog struct {
-	services   map[string]ServiceRecord
-	classifier map[string]string // code -> name
-	versions   map[string]ScenarioVersionReference
+	services      map[string]ServiceRecord
+	classifier    map[string]string // code -> name
+	versions      map[string]ScenarioVersionReference
+	intakeCatalog *IntakeCatalog
 }
 
 func (c fakeCatalog) Service(code string) (ServiceRecord, bool) {
@@ -27,6 +28,13 @@ func (c fakeCatalog) ClassifierType(code string) (string, bool) {
 func (c fakeCatalog) ScenarioVersion(key string, version int) (ScenarioVersionReference, bool) {
 	ref, ok := c.versions[scenarioVersionRefKey(key, version)]
 	return ref, ok
+}
+
+func (c fakeCatalog) IntakeCatalog() (IntakeCatalog, bool) {
+	if c.intakeCatalog == nil {
+		return IntakeCatalog{}, false
+	}
+	return *c.intakeCatalog, true
 }
 
 // pilotWorkflow mirrors seed/services.json's minimal workflow
@@ -102,7 +110,6 @@ func TestValidateFullCase(t *testing.T) {
 		"recipient_services present":  func(b *Body) { b.Intake112.RecipientServices = []string{"pilot_gas_104"} },
 		"missing dialogue":            func(b *Body) { b.Intake112.Dialogue = nil },
 		"legacy script":               func(b *Body) { b.Intake112.Call.Script = []string{"Здравствуйте"} },
-		"expected_card present":       func(b *Body) { b.Intake112.Reference.ExpectedCard = &Intake112ExpectedCard{} },
 		"recipient_service present":   func(b *Body) { b.Intake112.Reference.RecipientService = "pilot_gas_104" },
 		"missing expected_types":      func(b *Body) { b.Intake112.Reference.ExpectedTypes = nil },
 		"missing case_description":    func(b *Body) { b.Intake112.Reference.CaseDescription = "" },
@@ -557,5 +564,154 @@ func assertInvalidField(t *testing.T, err error, wantField string) {
 	}
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("errors.Is(err, ErrValidation) = false")
+	}
+}
+
+// --- 112-6/ADR-026: intake112.reference extensions ---------------------
+
+// pilotIntakeCatalog is a minimal single-profile intake catalog fixture
+// for expected_profiles validation — mirrors seed/intake-catalog.json's
+// shape (id/version/name/fields) without pulling in the real file.
+func pilotIntakeCatalog() IntakeCatalog {
+	return IntakeCatalog{
+		Version: 1,
+		Types:   []IntakeIncidentType{{ID: "gas_explosion", Name: "Взрыв газа", ProfileIDs: []string{"104"}}},
+		Profiles: []IntakeProfile{{
+			ID: "104", Version: 1, Name: "Газовая служба",
+			Fields: []IntakeProfileField{
+				{ID: "smell", Label: "Запах газа", Kind: "single", Options: []string{"yes", "no"}},
+				{ID: "signs", Label: "Признаки", Kind: "multiple", Options: []string{"hissing", "smell", "visible_leak"}},
+			},
+		}},
+	}
+}
+
+func TestValidateExpectedCardAllowedInFullCase(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := validFullCaseBody()
+	body.Intake112.Reference.ExpectedCard = &Intake112ExpectedCard{
+		ApplicantStatus: "witness", Address: Intake112Address{City: "Москва", Street: "Тверская"},
+	}
+	if err := Validate(body, catalog); err != nil {
+		t.Fatalf("expected_card should be allowed for full_case since ADR-026: %v", err)
+	}
+}
+
+func TestValidateExpectedCardContradictsFact(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := validFullCaseBody()
+	// validFullCaseBody's own dialogue fact for /address/city is "Москва".
+	body.Intake112.Reference.ExpectedCard = &Intake112ExpectedCard{Address: Intake112Address{City: "Санкт-Петербург"}}
+	assertInvalidField(t, Validate(body, catalog), "intake112.reference.expected_card")
+}
+
+func TestValidateExpectedCardAgreesWithFactAfterNormalization(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := validFullCaseBody()
+	// Same city, different token order/case — normalize.TokenSetEqual must
+	// still accept it (the fact says "Москва").
+	body.Intake112.Reference.ExpectedCard = &Intake112ExpectedCard{Address: Intake112Address{City: "москва"}}
+	if err := Validate(body, catalog); err != nil {
+		t.Fatalf("normalized-equal expected_card should validate: %v", err)
+	}
+}
+
+func TestValidateAlternativesUnknownPath(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := validFullCaseBody()
+	body.Intake112.Reference.Alternatives = map[string][]string{"expected_card.not_a_field": {"x"}}
+	assertInvalidField(t, Validate(body, catalog), "intake112.reference.alternatives")
+}
+
+func TestValidateAlternativesKnownPath(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := validFullCaseBody()
+	body.Intake112.Reference.Alternatives = map[string][]string{"expected_card.address.street": {"Тверская улица"}}
+	if err := Validate(body, catalog); err != nil {
+		t.Fatalf("known alternatives path should validate: %v", err)
+	}
+}
+
+func TestValidateExpectedProfilesRequiresCatalog(t *testing.T) {
+	catalog := pilotCatalog() // no intakeCatalog set
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := validFullCaseBody()
+	body.Intake112.Reference.ExpectedProfiles = map[string]map[string]Intake112ExpectedProfileValue{
+		"104": {"smell": {Value: "yes"}},
+	}
+	assertInvalidField(t, Validate(body, catalog), "intake112.reference.expected_profiles")
+}
+
+func TestValidateExpectedProfilesUnknownProfileFieldOption(t *testing.T) {
+	ic := pilotIntakeCatalog()
+	base := pilotCatalog()
+	base.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	base.intakeCatalog = &ic
+	for name, profiles := range map[string]map[string]map[string]Intake112ExpectedProfileValue{
+		"unknown profile":           {"999": {"smell": {Value: "yes"}}},
+		"unknown field":             {"104": {"nope": {Value: "yes"}}},
+		"unknown option":            {"104": {"smell": {Value: "maybe"}}},
+		"scalar for multiple field": {"104": {"signs": {Value: "hissing"}}},
+		"array for single field":    {"104": {"smell": {Values: []string{"yes"}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := validFullCaseBody()
+			body.Intake112.Reference.ExpectedProfiles = profiles
+			if err := Validate(body, base); err == nil {
+				t.Fatalf("%s: expected rejection", name)
+			}
+		})
+	}
+}
+
+func TestValidateExpectedProfilesValid(t *testing.T) {
+	ic := pilotIntakeCatalog()
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	catalog.intakeCatalog = &ic
+	body := validFullCaseBody()
+	body.Intake112.Reference.ExpectedProfiles = map[string]map[string]Intake112ExpectedProfileValue{
+		"104": {"smell": {Value: "yes"}, "signs": {Values: []string{"hissing", "smell"}}},
+	}
+	if err := Validate(body, catalog); err != nil {
+		t.Fatalf("valid expected_profiles should validate: %v", err)
+	}
+}
+
+func TestValidateOperator112ScoringUnknownCriterion(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := validFullCaseBody()
+	body.Intake112.Reference.Scoring = &Scoring{Disabled: []string{"NO_SUCH_112_CRITERION"}}
+	assertInvalidField(t, Validate(body, catalog), "reference.scoring.disabled")
+}
+
+func TestValidateOperator112ScoringKnownCriterion(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := validFullCaseBody()
+	body.Intake112.Reference.Scoring = &Scoring{Disabled: []string{"DESCRIPTION_PRESENT"}}
+	if err := Validate(body, catalog); err != nil {
+		t.Fatalf("known operator112 rubric-v2 criterion should validate: %v", err)
+	}
+}
+
+func TestValidateExpectedServicesAllowedForCardOnly(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := Body{ExerciseType: ExerciseTypeOperator112Intake, Intake112: &Intake112{
+		Mode: "card_only",
+		Reference: Intake112Reference{
+			ExpectedTypes: []string{"gas_explosion"}, CaseDescription: "Запах газа",
+			ExpectedServices: []string{"pilot_gas_104"},
+		},
+	}}
+	if err := Validate(body, catalog); err != nil {
+		t.Fatalf("card_only with expected_services should validate since ADR-026: %v", err)
 	}
 }

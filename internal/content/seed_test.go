@@ -15,9 +15,10 @@ import (
 // content.Service.ImportScenarios would once services.json/classifier.json
 // are already imported.
 type mapCatalog struct {
-	services   map[string]content.ServiceRecord
-	classifier map[string]string
-	versions   map[string]content.ScenarioVersionReference
+	services      map[string]content.ServiceRecord
+	classifier    map[string]string
+	versions      map[string]content.ScenarioVersionReference
+	intakeCatalog *content.IntakeCatalog
 }
 
 func (c mapCatalog) Service(code string) (content.ServiceRecord, bool) {
@@ -35,6 +36,13 @@ func (c mapCatalog) ScenarioVersion(key string, version int) (content.ScenarioVe
 	return ref, ok
 }
 
+func (c mapCatalog) IntakeCatalog() (content.IntakeCatalog, bool) {
+	if c.intakeCatalog == nil {
+		return content.IntakeCatalog{}, false
+	}
+	return *c.intakeCatalog, true
+}
+
 // TestSeedFilesAreValid loads the real seed/ files shipped for slice 2
 // (seed/README.md) and checks they pass the same schema and semantic
 // validation `emsim import` runs — a change to the seed data that would
@@ -50,7 +58,11 @@ func TestSeedFilesAreValid(t *testing.T) {
 	if len(services) == 0 {
 		t.Fatalf("services.json has no entries")
 	}
-	catalog := mapCatalog{services: map[string]content.ServiceRecord{}, classifier: map[string]string{}, versions: map[string]content.ScenarioVersionReference{}}
+	intakeCatalog, err := content.DecodeIntakeCatalog(openFile(t, filepath.Join(seedDir, "intake-catalog.json")))
+	if err != nil {
+		t.Fatalf("decode intake-catalog.json: %v", err)
+	}
+	catalog := mapCatalog{services: map[string]content.ServiceRecord{}, classifier: map[string]string{}, versions: map[string]content.ScenarioVersionReference{}, intakeCatalog: &intakeCatalog}
 	for _, s := range services {
 		catalog.services[s.Code] = s
 	}

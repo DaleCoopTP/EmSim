@@ -16,9 +16,22 @@ import (
 // case may only re-weight, mark critical, or disable a criterion the
 // default rubric actually has.
 var rubricCriterionIDs = sync.OnceValues(func() (map[string]bool, error) {
-	raw, err := contracts.Files.ReadFile("rubric.default.json")
+	return loadRubricCriterionIDs("rubric.default.json")
+})
+
+// operator112RubricCriterionIDs is rubricCriterionIDs' own counterpart for
+// operator112/rubric-v2 (112-6/ADR-026) — a scenario's intake112.
+// reference.scoring may only re-weight, mark critical, or disable a
+// criterion this rubric actually has, the same rule DDS's reference.
+// scoring already follows against rubric.default.json.
+var operator112RubricCriterionIDs = sync.OnceValues(func() (map[string]bool, error) {
+	return loadRubricCriterionIDs("rubric.operator112.json")
+})
+
+func loadRubricCriterionIDs(name string) (map[string]bool, error) {
+	raw, err := contracts.Files.ReadFile(name)
 	if err != nil {
-		return nil, fmt.Errorf("read rubric.default.json: %w", err)
+		return nil, fmt.Errorf("read %s: %w", name, err)
 	}
 	var rubric struct {
 		Criteria []struct {
@@ -26,14 +39,14 @@ var rubricCriterionIDs = sync.OnceValues(func() (map[string]bool, error) {
 		} `json:"criteria"`
 	}
 	if err := json.Unmarshal(raw, &rubric); err != nil {
-		return nil, fmt.Errorf("parse rubric.default.json: %w", err)
+		return nil, fmt.Errorf("parse %s: %w", name, err)
 	}
 	ids := make(map[string]bool, len(rubric.Criteria))
 	for _, c := range rubric.Criteria {
 		ids[c.ID] = true
 	}
 	return ids, nil
-})
+}
 
 // RubricVersion returns rubric.default.json's own "version" string
 // (ADR-013) — the value training's lesson creation (slice 3's C4)
