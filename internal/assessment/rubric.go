@@ -28,7 +28,7 @@ type Rubric struct {
 type RubricCriterion struct {
 	ID           string         `json:"id"`
 	Title        string         `json:"title"`
-	Kind         string         `json:"kind"` // deterministic | llm
+	Kind         string         `json:"kind"` // deterministic | llm | manual | penalty
 	Weight       float64        `json:"weight"`
 	Critical     bool           `json:"critical"`
 	CriticalWhen string         `json:"critical_when,omitempty"`
@@ -48,37 +48,74 @@ func (r Rubric) ByID(id string) (RubricCriterion, bool) {
 	return RubricCriterion{}, false
 }
 
+// loadEmbeddedRubric decodes one contracts.Files rubric JSON file. Every
+// call site below wraps it in sync.OnceValues so each embedded file is
+// parsed at most once per process.
+func loadEmbeddedRubric(filename string) (Rubric, error) {
+	raw, err := contracts.Files.ReadFile(filename)
+	if err != nil {
+		return Rubric{}, fmt.Errorf("assessment: read %s: %w", filename, err)
+	}
+	var rubric Rubric
+	if err := json.Unmarshal(raw, &rubric); err != nil {
+		return Rubric{}, fmt.Errorf("assessment: parse %s: %w", filename, err)
+	}
+	return rubric, nil
+}
+
 // loadedDefault caches contracts.Files' rubric.default.json, decoded
 // once — the same sync.OnceValues pattern internal/content/rubric.go
 // uses for the same file, kept separate here since this package needs
 // the full structure (content's copy only needs criterion ids/version).
-var loadedDefault = sync.OnceValues(func() (Rubric, error) {
-	raw, err := contracts.Files.ReadFile("rubric.default.json")
-	if err != nil {
-		return Rubric{}, fmt.Errorf("assessment: read rubric.default.json: %w", err)
-	}
-	var rubric Rubric
-	if err := json.Unmarshal(raw, &rubric); err != nil {
-		return Rubric{}, fmt.Errorf("assessment: parse rubric.default.json: %w", err)
-	}
-	return rubric, nil
-})
+var loadedDefault = sync.OnceValues(func() (Rubric, error) { return loadEmbeddedRubric("rubric.default.json") })
 
-var loaded112 = sync.OnceValues(func() (Rubric, error) {
-	raw, err := contracts.Files.ReadFile("rubric.operator112.json")
-	if err != nil {
-		return Rubric{}, fmt.Errorf("assessment: read rubric.operator112.json: %w", err)
-	}
-	var rubric Rubric
-	if err := json.Unmarshal(raw, &rubric); err != nil {
-		return Rubric{}, fmt.Errorf("assessment: parse rubric.operator112.json: %w", err)
-	}
-	return rubric, nil
-})
+// loaded112v1/loaded112v2 are operator112_intake's own two rubric
+// versions (112-6/ADR-026): v1 is the pre-112-6 manual-only rubric,
+// preserved unchanged so lessons still running on it are unaffected;
+// v2 is the deterministic rubric this slice adds. A lesson freezes
+// whichever version was current at its own creation (lessons.
+// rubric_version, content.RubricVersionFor) — LoadRubric below is what
+// makes that freeze meaningful: an old lesson keeps scoring against v1
+// even after v2 ships.
+var loaded112v1 = sync.OnceValues(func() (Rubric, error) { return loadEmbeddedRubric("rubric.operator112.v1.json") })
+var loaded112v2 = sync.OnceValues(func() (Rubric, error) { return loadEmbeddedRubric("rubric.operator112.json") })
 
+// LoadRubric returns exerciseType's own rubric at exactly version —
+// never "whatever is current" — so a sealed assessment_inputs snapshot
+// or an expert revision on an old item scores against the same rubric
+// its lesson actually froze (RFC-001 §6/ADR-013), not one a later
+// deploy happened to ship. version must be one of the exact strings
+// rubric.schema.json's own "version" field uses (e.g.
+// "operator112/rubric-v2") — an unknown version is an error, not a
+// silent fallback to "current".
+func LoadRubric(exerciseType content.ExerciseType, version string) (Rubric, error) {
+	switch exerciseType {
+	case content.ExerciseTypeDDSProcessing:
+		switch version {
+		case "dds/rubric-v1":
+			return loadedDefault()
+		}
+	case content.ExerciseTypeOperator112Intake:
+		switch version {
+		case "operator112/rubric-v1":
+			return loaded112v1()
+		case "operator112/rubric-v2":
+			return loaded112v2()
+		}
+	}
+	return Rubric{}, fmt.Errorf("assessment: no rubric for exercise_type %q version %q", exerciseType, version)
+}
+
+// LoadDefaultFor returns exerciseType's own *current* rubric — the one
+// content.RubricVersionFor freezes into a newly created lesson. It is
+// never the right call for scoring an existing item (use LoadRubric with
+// that item's own frozen rubric_version instead); it exists for the
+// handful of callers that genuinely want "today's rubric" — currently
+// none inside this module (kept for parity with content.RubricVersion's
+// own "current" convention and for tests).
 func LoadDefaultFor(exerciseType content.ExerciseType) (Rubric, error) {
 	if exerciseType == content.ExerciseTypeOperator112Intake {
-		return loaded112()
+		return loaded112v2()
 	}
 	if exerciseType == content.ExerciseTypeDDSProcessing {
 		return loadedDefault()
@@ -92,6 +129,19 @@ func LoadDefaultFor(exerciseType content.ExerciseType) (Rubric, error) {
 // defensive copying at the call site.
 func LoadDefault() (Rubric, error) {
 	return loadedDefault()
+}
+
+// ScoringFor extracts a scenario version's own reference.scoring
+// override (ADR-013's "только отличия" layer) regardless of
+// exercise_type: DDS keeps it on body.Reference.Scoring, operator112
+// (112-6/ADR-026) keeps its own copy nested under body.Intake112.
+// Reference.Scoring instead, since the entire 112 reference lives there.
+// Merge accepts the result either way.
+func ScoringFor(body content.Body) *content.Scoring {
+	if body.Intake112 != nil {
+		return body.Intake112.Reference.Scoring
+	}
+	return body.Reference.Scoring
 }
 
 // Merge applies a scenario version's reference.scoring (ADR-013's layer

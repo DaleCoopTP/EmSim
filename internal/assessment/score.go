@@ -37,7 +37,26 @@ func Score(results []CriterionResult, effective Rubric) ScoreResult {
 		value  float64
 	}
 	var applicable []weighted
+	var totalPenalty float64
+	kindByID := make(map[string]string, len(effective.Criteria))
+	for _, c := range effective.Criteria {
+		kindByID[c.ID] = c.Kind
+	}
 	for _, r := range results {
+		// 112-6/ADR-026: a penalty criterion never enters weight
+		// normalization at all — it has no "correct" fraction of the
+		// 100-point total the way met/partial/not_met criteria do, only
+		// points subtracted after normalization. not_applicable/
+		// unavailable are meaningless for a penalty (ADR-026's "эталон
+		// отсутствует" rule always resolves it to a concrete 0, never
+		// either status), but the switch below still guards them for
+		// safety.
+		if kindByID[r.ID] == "penalty" {
+			if r.PenaltyPoints != nil {
+				totalPenalty += *r.PenaltyPoints
+			}
+			continue
+		}
 		switch r.Status {
 		case CriterionNotApplicable:
 			continue
@@ -66,6 +85,13 @@ func Score(results []CriterionResult, effective Rubric) ScoreResult {
 	}
 	if len(criticalErrors) > 0 && score > effective.CriticalCap {
 		score = effective.CriticalCap
+	}
+	score -= totalPenalty
+	if score < 0 {
+		score = 0
+	}
+	if score > 100 {
+		score = 100
 	}
 	score = math.Round(score*100) / 100
 	passed := score >= effective.PassThreshold && len(criticalErrors) == 0

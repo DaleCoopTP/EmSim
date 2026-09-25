@@ -31,14 +31,15 @@ import (
 type Service struct {
 	store      Store
 	items      ItemReader
+	lessons    LessonReader
 	evidence   EvidenceReader
 	scenarios  ScenarioReader
 	tasks      TaskStore
 	evaluators Registry
 }
 
-func NewService(store Store, items ItemReader, evidence EvidenceReader, scenarios ScenarioReader, taskStore TaskStore, evaluators Registry) *Service {
-	return &Service{store: store, items: items, evidence: evidence, scenarios: scenarios, tasks: taskStore, evaluators: evaluators}
+func NewService(store Store, items ItemReader, lessons LessonReader, evidence EvidenceReader, scenarios ScenarioReader, taskStore TaskStore, evaluators Registry) *Service {
+	return &Service{store: store, items: items, lessons: lessons, evidence: evidence, scenarios: scenarios, tasks: taskStore, evaluators: evaluators}
 }
 
 // evaluatePayload is assessment.evaluate's own task payload shape
@@ -144,12 +145,23 @@ func (s *Service) sealInputForItem(ctx context.Context, tx pgx.Tx, taskID, itemI
 	if err != nil {
 		return uuid.Nil, failInput(ctx, tx, s.tasks, taskID, workerID, "unsupported_exercise_type")
 	}
-	base, err := LoadDefault()
+	base, err := LoadRubric(evidenceBody.ExerciseType, payload.RubricVersion)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("assessment: load default rubric: %w", err)
+		return uuid.Nil, fmt.Errorf("assessment: load rubric %s/%s: %w", evidenceBody.ExerciseType, payload.RubricVersion, err)
 	}
-	effective := Merge(base, version.Body.Reference.Scoring)
-	results := evaluator.Evaluate(evidenceBody, version.Body.Reference, effective)
+	effective := Merge(base, ScoringFor(version.Body))
+	evidenceDoc, _, err := s.evidence.EvidenceDocumentByItem(ctx, tx, itemID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	results, err := evaluator.Evaluate(evidenceDoc, version.Body, effective)
+	if err != nil {
+		var term *TerminalEvaluationError
+		if errors.As(err, &term) {
+			return uuid.Nil, failInput(ctx, tx, s.tasks, taskID, workerID, term.Code)
+		}
+		return uuid.Nil, fmt.Errorf("assessment: evaluate item %s: %w", itemID, err)
+	}
 	ruleResults := make([]RuleResult, 0, len(results))
 	for _, r := range results {
 		ruleResults = append(ruleResults, RuleResult{ID: r.ID, Status: r.Status})
@@ -238,6 +250,10 @@ func (s *Service) computeAndInsertAuto(ctx context.Context, tx pgx.Tx, itemID, i
 	if err != nil {
 		return err
 	}
+	evidenceDoc, _, err := s.evidence.EvidenceDocumentByItem(ctx, tx, itemID)
+	if err != nil {
+		return err
+	}
 	version, err := s.scenarios.VersionByID(ctx, tx, evidenceBody.ScenarioVersionID)
 	if err != nil {
 		return err
@@ -246,7 +262,16 @@ func (s *Service) computeAndInsertAuto(ctx context.Context, tx pgx.Tx, itemID, i
 	if err != nil {
 		return err
 	}
-	results := evaluator.Evaluate(evidenceBody, version.Body.Reference, inputBody.RubricEffective)
+	// sealInputForItem already ran this same Evaluate once (over the same
+	// digest-verified evidence and rubric_effective) to build
+	// assessment_inputs.rule_results — a second error here would mean the
+	// evaluator is non-deterministic, which ADR-006 forbids, so this is
+	// treated as an unexpected error rather than a second
+	// failInput/TerminalEvaluationError path.
+	results, err := evaluator.Evaluate(evidenceDoc, version.Body, inputBody.RubricEffective)
+	if err != nil {
+		return fmt.Errorf("assessment: re-evaluate item %s for auto record: %w", itemID, err)
+	}
 	scoreResult := Score(results, inputBody.RubricEffective)
 	a := Assessment{
 		ID: uuid.New(), ItemID: itemID, Revision: 1, Kind: KindAuto, Status: scoreResult.Status,
@@ -343,7 +368,8 @@ func (s *Service) CreateExpertRevision(ctx context.Context, itemID, createdBy uu
 		if _, err := s.store.LockTraineeState(ctx, tx, evidenceBody.TraineeID, evidenceBody.ExerciseType); err != nil {
 			return err
 		}
-		if _, err := s.items.ItemByID(ctx, tx, itemID, training.LockUpdate); err != nil {
+		item, err := s.items.ItemByID(ctx, tx, itemID, training.LockUpdate)
+		if err != nil {
 			return err
 		}
 
@@ -351,16 +377,32 @@ func (s *Service) CreateExpertRevision(ctx context.Context, itemID, createdBy uu
 		if err != nil {
 			return err
 		}
-		base, err := LoadDefaultFor(evidenceBody.ExerciseType)
-		if err != nil {
-			return fmt.Errorf("assessment: load default rubric: %w", err)
-		}
-		effective := Merge(base, version.Body.Reference.Scoring)
 
 		final, hasFinal, err := s.store.FinalByItem(ctx, tx, itemID)
 		if err != nil {
 			return err
 		}
+		// 112-6/ADR-026's c3: an item is always scored against the exact
+		// rubric version its own final assessment already recorded — reuse
+		// it rather than reloading "current" (LoadDefaultFor). Only the
+		// very first assessment for an item (no auto, no prior expert) has
+		// no such record yet; that case alone needs the lesson's own
+		// frozen rubric_version.
+		var effective Rubric
+		if hasFinal {
+			effective = final.RubricEffective
+		} else {
+			lesson, err := s.lessons.LessonByID(ctx, tx, item.LessonID, training.LockNone)
+			if err != nil {
+				return err
+			}
+			base, err := LoadRubric(evidenceBody.ExerciseType, lesson.RubricVersion)
+			if err != nil {
+				return fmt.Errorf("assessment: load rubric %s/%s: %w", evidenceBody.ExerciseType, lesson.RubricVersion, err)
+			}
+			effective = Merge(base, ScoringFor(version.Body))
+		}
+
 		expectedBase := 0
 		var currentCriteria []CriterionResult
 		if hasFinal {
@@ -489,14 +531,25 @@ func (s *Service) Get(ctx context.Context, itemID uuid.UUID) (Detail, error) {
 		if err != nil {
 			return err
 		}
-		base, err := LoadDefaultFor(item.ExerciseType)
-		if err != nil {
-			return err
-		}
-		effective := Merge(base, version.Body.Reference.Scoring)
+		var effective Rubric
 		if found {
 			result.Final = &final
 			effective = final.RubricEffective
+		} else {
+			// No assessment exists yet (still waiting/pending, or the
+			// legacy route's terminal failure with no manual review
+			// started) — load the item's own frozen rubric version from
+			// its lesson rather than "current" (112-6/ADR-026's c3; see
+			// CreateExpertRevision's identical reasoning).
+			lesson, err := s.lessons.LessonByID(ctx, tx, item.LessonID, training.LockNone)
+			if err != nil {
+				return err
+			}
+			base, err := LoadRubric(item.ExerciseType, lesson.RubricVersion)
+			if err != nil {
+				return err
+			}
+			effective = Merge(base, ScoringFor(version.Body))
 		}
 		if summary, err := s.tasks.ByDedupKey(ctx, tx, training.EvaluateDedupKey(itemID)); err == nil {
 			status := string(summary.Status)

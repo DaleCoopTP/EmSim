@@ -126,3 +126,61 @@ func TestApplyOverrideNilLeavesResultUnchanged(t *testing.T) {
 
 func floatPtr(f float64) *float64 { return &f }
 func boolPtr(b bool) *bool        { return &b }
+
+func rubricWithPenalty() Rubric {
+	return Rubric{
+		PassThreshold: 70, CriticalCap: 40,
+		Criteria: []RubricCriterion{
+			{ID: "A", Weight: 100, Kind: "deterministic", Rule: "a"},
+			{ID: "P", Weight: 0, Kind: "penalty", Rule: "p"},
+		},
+	}
+}
+
+func TestValidateRevisionRejectsNegativePenaltyPoints(t *testing.T) {
+	negative := -5.0
+	_, err := ValidateRevision(RevisionInput{
+		Reason: "reviewed manually", BaseRevision: 0,
+		Criteria: []CriterionResult{{ID: "A", Status: CriterionMet}, {ID: "P", PenaltyPoints: &negative}},
+	}, rubricWithPenalty(), nil)
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation for a negative penalty_points", err)
+	}
+}
+
+func TestValidateRevisionRejectsPenaltyPointsOnNonPenaltyCriterion(t *testing.T) {
+	five := 5.0
+	_, err := ValidateRevision(RevisionInput{
+		Reason: "reviewed manually", BaseRevision: 0,
+		Criteria: []CriterionResult{{ID: "A", Status: CriterionMet, PenaltyPoints: &five}, {ID: "P"}},
+	}, rubricWithPenalty(), nil)
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation: penalty_points only applies to a penalty criterion", err)
+	}
+}
+
+func TestValidateRevisionAcceptsNonNegativePenaltyPoints(t *testing.T) {
+	ten := 10.0
+	merged, err := ValidateRevision(RevisionInput{
+		Reason: "reviewed manually", BaseRevision: 0,
+		Criteria: []CriterionResult{{ID: "A", Status: CriterionMet}, {ID: "P", PenaltyPoints: &ten}},
+	}, rubricWithPenalty(), nil)
+	if err != nil {
+		t.Fatalf("ValidateRevision: %v", err)
+	}
+	p := findResult(t, merged, "P")
+	if p.PenaltyPoints == nil || *p.PenaltyPoints != 10 {
+		t.Fatalf("P.penalty_points = %v, want 10", p.PenaltyPoints)
+	}
+}
+
+func findResult(t *testing.T, results []CriterionResult, id string) CriterionResult {
+	t.Helper()
+	for _, r := range results {
+		if r.ID == id {
+			return r
+		}
+	}
+	t.Fatalf("no criterion result for %q", id)
+	return CriterionResult{}
+}

@@ -9,6 +9,7 @@
 package dds
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -26,12 +27,26 @@ var Evaluator assessment.RuleEvaluator = evaluator{}
 
 type evaluator struct{}
 
-func (evaluator) Evaluate(ev training.EvidenceBody, ref content.Reference, effective assessment.Rubric) []assessment.CriterionResult {
+// Evaluate decodes raw into training.EvidenceBody itself (112-6/ADR-026's
+// c3 generalization: assessment.RuleEvaluator now hands every evaluator
+// the raw evidence document rather than a shape typed for one exercise —
+// operator112's own evaluator decodes internal/training/operator112.
+// EvidenceBody the same way). A decode failure here is a programming
+// error, not a data problem: raw is always evidence.schema.json's own
+// dds_processing document, sealed by training/dds.Exercise.Evidence and
+// digest-checked by the caller (assessment.Service.sealInputForItem)
+// before Evaluate ever runs.
+func (evaluator) Evaluate(raw json.RawMessage, body content.Body, effective assessment.Rubric) ([]assessment.CriterionResult, error) {
+	var ev training.EvidenceBody
+	if err := json.Unmarshal(raw, &ev); err != nil {
+		return nil, fmt.Errorf("assessment/dds: decode evidence: %w", err)
+	}
+	ref := body.Reference
 	results := make([]assessment.CriterionResult, 0, len(effective.Criteria))
 	for _, c := range effective.Criteria {
 		results = append(results, evaluateCriterion(ev, ref, c))
 	}
-	return results
+	return results, nil
 }
 
 func evaluateCriterion(ev training.EvidenceBody, ref content.Reference, c assessment.RubricCriterion) assessment.CriterionResult {

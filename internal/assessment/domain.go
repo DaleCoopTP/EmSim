@@ -98,6 +98,58 @@ type CriterionResult struct {
 	Critical     bool
 	EvidenceRefs []string
 	Explanation  string
+	// PenaltyPoints (112-6/ADR-026) is set only for a kind=penalty
+	// criterion — the actual points charged (0 if the reference is
+	// absent or nothing was wrong), always >= 0. Score.Compute excludes
+	// penalty criteria from weight normalization entirely and instead
+	// subtracts their summed PenaltyPoints from the normalized 0..100
+	// score, clamped to [0, 100].
+	PenaltyPoints *float64
+	// Details (112-6/ADR-026) is a penalty or block criterion's own
+	// line-by-line breakdown (one address field, one profile card, one
+	// service, ...) for the instructor review UI — never shown to a
+	// trainee (assessment.StripExpected clears Expected/Actual from the
+	// trainee-facing projection, same as it clears reference values
+	// elsewhere).
+	Details []CriterionDetail
+}
+
+// CriterionDetail is one row of CriterionResult.Details — a single
+// scored field/card/service within a block or penalty criterion
+// (openapi.yaml's CriterionDetail, 112-6/ADR-026).
+type CriterionDetail struct {
+	Key       string
+	Label     string
+	Points    float64
+	MaxPoints float64
+	Status    CriterionStatus // met | partial | not_met | not_applicable
+	Actual    *string
+	Expected  *string
+}
+
+// StripExpected returns a copy of criteria with every CriterionDetail's
+// Expected value cleared (112-6/ADR-026) — the per-field/per-card/
+// per-service detail breakdown can otherwise leak the scenario's closed
+// reference (a street name, a card field's correct answer) straight to
+// the trainee it was scored against, the same leak RFC-001 already
+// forbids for the raw scenario reference itself. Actual (the trainee's
+// own filled value) and every other field are left as-is — only the
+// answer key half of a detail row is instructor-only.
+func StripExpected(criteria []CriterionResult) []CriterionResult {
+	stripped := make([]CriterionResult, len(criteria))
+	for i, c := range criteria {
+		stripped[i] = c
+		if len(c.Details) == 0 {
+			continue
+		}
+		details := make([]CriterionDetail, len(c.Details))
+		for j, d := range c.Details {
+			d.Expected = nil
+			details[j] = d
+		}
+		stripped[i].Details = details
+	}
+	return stripped
 }
 
 // Feedback is one assessments.feedback entry (openapi.yaml).

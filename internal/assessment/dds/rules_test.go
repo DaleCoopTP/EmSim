@@ -1,6 +1,7 @@
 package dds
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -33,6 +34,25 @@ func findResult(t *testing.T, results []assessment.CriterionResult, id string) a
 	}
 	t.Fatalf("no criterion result for %q among %d results", id, len(results))
 	return assessment.CriterionResult{}
+}
+
+// evaluate adapts the tests' own typed (training.EvidenceBody,
+// content.Reference) fixtures onto Evaluate's real signature (112-6/
+// ADR-026's c3 — raw evidence + the whole scenario body, so one
+// RuleEvaluator interface serves every exercise_type). t.Helper's
+// t.Fatal on a marshal error would never actually fire: baseEvidence's
+// fixtures always marshal.
+func evaluate(t *testing.T, ev training.EvidenceBody, ref content.Reference, effective assessment.Rubric) []assessment.CriterionResult {
+	t.Helper()
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal evidence fixture: %v", err)
+	}
+	results, err := Evaluator.Evaluate(raw, content.Body{Reference: ref}, effective)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	return results
 }
 
 // baseEvidence is a minimal, valid closed-item evidence.schema.json body
@@ -85,7 +105,7 @@ func TestTimingRules(t *testing.T) {
 
 	t.Run("within norm is met", func(t *testing.T) {
 		ev := baseEvidence()
-		results := Evaluator.Evaluate(ev, acceptedReference(), rubric)
+		results := evaluate(t, ev, acceptedReference(), rubric)
 		for _, id := range []string{"T_OPEN", "T_PRIMARY", "T_COMPLETE"} {
 			if r := findResult(t, results, id); r.Status != assessment.CriterionMet {
 				t.Fatalf("%s = %+v, want met", id, r)
@@ -97,7 +117,7 @@ func TestTimingRules(t *testing.T) {
 		ev := baseEvidence()
 		open := 45.0 // > 30s norm, <= 60s partial_until_s
 		ev.Derived.OpenSeconds = &open
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "T_OPEN")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "T_OPEN")
 		if r.Status != assessment.CriterionPartial || r.Score == nil || *r.Score != 0.5 {
 			t.Fatalf("T_OPEN = %+v, want partial score 0.5", r)
 		}
@@ -107,7 +127,7 @@ func TestTimingRules(t *testing.T) {
 		ev := baseEvidence()
 		open := 120.0
 		ev.Derived.OpenSeconds = &open
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "T_OPEN")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "T_OPEN")
 		if r.Status != assessment.CriterionNotMet {
 			t.Fatalf("T_OPEN = %+v, want not_met", r)
 		}
@@ -116,7 +136,7 @@ func TestTimingRules(t *testing.T) {
 	t.Run("never opened is not_met when not interrupted", func(t *testing.T) {
 		ev := baseEvidence()
 		ev.Derived.OpenSeconds = nil
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "T_OPEN")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "T_OPEN")
 		if r.Status != assessment.CriterionNotMet {
 			t.Fatalf("T_OPEN = %+v, want not_met", r)
 		}
@@ -125,7 +145,7 @@ func TestTimingRules(t *testing.T) {
 	t.Run("server restart marks every timing criterion not_applicable", func(t *testing.T) {
 		ev := baseEvidence()
 		ev.Interruptions = []training.Interruption{{RecoveryID: uuid.New(), Cause: "server_restart", DetectedAt: ev.ClosedAt}}
-		results := Evaluator.Evaluate(ev, acceptedReference(), rubric)
+		results := evaluate(t, ev, acceptedReference(), rubric)
 		for _, id := range []string{"T_OPEN", "T_PRIMARY", "T_COMPLETE"} {
 			if r := findResult(t, results, id); r.Status != assessment.CriterionNotApplicable {
 				t.Fatalf("%s = %+v, want not_applicable after server restart", id, r)
@@ -137,7 +157,7 @@ func TestTimingRules(t *testing.T) {
 		ev := baseEvidence()
 		ev.CloseReason = training.CloseInterrupted
 		ev.Derived.WorkSeconds = nil // never reached complete before stop
-		results := Evaluator.Evaluate(ev, acceptedReference(), rubric)
+		results := evaluate(t, ev, acceptedReference(), rubric)
 		if r := findResult(t, results, "T_OPEN"); r.Status != assessment.CriterionMet {
 			t.Fatalf("T_OPEN = %+v, want met (reached before stop)", r)
 		}
@@ -152,7 +172,7 @@ func TestPrimaryDecisionRule(t *testing.T) {
 
 	t.Run("matches reference", func(t *testing.T) {
 		ev := baseEvidence()
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "D_PRIMARY")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "D_PRIMARY")
 		if r.Status != assessment.CriterionMet || r.Critical {
 			t.Fatalf("D_PRIMARY = %+v, want met, not critical", r)
 		}
@@ -162,7 +182,7 @@ func TestPrimaryDecisionRule(t *testing.T) {
 		ev := baseEvidence()
 		refused := content.ReactionRefused
 		ev.Derived.PrimaryStatus = &refused
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "D_PRIMARY")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "D_PRIMARY")
 		if r.Status != assessment.CriterionNotMet || !r.Critical {
 			t.Fatalf("D_PRIMARY = %+v, want not_met and critical (refused_profile_incident)", r)
 		}
@@ -171,7 +191,7 @@ func TestPrimaryDecisionRule(t *testing.T) {
 	t.Run("never decided and not interrupted is not_met", func(t *testing.T) {
 		ev := baseEvidence()
 		ev.Derived.PrimaryStatus = nil
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "D_PRIMARY")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "D_PRIMARY")
 		if r.Status != assessment.CriterionNotMet {
 			t.Fatalf("D_PRIMARY = %+v, want not_met", r)
 		}
@@ -181,7 +201,7 @@ func TestPrimaryDecisionRule(t *testing.T) {
 		ev := baseEvidence()
 		ev.Derived.PrimaryStatus = nil
 		ev.CloseReason = training.CloseInterrupted
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "D_PRIMARY")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "D_PRIMARY")
 		if r.Status != assessment.CriterionNotApplicable {
 			t.Fatalf("D_PRIMARY = %+v, want not_applicable", r)
 		}
@@ -193,7 +213,7 @@ func TestCommentRequiredRule(t *testing.T) {
 
 	t.Run("not required is not_applicable", func(t *testing.T) {
 		ev := baseEvidence()
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "D_COMMENT_REQUIRED")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "D_COMMENT_REQUIRED")
 		if r.Status != assessment.CriterionNotApplicable {
 			t.Fatalf("D_COMMENT_REQUIRED = %+v, want not_applicable", r)
 		}
@@ -204,7 +224,7 @@ func TestCommentRequiredRule(t *testing.T) {
 		ev.Comments = []training.EvidenceComment{{Seq: 1, Text: "не наша территория"}}
 		ref := acceptedReference()
 		ref.PrimaryDecision.CommentRequired = true
-		r := findResult(t, Evaluator.Evaluate(ev, ref, rubric), "D_COMMENT_REQUIRED")
+		r := findResult(t, evaluate(t, ev, ref, rubric), "D_COMMENT_REQUIRED")
 		if r.Status != assessment.CriterionMet {
 			t.Fatalf("D_COMMENT_REQUIRED = %+v, want met", r)
 		}
@@ -214,7 +234,7 @@ func TestCommentRequiredRule(t *testing.T) {
 		ev := baseEvidence()
 		ref := acceptedReference()
 		ref.PrimaryDecision.CommentRequired = true
-		r := findResult(t, Evaluator.Evaluate(ev, ref, rubric), "D_COMMENT_REQUIRED")
+		r := findResult(t, evaluate(t, ev, ref, rubric), "D_COMMENT_REQUIRED")
 		if r.Status != assessment.CriterionNotMet {
 			t.Fatalf("D_COMMENT_REQUIRED = %+v, want not_met", r)
 		}
@@ -226,7 +246,7 @@ func TestFieldCorrectionsRule(t *testing.T) {
 
 	t.Run("no corrections required is not_applicable", func(t *testing.T) {
 		ev := baseEvidence()
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "D_FIELD_CORRECTIONS")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "D_FIELD_CORRECTIONS")
 		if r.Status != assessment.CriterionNotApplicable {
 			t.Fatalf("D_FIELD_CORRECTIONS = %+v, want not_applicable", r)
 		}
@@ -240,7 +260,7 @@ func TestFieldCorrectionsRule(t *testing.T) {
 		}
 		ref := acceptedReference()
 		ref.FieldCorrections = []content.FieldCorrection{{Path: "/card/address/okrug", ExpectedValue: "ЮАО", BeforeStatus: content.ReactionAccepted}}
-		r := findResult(t, Evaluator.Evaluate(ev, ref, rubric), "D_FIELD_CORRECTIONS")
+		r := findResult(t, evaluate(t, ev, ref, rubric), "D_FIELD_CORRECTIONS")
 		if r.Status != assessment.CriterionMet || len(r.EvidenceRefs) != 1 {
 			t.Fatalf("D_FIELD_CORRECTIONS = %+v, want met with one evidence ref", r)
 		}
@@ -251,7 +271,7 @@ func TestFieldCorrectionsRule(t *testing.T) {
 		ev.FinalCard.Address.Okrug = "ЮАР"
 		ref := acceptedReference()
 		ref.FieldCorrections = []content.FieldCorrection{{Path: "/card/address/okrug", ExpectedValue: "ЮАО", BeforeStatus: content.ReactionAccepted}}
-		r := findResult(t, Evaluator.Evaluate(ev, ref, rubric), "D_FIELD_CORRECTIONS")
+		r := findResult(t, evaluate(t, ev, ref, rubric), "D_FIELD_CORRECTIONS")
 		if r.Status != assessment.CriterionNotMet {
 			t.Fatalf("D_FIELD_CORRECTIONS = %+v, want not_met", r)
 		}
@@ -262,7 +282,7 @@ func TestFieldCorrectionsRule(t *testing.T) {
 		ev.FinalCard.Address.Okrug = "ЮАО" // e.g. authored correctly from the start, never actually corrected
 		ref := acceptedReference()
 		ref.FieldCorrections = []content.FieldCorrection{{Path: "/card/address/okrug", ExpectedValue: "ЮАО", BeforeStatus: content.ReactionAccepted}}
-		r := findResult(t, Evaluator.Evaluate(ev, ref, rubric), "D_FIELD_CORRECTIONS")
+		r := findResult(t, evaluate(t, ev, ref, rubric), "D_FIELD_CORRECTIONS")
 		if r.Status != assessment.CriterionNotMet {
 			t.Fatalf("D_FIELD_CORRECTIONS = %+v, want not_met (no set_card_field action)", r)
 		}
@@ -274,7 +294,7 @@ func TestSequenceRule(t *testing.T) {
 
 	t.Run("empty expected chain is not_applicable", func(t *testing.T) {
 		ev := baseEvidence()
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "S_SEQUENCE")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "S_SEQUENCE")
 		if r.Status != assessment.CriterionNotApplicable {
 			t.Fatalf("S_SEQUENCE = %+v, want not_applicable", r)
 		}
@@ -285,7 +305,7 @@ func TestSequenceRule(t *testing.T) {
 		ev.Derived.Chain = []content.Reaction{content.ReactionAccepted, content.ReactionResponding, content.ReactionArrived, content.ReactionCompleted}
 		ref := acceptedReference()
 		ref.ExpectedChain = []content.Reaction{content.ReactionResponding, content.ReactionArrived, content.ReactionCompleted}
-		r := findResult(t, Evaluator.Evaluate(ev, ref, rubric), "S_SEQUENCE")
+		r := findResult(t, evaluate(t, ev, ref, rubric), "S_SEQUENCE")
 		if r.Status != assessment.CriterionMet {
 			t.Fatalf("S_SEQUENCE = %+v, want met", r)
 		}
@@ -296,7 +316,7 @@ func TestSequenceRule(t *testing.T) {
 		ev.Derived.Chain = []content.Reaction{content.ReactionAccepted, content.ReactionResponding}
 		ref := acceptedReference()
 		ref.ExpectedChain = []content.Reaction{content.ReactionResponding, content.ReactionArrived, content.ReactionCompleted}
-		r := findResult(t, Evaluator.Evaluate(ev, ref, rubric), "S_SEQUENCE")
+		r := findResult(t, evaluate(t, ev, ref, rubric), "S_SEQUENCE")
 		if r.Status != assessment.CriterionPartial || r.Score == nil || *r.Score < 0.32 || *r.Score > 0.34 {
 			t.Fatalf("S_SEQUENCE = %+v, want partial ~1/3", r)
 		}
@@ -307,7 +327,7 @@ func TestSequenceRule(t *testing.T) {
 		ev.Derived.Chain = []content.Reaction{content.ReactionAccepted}
 		ref := acceptedReference()
 		ref.ExpectedChain = []content.Reaction{content.ReactionResponding}
-		r := findResult(t, Evaluator.Evaluate(ev, ref, rubric), "S_SEQUENCE")
+		r := findResult(t, evaluate(t, ev, ref, rubric), "S_SEQUENCE")
 		if r.Status != assessment.CriterionNotMet {
 			t.Fatalf("S_SEQUENCE = %+v, want not_met", r)
 		}
@@ -336,7 +356,7 @@ func TestCallRules(t *testing.T) {
 
 	t.Run("not required is not_applicable for both call criteria", func(t *testing.T) {
 		ev := baseEvidence()
-		results := Evaluator.Evaluate(ev, acceptedReference(), rubric)
+		results := evaluate(t, ev, acceptedReference(), rubric)
 		for _, id := range []string{"C_CALL_MADE", "C_CALL_LOG"} {
 			if r := findResult(t, results, id); r.Status != assessment.CriterionNotApplicable {
 				t.Fatalf("%s = %+v, want not_applicable", id, r)
@@ -346,7 +366,7 @@ func TestCallRules(t *testing.T) {
 
 	t.Run("required, completed, and logged is met for both", func(t *testing.T) {
 		ev := requiredCallEvidence(strPtr("дежурный по бригаде"), strPtr("адрес и тип происшествия переданы"))
-		results := Evaluator.Evaluate(ev, requiredCallReference(), rubric)
+		results := evaluate(t, ev, requiredCallReference(), rubric)
 		for _, id := range []string{"C_CALL_MADE", "C_CALL_LOG"} {
 			if r := findResult(t, results, id); r.Status != assessment.CriterionMet {
 				t.Fatalf("%s = %+v, want met", id, r)
@@ -356,7 +376,7 @@ func TestCallRules(t *testing.T) {
 
 	t.Run("required but never completed is not_met for both", func(t *testing.T) {
 		ev := baseEvidence()
-		results := Evaluator.Evaluate(ev, requiredCallReference(), rubric)
+		results := evaluate(t, ev, requiredCallReference(), rubric)
 		for _, id := range []string{"C_CALL_MADE", "C_CALL_LOG"} {
 			if r := findResult(t, results, id); r.Status != assessment.CriterionNotMet {
 				t.Fatalf("%s = %+v, want not_met", id, r)
@@ -366,7 +386,7 @@ func TestCallRules(t *testing.T) {
 
 	t.Run("completed but log incomplete is met for made, not_met for log", func(t *testing.T) {
 		ev := requiredCallEvidence(strPtr("дежурный"), nil)
-		results := Evaluator.Evaluate(ev, requiredCallReference(), rubric)
+		results := evaluate(t, ev, requiredCallReference(), rubric)
 		if r := findResult(t, results, "C_CALL_MADE"); r.Status != assessment.CriterionMet {
 			t.Fatalf("C_CALL_MADE = %+v, want met", r)
 		}
@@ -381,7 +401,7 @@ func TestAddressRule(t *testing.T) {
 
 	t.Run("no mention at all is not_applicable", func(t *testing.T) {
 		ev := baseEvidence()
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "G_ADDRESS")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "G_ADDRESS")
 		if r.Status != assessment.CriterionNotApplicable {
 			t.Fatalf("G_ADDRESS = %+v, want not_applicable", r)
 		}
@@ -390,7 +410,7 @@ func TestAddressRule(t *testing.T) {
 	t.Run("matching street and house is met", func(t *testing.T) {
 		ev := baseEvidence()
 		ev.Comments = []training.EvidenceComment{{Seq: 1, Text: "Чертановская улица, дом 58, дерево упало"}}
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "G_ADDRESS")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "G_ADDRESS")
 		if r.Status != assessment.CriterionMet {
 			t.Fatalf("G_ADDRESS = %+v, want met", r)
 		}
@@ -399,7 +419,7 @@ func TestAddressRule(t *testing.T) {
 	t.Run("street matches but a different house number is not_met", func(t *testing.T) {
 		ev := baseEvidence()
 		ev.Comments = []training.EvidenceComment{{Seq: 1, Text: "Чертановская улица, дом 12"}}
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "G_ADDRESS")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "G_ADDRESS")
 		if r.Status != assessment.CriterionNotMet {
 			t.Fatalf("G_ADDRESS = %+v, want not_met", r)
 		}
@@ -408,7 +428,7 @@ func TestAddressRule(t *testing.T) {
 	t.Run("a bare number with no street context is unavailable, never a guess", func(t *testing.T) {
 		ev := baseEvidence()
 		ev.Comments = []training.EvidenceComment{{Seq: 1, Text: "2 пострадавших, бригада выехала"}}
-		r := findResult(t, Evaluator.Evaluate(ev, acceptedReference(), rubric), "G_ADDRESS")
+		r := findResult(t, evaluate(t, ev, acceptedReference(), rubric), "G_ADDRESS")
 		if r.Status != assessment.CriterionUnavailable {
 			t.Fatalf("G_ADDRESS = %+v, want unavailable", r)
 		}
@@ -420,7 +440,7 @@ func TestLLMCriteriaAreUnavailableOrNotApplicable(t *testing.T) {
 
 	t.Run("no predicate set is not_applicable", func(t *testing.T) {
 		ev := baseEvidence()
-		results := Evaluator.Evaluate(ev, acceptedReference(), rubric)
+		results := evaluate(t, ev, acceptedReference(), rubric)
 		if r := findResult(t, results, "D_COMMENT_CONTENT"); r.Status != assessment.CriterionNotApplicable {
 			t.Fatalf("D_COMMENT_CONTENT = %+v, want not_applicable", r)
 		}
@@ -434,7 +454,7 @@ func TestLLMCriteriaAreUnavailableOrNotApplicable(t *testing.T) {
 		ref := acceptedReference()
 		ref.PrimaryDecision.CommentMustMention = []string{"адрес"}
 		ref.Call = content.Call{Required: true, To: "crew_leader"}
-		results := Evaluator.Evaluate(ev, ref, rubric)
+		results := evaluate(t, ev, ref, rubric)
 		for _, id := range []string{"D_COMMENT_CONTENT", "C_CALL_CONTENT", "C_CALL_LOG_CONTENT", "G_GRAMMAR"} {
 			if r := findResult(t, results, id); r.Status != assessment.CriterionUnavailable {
 				t.Fatalf("%s = %+v, want unavailable", id, r)
@@ -450,7 +470,7 @@ func TestEvaluateReturnsOneResultPerEffectiveCriterion(t *testing.T) {
 	}
 	scoring := &content.Scoring{Disabled: []string{"G_GRAMMAR"}}
 	rubric := assessment.Merge(base, scoring)
-	results := Evaluator.Evaluate(baseEvidence(), acceptedReference(), rubric)
+	results := evaluate(t, baseEvidence(), acceptedReference(), rubric)
 	if len(results) != len(rubric.Criteria) {
 		t.Fatalf("results = %d, want %d (one per effective criterion)", len(results), len(rubric.Criteria))
 	}

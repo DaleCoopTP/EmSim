@@ -110,13 +110,28 @@ func (s *Store) InputByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (assessm
 // CriterionResult has no json tags of its own — assessment's domain
 // package stays free of encoding concerns.
 type criterionRow struct {
-	ID           string   `json:"id"`
-	Status       string   `json:"status"`
-	Score        *float64 `json:"score"`
-	Weight       float64  `json:"weight"`
-	Critical     bool     `json:"critical"`
-	EvidenceRefs []string `json:"evidence_refs"`
-	Explanation  string   `json:"explanation"`
+	ID            string      `json:"id"`
+	Status        string      `json:"status"`
+	Score         *float64    `json:"score"`
+	Weight        float64     `json:"weight"`
+	Critical      bool        `json:"critical"`
+	EvidenceRefs  []string    `json:"evidence_refs"`
+	Explanation   string      `json:"explanation"`
+	PenaltyPoints *float64    `json:"penalty_points,omitempty"`
+	Details       []detailRow `json:"details,omitempty"`
+}
+
+// detailRow is CriterionDetail's jsonb shape (openapi.yaml's
+// CriterionDetail, 112-6/ADR-026) — kept alongside criterionRow for the
+// same reason: the domain type stays free of encoding tags.
+type detailRow struct {
+	Key       string  `json:"key"`
+	Label     string  `json:"label,omitempty"`
+	Points    float64 `json:"points"`
+	MaxPoints float64 `json:"max_points"`
+	Status    string  `json:"status"`
+	Actual    *string `json:"actual,omitempty"`
+	Expected  *string `json:"expected,omitempty"`
 }
 
 func toCriterionRow(r assessment.CriterionResult) criterionRow {
@@ -124,9 +139,20 @@ func toCriterionRow(r assessment.CriterionResult) criterionRow {
 	if refs == nil {
 		refs = []string{}
 	}
+	var details []detailRow
+	if len(r.Details) > 0 {
+		details = make([]detailRow, 0, len(r.Details))
+		for _, d := range r.Details {
+			details = append(details, detailRow{
+				Key: d.Key, Label: d.Label, Points: d.Points, MaxPoints: d.MaxPoints,
+				Status: string(d.Status), Actual: d.Actual, Expected: d.Expected,
+			})
+		}
+	}
 	return criterionRow{
 		ID: r.ID, Status: string(r.Status), Score: r.Score, Weight: r.Weight,
 		Critical: r.Critical, EvidenceRefs: refs, Explanation: r.Explanation,
+		PenaltyPoints: r.PenaltyPoints, Details: details,
 	}
 }
 
@@ -145,9 +171,20 @@ func fromCriteriaJSON(raw []byte) ([]assessment.CriterionResult, error) {
 	}
 	results := make([]assessment.CriterionResult, 0, len(rows))
 	for _, row := range rows {
+		var details []assessment.CriterionDetail
+		if len(row.Details) > 0 {
+			details = make([]assessment.CriterionDetail, 0, len(row.Details))
+			for _, d := range row.Details {
+				details = append(details, assessment.CriterionDetail{
+					Key: d.Key, Label: d.Label, Points: d.Points, MaxPoints: d.MaxPoints,
+					Status: assessment.CriterionStatus(d.Status), Actual: d.Actual, Expected: d.Expected,
+				})
+			}
+		}
 		results = append(results, assessment.CriterionResult{
 			ID: row.ID, Status: assessment.CriterionStatus(row.Status), Score: row.Score, Weight: row.Weight,
 			Critical: row.Critical, EvidenceRefs: row.EvidenceRefs, Explanation: row.Explanation,
+			PenaltyPoints: row.PenaltyPoints, Details: details,
 		})
 	}
 	return results, nil

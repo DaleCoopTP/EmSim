@@ -35,11 +35,23 @@ func ValidateRevision(in RevisionInput, effective Rubric, current []CriterionRes
 
 	given := make(map[string]CriterionResult, len(in.Criteria))
 	for _, c := range in.Criteria {
-		if _, ok := effective.ByID(c.ID); !ok {
+		rc, ok := effective.ByID(c.ID)
+		if !ok {
 			return nil, validationErr("criteria", fmt.Sprintf("unknown or disabled criterion %q", c.ID))
 		}
 		if c.Status == CriterionUnavailable {
 			return nil, validationErr("criteria", fmt.Sprintf("criterion %q must be resolved, not left unavailable", c.ID))
+		}
+		// 112-6/ADR-026: penalty_points is meaningful only for kind=penalty
+		// (a subtraction, never a weighted 0..1 fraction) and must never be
+		// negative — a negative "penalty" would silently inflate the score
+		// past what any deterministic rule could produce.
+		if rc.Kind == "penalty" {
+			if c.PenaltyPoints != nil && *c.PenaltyPoints < 0 {
+				return nil, validationErr("criteria", fmt.Sprintf("criterion %q: penalty_points must be >= 0", c.ID))
+			}
+		} else if c.PenaltyPoints != nil {
+			return nil, validationErr("criteria", fmt.Sprintf("criterion %q: penalty_points only applies to a penalty criterion", c.ID))
 		}
 		given[c.ID] = c
 	}

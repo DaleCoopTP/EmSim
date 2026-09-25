@@ -24,6 +24,18 @@ type ItemReader interface {
 	ItemByID(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock training.Lock) (training.Item, error)
 }
 
+// LessonReader is assessment's read of training's own lesson —
+// specifically lessons.rubric_version, frozen at lesson creation
+// (content.RubricVersionFor, training.Service). 112-6/ADR-026's c3:
+// an item's own rubric version must always come from its lesson, never
+// from "whatever LoadDefaultFor considers current today" — only needed
+// when no assessment (auto or expert) exists yet for an item, since one
+// that exists already carries its own frozen RubricEffective. Method
+// signature matches *trainingpg.Store's own LessonByID exactly.
+type LessonReader interface {
+	LessonByID(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock training.Lock) (training.Lesson, error)
+}
+
 // EvidenceReader is assessment's read of training's sealed evidence — the
 // RuleEvaluator's own input, decoded and digest-checked against the
 // value assessment_inputs.body already recorded (ADR-006's

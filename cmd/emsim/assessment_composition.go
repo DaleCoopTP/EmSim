@@ -24,7 +24,7 @@ func newAssessmentService(pool *pgxpool.Pool, taskStore *tasks.Store) *assessmen
 	trainingStore := trainingpg.NewStore(pool)
 	contentStore := contentpg.NewStore(pool)
 	return assessment.NewService(
-		assessmentpg.NewStore(pool), trainingStore, trainingStore, contentStore, taskStore,
+		assessmentpg.NewStore(pool), trainingStore, trainingStore, trainingStore, contentStore, taskStore,
 		assessment.Registry{content.ExerciseTypeDDSProcessing: assessmentdds.Evaluator},
 	)
 }

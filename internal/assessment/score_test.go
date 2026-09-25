@@ -93,3 +93,92 @@ func TestScoreAllNotApplicableYieldsZeroWithoutDivideByZero(t *testing.T) {
 		t.Fatalf("got = %+v, want ready with score 0", got)
 	}
 }
+
+func TestScorePenaltySubtractsAfterNormalization(t *testing.T) {
+	effective := Rubric{
+		PassThreshold: 70, CriticalCap: 100,
+		Criteria: []RubricCriterion{
+			{ID: "A", Kind: "deterministic", Weight: 100},
+			{ID: "P", Kind: "penalty"},
+		},
+	}
+	ten := 10.0
+	results := []CriterionResult{
+		{ID: "A", Status: CriterionMet, Weight: 100},
+		{ID: "P", PenaltyPoints: &ten},
+	}
+	got := Score(results, effective)
+	if got.Status != StatusReady || got.Score == nil {
+		t.Fatalf("got = %+v, want ready with a score", got)
+	}
+	if *got.Score != 90 {
+		t.Fatalf("score = %v, want 90 (100 normalized - 10 penalty)", *got.Score)
+	}
+}
+
+func TestScorePenaltyExcludedFromNormalization(t *testing.T) {
+	// A penalty criterion must never dilute the weighted average the way
+	// an ordinary criterion with a huge weight would (mirrors
+	// TestScoreNormalizesAfterExclusions' not_applicable case).
+	effective := Rubric{
+		PassThreshold: 0, CriticalCap: 100,
+		Criteria: []RubricCriterion{
+			{ID: "A", Kind: "deterministic", Weight: 50},
+			{ID: "B", Kind: "deterministic", Weight: 50},
+			{ID: "P", Kind: "penalty"},
+		},
+	}
+	zero := 0.0
+	results := []CriterionResult{
+		{ID: "A", Status: CriterionMet, Weight: 50},
+		{ID: "B", Status: CriterionNotMet, Weight: 50},
+		{ID: "P", Weight: 1000, PenaltyPoints: &zero},
+	}
+	got := Score(results, effective)
+	if got.Score == nil || *got.Score != 50 {
+		t.Fatalf("score = %v, want 50 (penalty's own huge Weight must not enter normalization)", got.Score)
+	}
+}
+
+func TestScorePenaltyClampsToZero(t *testing.T) {
+	effective := Rubric{
+		PassThreshold: 1, CriticalCap: 100,
+		Criteria: []RubricCriterion{
+			{ID: "A", Kind: "deterministic", Weight: 100},
+			{ID: "P", Kind: "penalty"},
+		},
+	}
+	big := 500.0
+	results := []CriterionResult{
+		{ID: "A", Status: CriterionMet, Weight: 100},
+		{ID: "P", PenaltyPoints: &big},
+	}
+	got := Score(results, effective)
+	if got.Score == nil || *got.Score != 0 {
+		t.Fatalf("score = %v, want 0 (clamped, never negative)", got.Score)
+	}
+	if got.Passed == nil || *got.Passed {
+		t.Fatal("passed must be false at a clamped 0 score below any positive threshold")
+	}
+}
+
+func TestScoreMultiplePenaltiesSum(t *testing.T) {
+	effective := Rubric{
+		PassThreshold: 0, CriticalCap: 100,
+		Criteria: []RubricCriterion{
+			{ID: "A", Kind: "deterministic", Weight: 100},
+			{ID: "P1", Kind: "penalty"},
+			{ID: "P2", Kind: "penalty"},
+		},
+	}
+	five, ten := 5.0, 10.0
+	results := []CriterionResult{
+		{ID: "A", Status: CriterionMet, Weight: 100},
+		{ID: "P1", PenaltyPoints: &five},
+		{ID: "P2", PenaltyPoints: &ten},
+	}
+	got := Score(results, effective)
+	if got.Score == nil || *got.Score != 85 {
+		t.Fatalf("score = %v, want 85 (100 - 5 - 10)", got.Score)
+	}
+}
