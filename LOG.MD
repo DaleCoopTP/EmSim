@@ -2673,3 +2673,53 @@ Next: коммит 8 (UI `ItemReview.tsx`/`operator112.spec.ts`, уже
 docker-compose стек в браузере, визуально проверить новую таблицу
 автооценки, прогнать `npm run test:e2e` и закоммитить; затем коммит 10
 (документация: README, seed/README, slice-planning-112.md, CLAUDE.md).
+
+## 2026-09-26 — 112-6, коммит 8 и правка коммита 9: UI разбора + снятие старой блокировки экспорта
+
+Закоммитил уже написанный (с прошлой сессии) `ItemReview.tsx`: для
+`operator112_intake` — таблицы «Блоки»/«Штрафы» (`IntakeCriteriaTable`,
+раскрываемые `details`) вместо статус-таблицы ДДС, форма ревизии —
+числовые баллы по блоку/штрафу (`buildIntakeRevisionCriteria`
+переводит их обратно в `CriterionResult[]`: доля 0..1 от веса для
+блока, `penalty_points` напрямую для штрафа). `assessment.ts`:
+`rubric_effective.criteria` получил `title`/`kind`. `operator112.spec.ts`:
+новые проверки автооценки в full_case-тесте (адрес 0/35 — эталона
+ещё нет; штраф по службам −0) и переписанная ручная ревизия в первом
+тесте (три статус-селекта → числовые баллы, итог 82.5).
+
+Пересобрал compose-стек (`docker compose up --build -d`) и прогнал
+`npm run test:e2e` вживую (изолированный e2e-проект из `web/e2e/
+run.mjs`) — сначала упал `operator112.spec.ts`'s full_case-тест:
+`page.locator("tr", {hasText: "Адрес происшествия"})` стал матчить
+две строки (новую таблицу «Блоки» и форму ревизии — обе показывают
+title критерия). Исправил, ограничив локатор `h3:has-text("Блоки") +
+table`/`h3:has-text("Штрафы") + table`. После этого все 6 e2e-тестов
+зелёные.
+
+Ручная проверка в браузере (обязательство CLAUDE.md по UI): создал
+занятие 112 через UI, прошёл `card_only`-кейс (взрыв газа + ДТП)
+трейни, закрыл карточку — обнаружил, что `internal/reporting/http/
+handlers.go`'s `exportAvailable` до сих пор блокирует `report.csv`/
+`report.pdf` для `operator112_intake` 409-ом «available in slice
+112-5» — остаток до коммита 6, о котором коммит 9 забыл (фронт уже
+показывал колонки, но сам экспорт всё равно отказывал). Убрал
+`exportAvailable` и оба вызова целиком; проверил вручную (`curl` с
+сессией инструктора) — `report.csv` отдаёт строку с блоками/штрафами,
+`report.pdf` формируется и скачивается как валидный PDF.
+
+Изменённые файлы: `web/src/routes/instructor/ItemReview.tsx`,
+`web/src/api/assessment.ts`, `web/e2e/operator112.spec.ts` (коммит
+`817c8c0`); `internal/reporting/http/handlers.go` (коммит `d14d342`).
+
+Validation: `go build`/`vet`/`test ./...`, `gofmt -l`, `python3
+design-docs/contracts/check.py`, `cd web && npx tsc -b && npm run
+build && npm run lint` (тот же единственный пред-существующий
+warning), `make verify`, `make verify-web`, полный `npm run test:e2e`
+(6/6 зелёных) дважды — до и после правки handlers.go — плюс ручная
+сквозная проверка в браузере через реальный занятие/карточку/разбор/
+отчёт.
+
+Next: коммит 10 — документация (`README.md`, `seed/README.md`,
+`slice-planning-112.md`, `CLAUDE.md`), финальная запись в LOG.MD,
+проверка, что примечание о будущем прямом редактировании поля
+«Адрес» в конце `slice-112-6-plan.md` не потеряно.
