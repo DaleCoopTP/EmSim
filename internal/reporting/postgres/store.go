@@ -156,16 +156,22 @@ var criterionLabels = map[string]string{
 	"T_ANSWER": "Норматив ответа на вызов", "T_FILL": "Норматив заполнения карточки", "DESCRIPTION_PRESENT": "Описание со слов заявителя",
 	"P_ADDRESS_REGION": "Штраф: неверная страна или субъект", "P_APPLICANT_NAME": "Штраф: неверное ФИО заявителя",
 	"P_SERVICES": "Штраф: неверный список служб", "P_EXTRA_PROFILE": "Штраф: лишняя профильная карта",
+	// ADR-028 (operator112/rubric-v3): DESCRIPTION_CONTENT replaces
+	// DESCRIPTION_PRESENT for a judge-enabled lesson — same label, same
+	// report column, since both mean "Описание со слов заявителя" to an
+	// instructor regardless of which rubric version actually scored it.
+	"DESCRIPTION_CONTENT": "Описание со слов заявителя",
 }
 
 // intake112BlockIDs/intake112PenaltyIDs are rubric.operator112.json's
-// own criteria ids by kind (112-6/ADR-026) — a static list here mirrors
+// own criteria ids by kind (112-6/ADR-026), plus rubric-v3's own
+// DESCRIPTION_CONTENT (ADR-028) — a static list here mirrors
 // criterionLabels' own convention rather than re-deriving "kind" from
 // the criteria jsonb, which does not store it (CriterionResult has no
 // Kind field; only assessment.RubricCriterion does).
 var intake112BlockIDs = map[string]bool{
 	"ADDRESS_FIELDS": true, "PROFILE_CARDS": true, "CALLER_TOPICS": true,
-	"T_ANSWER": true, "T_FILL": true, "DESCRIPTION_PRESENT": true,
+	"T_ANSWER": true, "T_FILL": true, "DESCRIPTION_PRESENT": true, "DESCRIPTION_CONTENT": true,
 }
 var intake112PenaltyIDs = map[string]bool{
 	"P_ADDRESS_REGION": true, "P_APPLICANT_NAME": true, "P_SERVICES": true, "P_EXTRA_PROFILE": true,
