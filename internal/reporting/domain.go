@@ -91,6 +91,25 @@ type ReportItem struct {
 	Level              string     `json:"level"`
 	AssessmentID       *uuid.UUID `json:"assessment_id"`
 	AssessmentRevision *int       `json:"assessment_revision"`
+	// IntakeBlocks/IntakePenaltyTotal (112-6/ADR-026) are set only for an
+	// operator112_intake row with a final ready assessment on rubric-v2 —
+	// nil/empty for every DDS row and for a 112 row still pending/
+	// needs_review/on rubric-v1. Read directly from the final assessment's
+	// own criteria jsonb (weight/score/penalty_points are already frozen
+	// there per revision), not re-derived from "today's" rubric.
+	IntakeBlocks       []IntakeBlockScore `json:"intake_blocks,omitempty"`
+	IntakePenaltyTotal *float64           `json:"intake_penalty_total,omitempty"`
+}
+
+// IntakeBlockScore is one operator112/rubric-v2 block's own points-out-
+// of-weight breakdown (112-6/ADR-026) — Points is nil only if the block
+// criterion itself was unavailable (112-5b's AI-caller divergence
+// carve-out), not merely 0.
+type IntakeBlockScore struct {
+	CriterionID string   `json:"criterion_id"`
+	Label       string   `json:"label"`
+	Points      *float64 `json:"points"`
+	MaxPoints   float64  `json:"max_points"`
 }
 
 type Participant struct {

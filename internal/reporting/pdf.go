@@ -70,6 +70,12 @@ func RenderPDF(snapshot Snapshot, generatedAt time.Time) ([]byte, error) {
 		if len(item.Errors) > 0 {
 			paragraph(pdf, "Ошибки: "+errorText(item.Errors))
 		}
+		if len(item.IntakeBlocks) > 0 {
+			paragraph(pdf, "Блоки 112: "+intakeBlocksText(item.IntakeBlocks))
+		}
+		if item.IntakePenaltyTotal != nil {
+			paragraph(pdf, fmt.Sprintf("Штрафы 112: -%.2f", *item.IntakePenaltyTotal))
+		}
 		pdf.Ln(1)
 	}
 	if len(snapshot.Report.Aggregates.TopErrors) > 0 {

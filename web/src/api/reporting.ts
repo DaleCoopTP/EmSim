@@ -10,6 +10,13 @@ export interface PublicError {
   guide_ref: string | null;
 }
 
+export interface IntakeBlockScore {
+  criterion_id: string;
+  label: string;
+  points: number | null;
+  max_points: number;
+}
+
 export interface ReportItem {
   item_id: string;
   lesson_id: string;
@@ -36,6 +43,10 @@ export interface ReportItem {
   level: string;
   assessment_id: string | null;
   assessment_revision: number | null;
+  // 112-6/ADR-026: set only for an operator112_intake row with a final
+  // ready assessment on rubric-v2 — undefined/empty for a DDS row.
+  intake_blocks?: IntakeBlockScore[];
+  intake_penalty_total?: number | null;
 }
 
 export interface ReportParticipant {

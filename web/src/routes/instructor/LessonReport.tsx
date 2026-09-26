@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { errorMessage } from "../../api/errors";
 import {
   reportFilesQueryKey, requestLessonPDF, useLessonReport, useReportFiles,
-  type AssessmentStatus, type ReportFile,
+  type AssessmentStatus, type ReportFile, type ReportItem,
 } from "../../api/reporting";
 import { formatDateTime } from "../../format";
 import { useLesson } from "../../api/training";
@@ -29,6 +29,17 @@ function score(value: number | null) {
 
 function seconds(value: number | null) {
   return value === null ? "—" : `${value.toFixed(1)} с`;
+}
+
+// 112-6/ADR-026: mirrors the CSV/PDF export's own "Label: points/max" join,
+// so the three views read the same breakdown the same way.
+function intakeBlocksText(blocks: ReportItem["intake_blocks"]) {
+  if (!blocks || blocks.length === 0) return "—";
+  return blocks.map((block) => `${block.label}: ${block.points ?? "—"}/${block.max_points}`).join(" | ");
+}
+
+function intakePenaltyText(value: number | null | undefined) {
+  return value == null ? "—" : `−${value.toFixed(2)}`;
 }
 
 export function LessonReportRoute() {
@@ -81,18 +92,18 @@ export function LessonReportRoute() {
 
       <h2>Карточки</h2>
       <table>
-        <thead><tr><th>Обучаемый</th><th>РМ</th><th>Сценарий</th><th>Карточка</th><th>Балл</th><th>Оценка</th><th>Время</th><th>Ошибки</th></tr></thead>
+        <thead><tr><th>Обучаемый</th><th>РМ</th><th>Сценарий</th><th>Карточка</th><th>Балл</th><th>Оценка</th><th>Время</th><th>Ошибки</th>{intake && <><th>Блоки 112</th><th>Штрафы 112</th></>}</tr></thead>
         <tbody>{value.items.map((item) => (
           <tr key={item.item_id}>
             <td>{item.full_name}</td><td>№ {item.workstation_no}</td><td>{item.scenario_title}</td><td>{item.card_number}</td>
             <td>{score(item.score)}</td><td>{assessmentLabels[item.assessment_status]}</td>
             <td>{seconds(item.total_seconds)}</td><td>{item.errors.map((error) => error.label).join("; ") || "—"}</td>
+            {intake && <><td>{intakeBlocksText(item.intake_blocks)}</td><td>{intakePenaltyText(item.intake_penalty_total)}</td></>}
           </tr>
         ))}</tbody>
       </table>
 
 	  <h2>Экспорт</h2>
-	  {intake ? <p>CSV и PDF для 112 появятся в срезе 112-5.</p> : <>
 	  <p><a href={`/api/v1/lessons/${encodeURIComponent(lessonId)}/report.csv`}>Скачать CSV</a></p>
 	  <p><button type="button" disabled={requestPDF.isPending} onClick={() => requestPDF.mutate()}>Сформировать PDF-снимок</button></p>
       {requestPDF.isError && <p role="alert" className="error">{errorMessage(requestPDF.error)}</p>}
@@ -108,7 +119,6 @@ export function LessonReportRoute() {
           ))}</tbody>
         </table>
       )}
-	  </>}
     </section>
   );
 }

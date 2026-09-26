@@ -148,12 +148,67 @@ var criterionLabels = map[string]string{
 	"D_PRIMARY": "Первичное решение", "D_COMMENT_REQUIRED": "Обязательный комментарий", "D_FIELD_CORRECTIONS": "Исправление данных",
 	"S_SEQUENCE": "Последовательность действий", "C_CALL_MADE": "Обязательный звонок", "C_CALL_LOG": "Оформление звонка",
 	"G_ADDRESS": "Корректность адреса", "D_COMMENT_CONTENT": "Содержание комментария", "C_CALL_CONTENT": "Содержание доклада", "C_CALL_LOG_CONTENT": "Содержание журнала звонка", "G_GRAMMAR": "Грамматика",
+	// 112-6/ADR-026 (operator112/rubric-v2) — mirrors rubric.operator112.
+	// json's own criteria[].title one-to-one, so a trainee's "Ошибки"
+	// column and an instructor's report both name blocks/penalties the
+	// same way the review UI does.
+	"ADDRESS_FIELDS": "Адрес происшествия", "PROFILE_CARDS": "Профильные карты", "CALLER_TOPICS": "Темы разговора с заявителем",
+	"T_ANSWER": "Норматив ответа на вызов", "T_FILL": "Норматив заполнения карточки", "DESCRIPTION_PRESENT": "Описание со слов заявителя",
+	"P_ADDRESS_REGION": "Штраф: неверная страна или субъект", "P_APPLICANT_NAME": "Штраф: неверное ФИО заявителя",
+	"P_SERVICES": "Штраф: неверный список служб", "P_EXTRA_PROFILE": "Штраф: лишняя профильная карта",
+}
+
+// intake112BlockIDs/intake112PenaltyIDs are rubric.operator112.json's
+// own criteria ids by kind (112-6/ADR-026) — a static list here mirrors
+// criterionLabels' own convention rather than re-deriving "kind" from
+// the criteria jsonb, which does not store it (CriterionResult has no
+// Kind field; only assessment.RubricCriterion does).
+var intake112BlockIDs = map[string]bool{
+	"ADDRESS_FIELDS": true, "PROFILE_CARDS": true, "CALLER_TOPICS": true,
+	"T_ANSWER": true, "T_FILL": true, "DESCRIPTION_PRESENT": true,
+}
+var intake112PenaltyIDs = map[string]bool{
+	"P_ADDRESS_REGION": true, "P_APPLICANT_NAME": true, "P_SERVICES": true, "P_EXTRA_PROFILE": true,
 }
 
 type criterion struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
+	ID            string   `json:"id"`
+	Status        string   `json:"status"`
+	Score         *float64 `json:"score"`
+	Weight        float64  `json:"weight"`
+	PenaltyPoints *float64 `json:"penalty_points"`
 }
+
+// intake112Breakdown extracts ReportItem's own IntakeBlocks/
+// IntakePenaltyTotal from a final assessment's already-decoded criteria
+// (112-6/ADR-026) — a DDS row's criteria simply contain none of these
+// ids, so both return values stay nil/empty for it.
+func intake112Breakdown(criteria []criterion) ([]reporting.IntakeBlockScore, *float64) {
+	var blocks []reporting.IntakeBlockScore
+	var penaltyTotal float64
+	var hasPenalty bool
+	for _, c := range criteria {
+		switch {
+		case intake112BlockIDs[c.ID]:
+			var points *float64
+			if c.Score != nil {
+				p := *c.Score * c.Weight
+				points = &p
+			}
+			blocks = append(blocks, reporting.IntakeBlockScore{CriterionID: c.ID, Label: criterionLabels[c.ID], Points: points, MaxPoints: c.Weight})
+		case intake112PenaltyIDs[c.ID]:
+			hasPenalty = true
+			if c.PenaltyPoints != nil {
+				penaltyTotal += *c.PenaltyPoints
+			}
+		}
+	}
+	if !hasPenalty {
+		return blocks, nil
+	}
+	return blocks, &penaltyTotal
+}
+
 type feedback struct {
 	CriterionID string `json:"criterion_id"`
 	GuideRef    string `json:"guide_ref"`
@@ -295,12 +350,25 @@ func (s *Store) items(ctx context.Context, query string, args ...any) ([]reporti
 			item.AssessmentStatus = reporting.AssessmentPending
 		}
 		item.Errors = publicErrors(criteriaRaw, feedbackRaw, item.AssessmentStatus)
+		item.IntakeBlocks, item.IntakePenaltyTotal = intakeBreakdownFor(criteriaRaw, item.AssessmentStatus)
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// intakeBreakdownFor is intake112Breakdown's own item-level entry point,
+// gated on AssessmentReady exactly like publicErrors — a needs_review or
+// still-pending row has no trustworthy final score to break into blocks.
+func intakeBreakdownFor(criteriaRaw []byte, status reporting.AssessmentStatus) ([]reporting.IntakeBlockScore, *float64) {
+	if status != reporting.AssessmentReady {
+		return nil, nil
+	}
+	var criteria []criterion
+	_ = json.Unmarshal(criteriaRaw, &criteria)
+	return intake112Breakdown(criteria)
 }
 
 func publicErrors(criteriaRaw, feedbackRaw []byte, status reporting.AssessmentStatus) []reporting.PublicError {

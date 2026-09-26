@@ -2406,6 +2406,19 @@ components:
           level: { $ref: '#/components/schemas/Level' }
           assessment_id: { type: [string, 'null'], format: uuid }
           assessment_revision: { type: [integer, 'null'] }
+          intake_blocks:
+            type: array
+            items: { $ref: '#/components/schemas/IntakeBlockScore' }
+          intake_penalty_total: { type: [number, 'null'] }
+
+    IntakeBlockScore:
+      type: object
+      required: [criterion_id, label, max_points]
+      properties:
+        criterion_id: { type: string }
+        label: { type: string }
+        points: { type: [number, 'null'] }
+        max_points: { type: number }
 
     ReportParticipant:
       type: object
