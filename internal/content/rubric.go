@@ -20,12 +20,28 @@ var rubricCriterionIDs = sync.OnceValues(func() (map[string]bool, error) {
 })
 
 // operator112RubricCriterionIDs is rubricCriterionIDs' own counterpart for
-// operator112/rubric-v2 (112-6/ADR-026) — a scenario's intake112.
+// operator112 (112-6/ADR-026, ADR-028) — a scenario's intake112.
 // reference.scoring may only re-weight, mark critical, or disable a
-// criterion this rubric actually has, the same rule DDS's reference.
-// scoring already follows against rubric.default.json.
+// criterion at least one operator112 rubric version actually has, the
+// same rule DDS's reference.scoring already follows against rubric.
+// default.json. It is the union of v1/v2/v3's own criterion ids, not just
+// whichever version a given lesson happens to freeze: a scenario's own
+// reference.scoring is authored once and must validate the same way
+// regardless of which rubric version a future lesson assigns it to (a
+// v2-only id like DESCRIPTION_PRESENT stays valid to disable even after
+// v3 replaces it with DESCRIPTION_CONTENT for judge-enabled lessons).
 var operator112RubricCriterionIDs = sync.OnceValues(func() (map[string]bool, error) {
-	return loadRubricCriterionIDs("rubric.operator112.json")
+	ids := make(map[string]bool)
+	for _, filename := range []string{"rubric.operator112.v1.json", "rubric.operator112.json", "rubric.operator112.v3.json"} {
+		fileIDs, err := loadRubricCriterionIDs(filename)
+		if err != nil {
+			return nil, err
+		}
+		for id := range fileIDs {
+			ids[id] = true
+		}
+	}
+	return ids, nil
 })
 
 func loadRubricCriterionIDs(name string) (map[string]bool, error) {
@@ -74,6 +90,22 @@ func RubricVersionFor(exerciseType ExerciseType) (string, error) {
 		return readRubricVersion("rubric.operator112.json")
 	}
 	return "", fmt.Errorf("content: unsupported exercise_type %q", exerciseType)
+}
+
+// Operator112RubricVersion is ADR-028's own version selector for a new
+// operator112_intake lesson/preview run — RubricVersionFor's own
+// operator112 case (rubric-v2) stays the safe, judge-independent
+// default; judgeEnabled=true instead freezes rubric-v3 (adds the LLM
+// DESCRIPTION_CONTENT criterion), so a lesson only ever gets a rubric
+// version its own deployment can actually score. training.Service is
+// the only caller — it derives judgeEnabled from its own process
+// configuration (ASSESSMENT_JUDGE), never from "whichever rubric file
+// happens to be newest".
+func Operator112RubricVersion(judgeEnabled bool) (string, error) {
+	if !judgeEnabled {
+		return RubricVersionFor(ExerciseTypeOperator112Intake)
+	}
+	return readRubricVersion("rubric.operator112.v3.json")
 }
 
 func readRubricVersion(filename string) (string, error) {

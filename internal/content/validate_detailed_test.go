@@ -27,12 +27,38 @@ func TestValidateDetailedStructuralErrorIsSingleIssue(t *testing.T) {
 func TestValidateDetailedCleanScenarioHasNoIssues(t *testing.T) {
 	catalog := pilotCatalog()
 	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
-	issues, err := ValidateDetailed(validAICallerFullCaseBody(), catalog)
+	body := validAICallerFullCaseBody()
+	body.Intake112.Reference.DescriptionQuestions = []Intake112DescriptionQuestion{{ID: "smell", Question: "Указано ли, что ощущается запах газа?"}}
+	issues, err := ValidateDetailed(body, catalog)
 	if err != nil {
 		t.Fatalf("ValidateDetailed error: %v", err)
 	}
 	if len(issues) != 0 {
 		t.Fatalf("issues = %+v, want none for a clean scenario", issues)
+	}
+}
+
+// TestNoDescriptionQuestionsIssue is ADR-028's own editor warning: a
+// full_case scenario approved with no description_questions still
+// validates (the judge's own "эталон не задан" zero, not an error), but
+// the editor should flag it so an author does not discover the always-
+// zero block only after every trainee's own auto-assessment.
+func TestNoDescriptionQuestionsIssue(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := validAICallerFullCaseBody() // no DescriptionQuestions set
+	issues, err := ValidateDetailed(body, catalog)
+	if err != nil {
+		t.Fatalf("ValidateDetailed error: %v", err)
+	}
+	found := false
+	for _, issue := range issues {
+		if issue.Code == "no_description_questions" && issue.Severity == SeverityWarning {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected no_description_questions warning, got %+v", issues)
 	}
 }
 

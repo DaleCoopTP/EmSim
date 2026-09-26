@@ -174,6 +174,23 @@ type Intake112Reference struct {
 	// already uses (ADR-013), validated against rubric.operator112.json's
 	// criterion ids rather than rubric.default.json's.
 	Scoring *Scoring `json:"scoring,omitempty"`
+	// DescriptionQuestions (ADR-028, operator112/rubric-v3) are the
+	// closed control questions DESCRIPTION_CONTENT's LLM judge answers
+	// against the trainee's own complaint field — never the scenario's
+	// dialogue or facts. Empty/absent means the same "эталон не задан"
+	// zero ADR-026 already applies to ADDRESS_FIELDS/PROFILE_CARDS, and
+	// no model call happens at all.
+	DescriptionQuestions []Intake112DescriptionQuestion `json:"description_questions,omitempty"`
+}
+
+// Intake112DescriptionQuestion is one scenario.schema.json intake112.
+// reference.description_questions[] entry — an id stable enough to
+// survive round-tripping through assessment_inputs.semantic_input and a
+// positively-phrased question text (e.g. "Указано ли, что …?") the judge
+// answers yes/no/needs_review against the complaint text alone.
+type Intake112DescriptionQuestion struct {
+	ID       string `json:"id"`
+	Question string `json:"question"`
 }
 
 type Intake112ExpectedCard struct {

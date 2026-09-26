@@ -34,3 +34,30 @@ func TestRubricVersionForUnsupportedExerciseType(t *testing.T) {
 		t.Fatal("RubricVersionFor must error for an unknown exercise_type")
 	}
 }
+
+// TestOperator112RubricVersionSelectsByJudge is ADR-028's own selector:
+// judgeEnabled=false must exactly match RubricVersionFor's own
+// operator112 case (never a silent v3 without a configured judge), and
+// judgeEnabled=true must be a different, newer version that still has
+// every rubric-v2 criterion (checked in evaluator_test.go/check.py, not
+// duplicated here).
+func TestOperator112RubricVersionSelectsByJudge(t *testing.T) {
+	off, err := Operator112RubricVersion(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := RubricVersionFor(ExerciseTypeOperator112Intake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off != want {
+		t.Fatalf("Operator112RubricVersion(false) = %q, want %q (RubricVersionFor's own value)", off, want)
+	}
+	on, err := Operator112RubricVersion(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on != "operator112/rubric-v3" {
+		t.Fatalf("Operator112RubricVersion(true) = %q, want operator112/rubric-v3", on)
+	}
+}

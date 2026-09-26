@@ -69,7 +69,25 @@ func collectIntake112AuthoringIssues(intake Intake112, catalog Catalog) []Valida
 	issues = append(issues, profileOutsideExpectedTypesIssues(intake, catalog)...)
 	issues = append(issues, servicesDivergeFromRulesIssues(intake, catalog)...)
 	issues = append(issues, ambiguousAskPatternIssues(intake)...)
+	issues = append(issues, noDescriptionQuestionsIssue(intake)...)
 	return issues
+}
+
+// noDescriptionQuestionsIssue is ADR-028's own editor warning: a
+// full_case scenario with no description_questions is not invalid (the
+// judge simply never runs and DESCRIPTION_CONTENT scores its ADR-026
+// "эталон не задан" zero, exactly like an empty ADDRESS_FIELDS
+// reference), but an author who forgot to add any should see that
+// before approving, not discover it only from every trainee's own
+// automatic zero later.
+func noDescriptionQuestionsIssue(intake Intake112) []ValidationIssue {
+	if intake.Mode != "full_case" || len(intake.Reference.DescriptionQuestions) > 0 {
+		return nil
+	}
+	return []ValidationIssue{{
+		Path: "intake112.reference.description_questions", Code: "no_description_questions", Severity: SeverityWarning,
+		Message: "нет вопросов к описанию — блок DESCRIPTION_CONTENT/DESCRIPTION_PRESENT будет оценён в 0",
+	}}
 }
 
 // expectedCardScorablePaths is every dialogue-fact card_path 112-6/

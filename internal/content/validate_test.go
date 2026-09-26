@@ -701,6 +701,57 @@ func TestValidateOperator112ScoringKnownCriterion(t *testing.T) {
 	}
 }
 
+// TestValidateOperator112ScoringKnownV3Criterion is ADR-028's own
+// counterpart: DESCRIPTION_CONTENT only exists in rubric-v3, not v2, yet
+// a scenario authored before a lesson decides which version it will run
+// under must still be able to reference it — operator112RubricCriterionIDs
+// is the union of every version, not just rubric.operator112.json's own.
+func TestValidateOperator112ScoringKnownV3Criterion(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	body := validFullCaseBody()
+	body.Intake112.Reference.Scoring = &Scoring{Disabled: []string{"DESCRIPTION_CONTENT"}}
+	if err := Validate(body, catalog); err != nil {
+		t.Fatalf("known operator112 rubric-v3 criterion should validate: %v", err)
+	}
+}
+
+func TestValidateDescriptionQuestions(t *testing.T) {
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	for name, tc := range map[string]struct {
+		mutate func(*Body)
+		field  string
+	}{
+		"empty id": {func(b *Body) {
+			b.Intake112.Reference.DescriptionQuestions = []Intake112DescriptionQuestion{{ID: "", Question: "Указано ли …?"}}
+		}, "intake112.reference.description_questions[0]"},
+		"empty question": {func(b *Body) {
+			b.Intake112.Reference.DescriptionQuestions = []Intake112DescriptionQuestion{{ID: "smell", Question: ""}}
+		}, "intake112.reference.description_questions[0]"},
+		"duplicate id": {func(b *Body) {
+			b.Intake112.Reference.DescriptionQuestions = []Intake112DescriptionQuestion{
+				{ID: "smell", Question: "Указано ли, что пахнет газом?"},
+				{ID: "smell", Question: "Указано ли, что запах сильный?"},
+			}
+		}, "intake112.reference.description_questions[1]"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := validFullCaseBody()
+			tc.mutate(&body)
+			assertInvalidField(t, Validate(body, catalog), tc.field)
+		})
+	}
+	valid := validFullCaseBody()
+	valid.Intake112.Reference.DescriptionQuestions = []Intake112DescriptionQuestion{
+		{ID: "smell", Question: "Указано ли, что ощущается запах газа?"},
+		{ID: "victims", Question: "Указано ли число пострадавших?"},
+	}
+	if err := Validate(valid, catalog); err != nil {
+		t.Fatalf("valid description_questions should validate: %v", err)
+	}
+}
+
 func TestValidateExpectedServicesAllowedForCardOnly(t *testing.T) {
 	catalog := pilotCatalog()
 	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}

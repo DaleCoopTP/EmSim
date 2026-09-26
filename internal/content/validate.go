@@ -240,7 +240,31 @@ func validateIntake112Reference(intake *Intake112, catalog Catalog) error {
 			return err
 		}
 	}
+	if err := validateDescriptionQuestions(intake.Reference.DescriptionQuestions); err != nil {
+		return err
+	}
 	return validateIntake112ExpectedCardAgainstFacts(intake)
+}
+
+// validateDescriptionQuestions is ADR-028's own authoring check: every
+// question needs a non-empty id, unique among its siblings (the LLM
+// judge's answer map is keyed by these ids — a duplicate would silently
+// collapse two questions into one scored slot), and non-empty text.
+// scenario.schema.json already bounds count/length/id shape; this only
+// adds the cross-item uniqueness JSON Schema itself cannot express.
+func validateDescriptionQuestions(questions []Intake112DescriptionQuestion) error {
+	seen := make(map[string]bool, len(questions))
+	for i, q := range questions {
+		field := fmt.Sprintf("intake112.reference.description_questions[%d]", i)
+		if strings.TrimSpace(q.ID) == "" || strings.TrimSpace(q.Question) == "" {
+			return invalid(field, "empty")
+		}
+		if seen[q.ID] {
+			return invalid(field, "duplicate_id")
+		}
+		seen[q.ID] = true
+	}
+	return nil
 }
 
 // validateIntake112ExpectedCardAgainstFacts is 112-6/ADR-026/slice-
