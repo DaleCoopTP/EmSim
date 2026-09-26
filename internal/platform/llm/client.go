@@ -39,6 +39,19 @@ type Request struct {
 	TopP          float64   `json:"top_p,omitempty"`
 	MaxTokens     int       `json:"max_tokens,omitempty"`
 	RepeatPenalty float64   `json:"repeat_penalty,omitempty"`
+	// ResponseFormat (ADR-028) is the OpenAI-compatible structured-output
+	// request field — {"type":"json_schema","json_schema":{"name":...,
+	// "schema":{...},"strict":true}} — for a caller (internal/assessment/
+	// operator112/descjudge) that needs the server to constrain its
+	// output to a fixed JSON shape, rather than parse free-form text and
+	// hope. Left as `any` rather than a typed struct: this client stays
+	// a thin, protocol-agnostic pass-through (its own doc comment), and
+	// the exact accepted shape differs slightly between Ollama's /v1
+	// endpoint and llama-server (slice-112-5b-plan.md's stage 2) — the
+	// caller that actually needs a schema is best placed to build it and
+	// adjust if either server's dialect diverges. Omitted (nil) for
+	// every existing caller (aicaller.Replier), so this is additive.
+	ResponseFormat any `json:"response_format,omitempty"`
 }
 
 // Result is what a caller needs from a completion: the first choice's

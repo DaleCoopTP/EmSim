@@ -20,6 +20,27 @@ const (
 	CallerReplierLLM  = "llm"
 )
 
+// AssessmentJudge's two allowed values (ADR-028) — API.AssessmentJudge's
+// and Worker.AssessmentJudge's own doc comments. Named distinctly from
+// CallerReplier's own Stub/LLM constants (rather than reused) since the
+// two settings are read by different call sites for different reasons
+// (a rubric-version choice at lesson creation vs. an actual model
+// client in the worker) and are allowed to diverge operationally even
+// though a real deployment sets both the same way.
+const (
+	AssessmentJudgeOff = "off"
+	AssessmentJudgeLLM = "llm"
+)
+
+// Judge generation defaults mirror the archived prototype's own tuned
+// values (handoff/claude_evaluator_112_20260926.zip's description_
+// evaluator.py: temperature=0, num_predict=1024) — deterministic
+// wording matters more than variety for a yes/no/needs_review judge.
+const (
+	defaultJudgeTimeout   = 120 * time.Second
+	defaultJudgeMaxTokens = 1024
+)
+
 // Caller generation defaults mirror the local MVP's own tuned values
 // (handoff/README.md, 2026-09-25: t-tech/T-lite-it-2.1:q5_K_M via
 // Ollama) — a development starting point, not a W0-validated production
@@ -77,7 +98,34 @@ type Worker struct {
 	CallerTopP          float64
 	CallerRepeatPenalty float64
 	CallerMaxTokens     int
-	LocalTestPolicy     string
+	// AssessmentJudge (ADR-028) selects whether assessment.evaluate's
+	// worker-side Handle actually calls a model for operator112_intake's
+	// DESCRIPTION_CONTENT criterion (operator112/rubric-v3):
+	// AssessmentJudgeOff (default — no judge wired at all, exactly
+	// 112-6's pre-ADR-028 behavior) or AssessmentJudgeLLM (a
+	// descjudge.Handler over JudgeLLMURL/JudgeLLMModel, registered into
+	// assessment.JudgeConfig.Registry). It is deliberately the same enum
+	// spelling as API.AssessmentJudge (both read the same env var in
+	// compose) but a separate config field: the api process only ever
+	// needs it to pick a rubric_version at lesson creation, never to
+	// build an LLM client.
+	AssessmentJudge string
+	// JudgeLLMURL/JudgeLLMModel are required only when AssessmentJudge is
+	// AssessmentJudgeLLM — an OpenAI-compatible base URL and the model
+	// name it serves under, the same CALLER_LLM_URL/CALLER_LLM_MODEL
+	// convention (a separate pair, not reused: the judge and the caller
+	// may run different models, or only one of the two may be enabled).
+	JudgeLLMURL   string
+	JudgeLLMModel string
+	// JudgeTimeout bounds one SemanticJudge.Answer call the same way
+	// CallerReplyTimeout bounds one CallerReplier.Reply call — Handle
+	// cancels its ctx after this, so a stuck judge call cannot hold
+	// assessment.evaluate's own lease forever.
+	JudgeTimeout time.Duration
+	// JudgeMaxTokens is descjudge's own num_predict/max_tokens — see the
+	// defaultJudgeMaxTokens doc comment for why 1024 is the default.
+	JudgeMaxTokens  int
+	LocalTestPolicy string
 }
 
 func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker, error) {
@@ -140,6 +188,18 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 	if err != nil {
 		return Worker{}, ErrInvalidWorkerConfiguration
 	}
+	assessmentJudge := strings.TrimSpace(lookup("ASSESSMENT_JUDGE"))
+	if assessmentJudge == "" {
+		assessmentJudge = AssessmentJudgeOff
+	}
+	judgeTimeout, err := parseDurationOrDefault(lookup("JUDGE_TIMEOUT"), defaultJudgeTimeout)
+	if err != nil {
+		return Worker{}, ErrInvalidWorkerConfiguration
+	}
+	judgeMaxTokens, err := parseIntOrDefault(lookup("JUDGE_MAX_TOKENS"), defaultJudgeMaxTokens)
+	if err != nil {
+		return Worker{}, ErrInvalidWorkerConfiguration
+	}
 	config := Worker{
 		DatabaseURL: strings.TrimSpace(lookup("DATABASE_URL")), Role: role,
 		WorkerID: strings.TrimSpace(lookup("WORKER_ID")), PollInterval: poll, DrainTimeout: drain,
@@ -150,6 +210,9 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 		CallerLLMModel:    strings.TrimSpace(lookup("CALLER_LLM_MODEL")),
 		CallerTemperature: callerTemperature, CallerTopP: callerTopP,
 		CallerRepeatPenalty: callerRepeatPenalty, CallerMaxTokens: callerMaxTokens,
+		AssessmentJudge: assessmentJudge, JudgeLLMURL: strings.TrimSpace(lookup("JUDGE_LLM_URL")),
+		JudgeLLMModel: strings.TrimSpace(lookup("JUDGE_LLM_MODEL")),
+		JudgeTimeout:  judgeTimeout, JudgeMaxTokens: judgeMaxTokens,
 		LocalTestPolicy: strings.TrimSpace(lookup("WORKER_LOCAL_TEST_POLICY")),
 	}
 	if err := config.Validate(); err != nil {
@@ -202,6 +265,15 @@ func (c Worker) Validate() error {
 		return ErrInvalidWorkerConfiguration
 	}
 	if c.CallerTemperature < 0 || c.CallerTopP < 0 || c.CallerTopP > 1 || c.CallerRepeatPenalty < 0 || c.CallerMaxTokens < 1 {
+		return ErrInvalidWorkerConfiguration
+	}
+	if c.AssessmentJudge != AssessmentJudgeOff && c.AssessmentJudge != AssessmentJudgeLLM {
+		return ErrInvalidWorkerConfiguration
+	}
+	if c.AssessmentJudge == AssessmentJudgeLLM && (c.JudgeLLMURL == "" || c.JudgeLLMModel == "") {
+		return ErrInvalidWorkerConfiguration
+	}
+	if c.JudgeTimeout <= 0 || c.JudgeMaxTokens < 1 {
 		return ErrInvalidWorkerConfiguration
 	}
 	return nil

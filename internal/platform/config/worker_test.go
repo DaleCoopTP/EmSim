@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestWorkerConfigurationIsRoleAwareAndExplicit(t *testing.T) {
@@ -142,5 +143,82 @@ func TestWorkerCallerReplierRejectsUnknownValue(t *testing.T) {
 	lookup := func(name string) string { return values[name] }
 	if _, err := WorkerFromEnvironment(lookup, "worker"); !errors.Is(err, ErrInvalidWorkerConfiguration) {
 		t.Fatalf("unknown CALLER_REPLIER error = %v", err)
+	}
+}
+
+// TestWorkerAssessmentJudgeDefaultsToOff mirrors
+// TestWorkerCallerReplierDefaultsToStub for ADR-028's own
+// ASSESSMENT_JUDGE: a stock `docker compose up` with nothing set must
+// keep behaving exactly like 112-6 before this ADR — no judge wired,
+// rubric-v2 only.
+func TestWorkerAssessmentJudgeDefaultsToOff(t *testing.T) {
+	values := map[string]string{
+		"DATABASE_URL": "postgres://example.invalid/emsim", "WORKER_ID": "worker-1",
+		"WORKER_POLL_INTERVAL": "250ms", "WORKER_DRAIN_TIMEOUT": "10s",
+		"WORKER_ADMIN_LISTEN_ADDR": "127.0.0.1:8082",
+		"SHORT_CONCURRENCY":        "4", "LLM_CONCURRENCY": "1", "STT_CONCURRENCY": "1", "REPORT_CONCURRENCY": "1",
+		"CALLER_CONCURRENCY": "1", "CALLER_REPLY_TIMEOUT": "10s",
+	}
+	lookup := func(name string) string { return values[name] }
+	got, err := WorkerFromEnvironment(lookup, "worker")
+	if err != nil {
+		t.Fatalf("WorkerFromEnvironment: %v", err)
+	}
+	if got.AssessmentJudge != AssessmentJudgeOff {
+		t.Fatalf("AssessmentJudge default = %q, want %q", got.AssessmentJudge, AssessmentJudgeOff)
+	}
+	if got.JudgeTimeout != defaultJudgeTimeout || got.JudgeMaxTokens != defaultJudgeMaxTokens {
+		t.Fatalf("unexpected judge defaults: %+v", got)
+	}
+}
+
+// TestWorkerAssessmentJudgeLLMRequiresURLAndModel mirrors
+// TestWorkerCallerReplierLLMRequiresURLAndModel for ASSESSMENT_JUDGE=llm.
+func TestWorkerAssessmentJudgeLLMRequiresURLAndModel(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL": "postgres://example.invalid/emsim", "WORKER_ID": "worker-1",
+		"WORKER_POLL_INTERVAL": "250ms", "WORKER_DRAIN_TIMEOUT": "10s",
+		"WORKER_ADMIN_LISTEN_ADDR": "127.0.0.1:8082",
+		"SHORT_CONCURRENCY":        "4", "LLM_CONCURRENCY": "1", "STT_CONCURRENCY": "1", "REPORT_CONCURRENCY": "1",
+		"CALLER_CONCURRENCY": "1", "CALLER_REPLY_TIMEOUT": "10s", "ASSESSMENT_JUDGE": "llm",
+	}
+	lookup := func(values map[string]string) func(string) string {
+		return func(name string) string { return values[name] }
+	}
+	if _, err := WorkerFromEnvironment(lookup(base), "worker"); !errors.Is(err, ErrInvalidWorkerConfiguration) {
+		t.Fatalf("llm without URL/model error = %v", err)
+	}
+	withURL := map[string]string{}
+	for k, v := range base {
+		withURL[k] = v
+	}
+	withURL["JUDGE_LLM_URL"] = "http://host.docker.internal:11434/v1"
+	if _, err := WorkerFromEnvironment(lookup(withURL), "worker"); !errors.Is(err, ErrInvalidWorkerConfiguration) {
+		t.Fatalf("llm without model error = %v", err)
+	}
+	withURL["JUDGE_LLM_MODEL"] = "t-tech/T-lite-it-2.1:q5_K_M"
+	withURL["JUDGE_TIMEOUT"] = "30s"
+	withURL["JUDGE_MAX_TOKENS"] = "512"
+	got, err := WorkerFromEnvironment(lookup(withURL), "worker")
+	if err != nil {
+		t.Fatalf("complete judge configuration: %v", err)
+	}
+	if got.AssessmentJudge != AssessmentJudgeLLM || got.JudgeLLMModel != "t-tech/T-lite-it-2.1:q5_K_M" ||
+		got.JudgeTimeout != 30*time.Second || got.JudgeMaxTokens != 512 {
+		t.Fatalf("unexpected judge configuration: %+v", got)
+	}
+}
+
+func TestWorkerAssessmentJudgeRejectsUnknownValue(t *testing.T) {
+	values := map[string]string{
+		"DATABASE_URL": "postgres://example.invalid/emsim", "WORKER_ID": "worker-1",
+		"WORKER_POLL_INTERVAL": "250ms", "WORKER_DRAIN_TIMEOUT": "10s",
+		"WORKER_ADMIN_LISTEN_ADDR": "127.0.0.1:8082",
+		"SHORT_CONCURRENCY":        "4", "LLM_CONCURRENCY": "1", "STT_CONCURRENCY": "1", "REPORT_CONCURRENCY": "1",
+		"CALLER_CONCURRENCY": "1", "CALLER_REPLY_TIMEOUT": "10s", "ASSESSMENT_JUDGE": "gpt5",
+	}
+	lookup := func(name string) string { return values[name] }
+	if _, err := WorkerFromEnvironment(lookup, "worker"); !errors.Is(err, ErrInvalidWorkerConfiguration) {
+		t.Fatalf("unknown ASSESSMENT_JUDGE error = %v", err)
 	}
 }

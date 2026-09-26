@@ -51,6 +51,39 @@ func TestClientCompleteSendsExpectedRequestShape(t *testing.T) {
 	}
 }
 
+// TestClientCompleteSendsResponseFormatWhenSet is ADR-028's own addition:
+// a caller that sets ResponseFormat (descjudge's structured-output
+// request) must see it reach the wire exactly as given, and a caller
+// that leaves it nil (every pre-ADR-028 caller, aicaller.Replier) must
+// not send the field at all — omitempty, not a null.
+func TestClientCompleteSendsResponseFormatWhenSet(t *testing.T) {
+	var rawBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&rawBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{}"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	format := map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "x", "schema": map[string]any{"type": "object"}}}
+	if _, err := client.Complete(context.Background(), Request{Model: "m", Messages: []Message{{Role: "user", Content: "x"}}, ResponseFormat: format}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if _, ok := rawBody["response_format"]; !ok {
+		t.Fatalf("response_format missing from request body: %+v", rawBody)
+	}
+
+	rawBody = nil
+	if _, err := client.Complete(context.Background(), Request{Model: "m", Messages: []Message{{Role: "user", Content: "x"}}}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if _, ok := rawBody["response_format"]; ok {
+		t.Fatalf("response_format must be omitted when unset: %+v", rawBody)
+	}
+}
+
 func TestClientCompleteRejectsNonOKStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

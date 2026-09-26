@@ -22,17 +22,32 @@ type API struct {
 	AdminAddr    string
 	SessionTTL   time.Duration
 	CookieSecure bool
+	// AssessmentJudge (ADR-028) is api's own half of ASSESSMENT_JUDGE —
+	// the same enum Worker.AssessmentJudge reads, read here only to
+	// decide which operator112_intake rubric version (content.
+	// Operator112RubricVersion) a newly created lesson/preview run
+	// freezes at CreateLesson/StartPreview time. It never wires an LLM
+	// client here: the api process never calls assessment.Service.Handle,
+	// only the worker does. A stock `docker compose up` with no
+	// ASSESSMENT_JUDGE set keeps freezing rubric-v2, same as before this
+	// ADR.
+	AssessmentJudge string
 }
 
 func APIFromEnvironment(lookup func(string) string) (API, error) {
 	sessionTTL, ttlErr := parseDurationOrDefault(lookup("SESSION_TTL"), defaultSessionTTL)
 	cookieSecure, secureErr := parseBoolOrDefault(lookup("COOKIE_SECURE"), true)
+	assessmentJudge := strings.TrimSpace(lookup("ASSESSMENT_JUDGE"))
+	if assessmentJudge == "" {
+		assessmentJudge = AssessmentJudgeOff
+	}
 	config := API{
-		DatabaseURL:  strings.TrimSpace(lookup("DATABASE_URL")),
-		PublicAddr:   strings.TrimSpace(lookup("API_LISTEN_ADDR")),
-		AdminAddr:    strings.TrimSpace(lookup("ADMIN_LISTEN_ADDR")),
-		SessionTTL:   sessionTTL,
-		CookieSecure: cookieSecure,
+		DatabaseURL:     strings.TrimSpace(lookup("DATABASE_URL")),
+		PublicAddr:      strings.TrimSpace(lookup("API_LISTEN_ADDR")),
+		AdminAddr:       strings.TrimSpace(lookup("ADMIN_LISTEN_ADDR")),
+		SessionTTL:      sessionTTL,
+		CookieSecure:    cookieSecure,
+		AssessmentJudge: assessmentJudge,
 	}
 	if ttlErr != nil || secureErr != nil {
 		return API{}, ErrInvalidAPIConfiguration
@@ -46,6 +61,9 @@ func APIFromEnvironment(lookup func(string) string) (API, error) {
 func (c API) Validate() error {
 	if c.DatabaseURL == "" || !validListenAddress(c.PublicAddr) || !validListenAddress(c.AdminAddr) ||
 		c.PublicAddr == c.AdminAddr || c.SessionTTL <= 0 {
+		return ErrInvalidAPIConfiguration
+	}
+	if c.AssessmentJudge != AssessmentJudgeOff && c.AssessmentJudge != AssessmentJudgeLLM {
 		return ErrInvalidAPIConfiguration
 	}
 	return nil

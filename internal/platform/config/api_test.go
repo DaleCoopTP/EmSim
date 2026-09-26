@@ -72,6 +72,34 @@ func TestAPIFromEnvironmentSessionAndCookieOverrides(t *testing.T) {
 	}
 }
 
+// TestAPIFromEnvironmentAssessmentJudgeDefaultsToOff mirrors config.
+// Worker's own CallerReplier default requirement for ADR-028's
+// ASSESSMENT_JUDGE: nothing set must keep freezing operator112/
+// rubric-v2, and an unknown value must be rejected up front.
+func TestAPIFromEnvironmentAssessmentJudgeDefaultsToOff(t *testing.T) {
+	values := map[string]string{
+		"DATABASE_URL":      "postgres://example.invalid/emsim",
+		"API_LISTEN_ADDR":   "127.0.0.1:8080",
+		"ADMIN_LISTEN_ADDR": "127.0.0.1:8081",
+	}
+	lookup := func(name string) string { return values[name] }
+	config, err := APIFromEnvironment(lookup)
+	if err != nil {
+		t.Fatalf("APIFromEnvironment() error = %v", err)
+	}
+	if config.AssessmentJudge != AssessmentJudgeOff {
+		t.Fatalf("AssessmentJudge default = %q, want %q", config.AssessmentJudge, AssessmentJudgeOff)
+	}
+	values["ASSESSMENT_JUDGE"] = "llm"
+	if config, err := APIFromEnvironment(lookup); err != nil || config.AssessmentJudge != AssessmentJudgeLLM {
+		t.Fatalf("APIFromEnvironment() with ASSESSMENT_JUDGE=llm = %+v, %v", config, err)
+	}
+	values["ASSESSMENT_JUDGE"] = "gpt5"
+	if _, err := APIFromEnvironment(lookup); !errors.Is(err, ErrInvalidAPIConfiguration) {
+		t.Fatalf("unknown ASSESSMENT_JUDGE error = %v", err)
+	}
+}
+
 func TestAPIFromEnvironmentRejectsNonPositiveSessionTTL(t *testing.T) {
 	values := map[string]string{
 		"DATABASE_URL":      "postgres://example.invalid/emsim",
