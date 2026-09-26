@@ -374,13 +374,20 @@ test("operator 112: full case — call, questions, incident types, profile cards
   // Scoped to the read-only "Блоки"/"Штрафы" tables specifically — the
   // "Экспертная оценка" revision form below also has a row per criterion
   // (same rubric title text), so an unscoped `tr` locator matches both.
+  // Also scoped to each row's own first cell (the block/penalty name),
+  // not the whole row's text: CALLER_TOPICS's own collapsed "Подробности"
+  // list (ADR-028/112-6 c2's own details-serialization fix) enumerates
+  // every topic, and one topic happens to be labeled "Адрес происшествия"
+  // too (rubric.operator112.json's own CALLER_TOPICS.params.topics) — a
+  // whole-row hasText match would otherwise resolve to both that row and
+  // the real ADDRESS_FIELDS one.
   const blocksTable = page.locator('h3:has-text("Блоки") + table');
-  const addressRow = blocksTable.locator("tr", { hasText: "Адрес происшествия" });
+  const addressRow = blocksTable.locator("tr").filter({ has: page.locator("td:first-child", { hasText: "Адрес происшествия" }) });
   await expect(addressRow).toBeVisible({ timeout: 15_000 });
   await expect(addressRow).toContainText("0 из 35");
   await expect(addressRow).toContainText("не выполнено");
   const penaltiesTable = page.locator('h3:has-text("Штрафы") + table');
-  const servicesRow = penaltiesTable.locator("tr", { hasText: "Штраф: неверный список служб" });
+  const servicesRow = penaltiesTable.locator("tr").filter({ has: page.locator("td:first-child", { hasText: "Штраф: неверный список служб" }) });
   await expect(servicesRow).toBeVisible();
   await expect(servicesRow).toContainText("−0"); // notified services matched expected_services exactly
   await expect(servicesRow).toContainText("список служб совпадает с эталоном");
