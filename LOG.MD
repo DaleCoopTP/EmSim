@@ -3013,3 +3013,48 @@ Decisions:
 Validation: `go build ./...`, `go vet ./...`, `gofmt -l` — чисто; `go test ./internal/...` — весь пакет зелёный; `npx tsc -b` и `npm run lint` (web) — чисто (только 4 pre-existing/безопасных warning'а); `npm run build` (web) — успешно. `python3 design-docs/contracts/check.py` — все проверки прошли. Интеграционный прогон против разового `postgres:16-alpine` — без регрессий. **e2e против реального docker-compose стека** (`npm run test:e2e`, сборка образа с обоими бэкенд-фиксами): новый `web/e2e/operator112-editor.spec.ts` (создание через UI → факты/эталон → «Создать черновик» → «Проверить» без блокирующих ошибок → «Пройти самому» → реальное прохождение ARM-интерфейса до «Кейс завершён» → «Завершить предпросмотр» → подтверждение отсутствия в списке занятий → «Утвердить» → появление в конструкторе занятия для назначения) и все 6 существующих спеков (`operator112.spec.ts` ×4, `operator112-profiles.spec.ts`, `smoke.spec.ts`) — **7/7 PASS**, без регрессий.
 
 Next: срез 112-7 полностью завершён (c1–c10). Следующий шаг по `slice-planning-112.md` — 112-5b этап 2 (замер W0, `llama-server`/GGUF в compose) либо LLM-критерии rubric-v3, либо 112-8/112-9 — по решению пользователя.
+
+## 2026-09-26T19:24:29+03:00 — Claude (Sonnet 5) — 112-6 LLM-этап: DESCRIPTION_CONTENT LLM-судья (ADR-028, c1–c12)
+
+Status: completed
+Slice: 112-6 (LLM-этап, поверх реализованного детерминированного этапа)
+
+Changed:
+- `design-docs/adr/028-operator112-description-llm-judge.md`, `slice-112-6-llm-plan.md` (новые).
+- `design-docs/contracts/`: `rubric.operator112.v3.json` (новый, rubric-v2 + DESCRIPTION_CONTENT); `rubric.operator112.json` (v2) не менялся; `rubric.schema.json` (+`card_description`), `scenario.schema.json` (`description_questions`), `assessment-inputs.schema.json` (`exercise_type` — оба типа), `openapi.yaml` (`Intake112Reference.description_questions`, `CriterionDetail.status`+=`unavailable`), `embed.go`, `check.py`.
+- `internal/assessment/http/handlers.go` (+тест): исправлен реальный баг — `criterionJSON` не нёс `penalty_points`/`details` ни на вход, ни на выход (панель «Подробности» никогда не заполнялась, штрафные баллы эксперта терялись при декодировании).
+- `internal/content`: `Intake112Reference.DescriptionQuestions`, валидация, `operator112RubricCriterionIDs` — объединение id v1+v2+v3, `Operator112RubricVersion(judgeEnabled)`, предупреждение `no_description_questions` в `ValidateDetailed`.
+- `internal/platform/llm`: `Request.ResponseFormat`. `internal/platform/config`: `ASSESSMENT_JUDGE` (api и worker), `JUDGE_LLM_URL`/`JUDGE_LLM_MODEL`/`JUDGE_TIMEOUT`/`JUDGE_MAX_TOKENS`.
+- `internal/assessment`: `RuleEvaluator.Evaluate`+=`SemanticAnswers`; новые `SemanticPreparer`/`SemanticRequest`/`SemanticJudge`/`SemanticJudgeRegistry`/`JudgeConfig`; `Service.judge`; `Handle` разбит на `answerSemantic` (вызов судьи вне транзакции, `HandlerFailure(Retryable,"judge_unavailable")` при сбое) + `recordAutoTx`; `computeAndInsertAuto` принимает ответы судьи, пишет `Assessment.Model`; `FinalizeExpired` передаёт `nil` (исчерпание → `needs_review`, не ноль); `rubric.go` знает `operator112/rubric-v3`.
+- `internal/assessment/operator112`: `descriptionContentRule` (DESCRIPTION_CONTENT, 10 баллов поровну между вопросами; needs_review у любого вопроса → весь критерий `unavailable`), `PrepareSemantic` (запрос судье только при вопросах+заполненном описании, по снимку оповещения). Новый пакет `internal/assessment/operator112/descjudge` — промпт/схема/разбор дословно из архива пользователя, адаптер над `internal/platform/llm`.
+- `internal/training`: `Service.operator112JudgeEnabled`, `rubricVersionForNewLesson` — выбор `rubric-v2`/`rubric-v3` при создании занятия/предпросмотра.
+- `cmd/emsim`: `judgeConfigFor` (worker), `ASSESSMENT_JUDGE` в обоих процессах, `newTrainingService`/`newAssessmentService` получили судью.
+- `compose.yaml`: `ASSESSMENT_JUDGE`/`JUDGE_*` (default off/безопасные значения).
+- `seed/scenarios/pilot-112-ai-{car-in-water,mobile-shop,toyota-fire}-01-v2.json` (новые версии 2) — вопросы из архива; версии 1 не менялись.
+- `internal/reporting/postgres/store.go` (+тест) — `DESCRIPTION_CONTENT` в той же колонке отчёта, что `DESCRIPTION_PRESENT`.
+- `web`: `ScenarioEditor.tsx` (вкладка «Эталон» → вопросы к описанию), `ScenarioDetail.tsx` (read-only вопросы), `ItemReview.tsx` (модель судьи), `api/content.ts` (`Intake112DescriptionQuestion`). `IntakeAutoAssessment.tsx` не менялся — уже универсален.
+- `test/integration/operator112_description_judge_test.go` (новый), `operator112_assessment_pipeline_test.go` (варианты фикстур с судьёй), `content_import_test.go` (обновлены счётчики импорта сидов: 15/19 версий вместо 15/16 — регрессия от новых сидов, не от логики).
+- `web/e2e/operator112.spec.ts` — исправлена ставшая видимой e2e-регрессия от фикса `criterionJSON`: локатор строки блока по всему тексту `tr` стал находить два совпадения (CALLER_TOPICS перечисляет в «Подробности» тему с меткой «Адрес происшествия», совпадающей с заголовком блока ADDRESS_FIELDS); сужен до первой ячейки строки.
+- `README.md`, `CLAUDE.md`, `slice-planning-112.md`, `seed/README.md` — задокументирован срез и отступление от порядка плана (LLM-этап 112-6 до этапа 2 112-5b, по решению пользователя).
+
+Decisions:
+- Начать LLM-этап 112-6 до замера W0/этапа 2 112-5b — решение пользователя 26.09.2026, зафиксировано в ADR-028 (отступление от `slice-planning-112.md`).
+- 10 баллов делятся поровну между вопросами сценария; любой `needs_review` — весь критерий `unavailable`; нет вопросов/пустое описание — 0 без вызова модели; правка эксперта — баллами за критерий целиком (без правки по вопросам); новое занятие получает `rubric-v3` только при `ASSESSMENT_JUDGE=llm` в конфигурации.
+- Судья вызывается вне транзакции (`answerSemantic`), результат сворачивается в тот же вызов `computeAndInsertAuto` — без отдельной задачи/таблицы для судейского ответа (в отличие от `caller.reply`, здесь одна попытка задачи = один вызов модели = одна запись).
+- Вопросы добавлены только трём сидам, совпадающим с кейсами архива; остальные 19 сценариев архива — вне объёма, отдельная задача.
+- `rubric.operator112.json` (v2) не переименован и не тронут — новая рубрика в отдельном `rubric.operator112.v3.json`, чтобы не переопределять уже согласованный смысл «текущей» версии v2 для существующих потребителей (`content.RubricVersionFor`, `TestRubricVersionForOperator112IsV2`).
+
+Validation:
+- `make verify` — чисто (build/test/vet/staticcheck).
+- `make verify-web` (`npx tsc -b`, `npm run build`) — чисто; `npm run lint` — только 4 pre-existing warning'а (не мои).
+- `python3 design-docs/contracts/check.py` — все проверки прошли.
+- `make test-integration` (полный набор, реальный `postgres:16-alpine` через testcontainers) — **ok, 202.7s**, без регрессий (после исправления жёстко заданных счётчиков импорта сидов в `content_import_test.go`).
+- `cd web && npm run test:e2e` — **7/7 PASS** (после исправления локатора строки, см. Changed).
+- Живая проверка на реальной модели (`ollama serve`, `t-tech/T-lite-it-2.1:q5_K_M`): `go test -tags=llmlive ./internal/assessment/operator112/descjudge/...` — структурированный JSON-ответ через `ResponseFormat` разобран без ошибок на всех 5 непустых кейсов (car-in-water/mobile-shop/toyota-fire, correct+missing_fact), 15/16 ожидаемых ответов совпали (одно расхождение — реальное суждение модели на неоднозначной формулировке, не сбой реализации). Ollama остановлена после проверки (`pkill -f "ollama serve"`).
+
+Open issues / risks:
+- Полный сквозной прогон через реальный `docker compose` с `ASSESSMENT_JUDGE=llm` (а не только юнит/интеграционные тесты с фейковым судьёй + отдельный живой прогон адаптера) не выполнялся — риск низкий: интеграционные тесты покрывают весь конвейер транзакций с фейковым судьёй, живой тест — реальный HTTP/JSON-schema транспорт с той же моделью.
+- 19 сценариев архива без description_questions — тех. долг, явно вне объёма.
+- Замер W0 (112-5b этап 2) по-прежнему не проведён; ёмкость судьи на целевом сервере неизвестна.
+
+Next: 112-5b этап 2 (замер W0, `llama-server`/GGUF в compose) остаётся следующим крупным шагом по плану; либо LLM-проверка содержательности разговора (`CALLER_TOPICS`) как продолжение этой же работы, либо 112-8/112-9 — по решению пользователя.
