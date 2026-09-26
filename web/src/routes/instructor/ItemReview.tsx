@@ -57,6 +57,7 @@ export function ItemReviewRoute() {
     <p><Link to="/instructor/lessons">← К занятиям</Link></p>
     <h1>Разбор карточки № {item.data.card_number}</h1>
 	<p>Автооценка: {detail.automatic_state ?? "нет"}; итог: {detail.final ? `${detail.final.status}${detail.final.score == null ? "" : ` · ${detail.final.score.toFixed(1)}`}` : "ещё нет"}</p>
+	{detail.final?.model ? <p>Модель судьи: {detail.final.model}</p> : null}
 	{isIntake ? <>
 		<h2>Автоматическая оценка</h2>
 		<IntakeAutoAssessment criteria={autoCriteria} rubricCriteria={rubricByID} />

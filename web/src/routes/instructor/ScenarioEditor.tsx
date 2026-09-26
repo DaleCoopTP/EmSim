@@ -11,6 +11,7 @@ import {
   useServices,
   useStartPreviewRun,
   useValidateScenario,
+  type Intake112DescriptionQuestion,
   type Intake112EditorBody,
   type Intake112ExpectedCard,
   type Intake112Fact,
@@ -36,6 +37,13 @@ const knowledgeLabels: Record<Intake112Fact["knowledge"], string> = {
 
 function newFact(): Intake112Fact {
   return { id: `fact_${Math.random().toString(36).slice(2, 8)}`, label: "", knowledge: "initial", value: "" };
+}
+
+// newDescriptionQuestion mirrors newFact's own random-id convention
+// (ADR-028): the editor never reuses a scenario's real answer-key ids,
+// so a fresh row's id only needs to be unique within this one form.
+function newDescriptionQuestion(): Intake112DescriptionQuestion {
+  return { id: `q_${Math.random().toString(36).slice(2, 8)}`, question: "" };
 }
 
 function patternsToText(patterns: string[] | undefined): string {
@@ -111,6 +119,10 @@ export function ScenarioEditorRoute() {
   const updateFacts = (facts: Intake112Fact[]) => updateIntake({ dialogue: { ...intake.dialogue, facts } });
   const updateFact = (index: number, patch: Partial<Intake112Fact>) =>
     updateFacts(intake.dialogue.facts.map((fact, i) => (i === index ? { ...fact, ...patch } : fact)));
+  const descriptionQuestions = intake.reference.description_questions ?? [];
+  const updateDescriptionQuestions = (description_questions: Intake112DescriptionQuestion[]) => updateReference({ description_questions });
+  const updateDescriptionQuestion = (index: number, patch: Partial<Intake112DescriptionQuestion>) =>
+    updateDescriptionQuestions(descriptionQuestions.map((q, i) => (i === index ? { ...q, ...patch } : q)));
 
   const save = () => {
     if (isNew) {
@@ -306,6 +318,20 @@ export function ScenarioEditorRoute() {
               </label>
             ))}
           </div>
+          <h3>Вопросы к описанию со слов заявителя (ADR-028)</h3>
+          <p>ИИ-судья отвечает на каждый вопрос да/нет/нужна проверка, используя только текст поля «Описание со слов заявителя» — без разговора и других полей карточки. Формулируйте вопрос положительно, например «Указано ли, что …?». Без вопросов блок оценивается в 0, модель не вызывается.</p>
+          <table>
+            <thead><tr><th>Вопрос</th><th></th></tr></thead>
+            <tbody>
+              {descriptionQuestions.map((question, index) => (
+                <tr key={question.id}>
+                  <td><input style={{ width: "100%" }} value={question.question} placeholder="Указано ли, что …?" onChange={(e) => updateDescriptionQuestion(index, { question: e.target.value })} /></td>
+                  <td><button type="button" onClick={() => updateDescriptionQuestions(descriptionQuestions.filter((_, i) => i !== index))}>Убрать</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button type="button" onClick={() => updateDescriptionQuestions([...descriptionQuestions, newDescriptionQuestion()])}>+ Добавить вопрос</button>
         </div>
       )}
 

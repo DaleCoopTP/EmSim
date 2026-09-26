@@ -109,6 +109,8 @@ type Intake112DisplayBody = {
       expected_services?: string[];
       expected_card?: Record<string, unknown>;
       recipient_service?: string;
+      // ADR-028 (operator112/rubric-v3's DESCRIPTION_CONTENT).
+      description_questions?: { id: string; question: string }[];
     };
   };
 };
@@ -185,6 +187,11 @@ function Operator112ScenarioDetail({ s, me, onNavigate }: { s: Scenario; me: Me;
             {intake.reference.case_description && <><dt>Описание ситуации</dt><dd>{intake.reference.case_description}</dd></>}
             {intake.reference.recipient_service && <><dt>Адресат</dt><dd>{intake.reference.recipient_service}</dd></>}
             {!intake.reference.expected_card && <><dt>Ожидаемая карточка</dt><dd>Эталон не задан — соответствующие блоки оценки получат 0.</dd></>}
+            {intake.reference.description_questions && intake.reference.description_questions.length > 0 ? (
+              <><dt>Вопросы к описанию (ADR-028)</dt><dd><ul>{intake.reference.description_questions.map((q) => <li key={q.id}>{q.question}</li>)}</ul></dd></>
+            ) : (
+              <><dt>Вопросы к описанию (ADR-028)</dt><dd>Не заданы — блок DESCRIPTION_CONTENT/DESCRIPTION_PRESENT получит 0.</dd></>
+            )}
           </dl>
         </section>
       </div>

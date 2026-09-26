@@ -115,6 +115,7 @@ export type Intake112Dialogue = NonNullable<components["schemas"]["Intake112Scen
 export type Intake112Fact = Intake112Dialogue["facts"][number];
 export type Intake112Caller = NonNullable<Intake112Dialogue["caller"]>;
 export type Intake112ExpectedCard = components["schemas"]["Intake112ExpectedCard"];
+export type Intake112DescriptionQuestion = components["schemas"]["Intake112DescriptionQuestion"];
 export type ValidationIssue = components["schemas"]["ValidationIssue"];
 export type Intake112Catalog = components["schemas"]["Intake112Catalog"];
 export type ProbeMatch = { fact_id: string; kind: "reveal" | "ask" };
