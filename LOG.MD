@@ -2638,3 +2638,38 @@ Next: коммит 8 — UI разбора преподавателя (`ItemRevi
 числовые поля в форме ревизии) и результатов обучаемого
 (`History.tsx`: итог/блоки/штрафы без `expected`), типы из
 `openapi.yaml`, e2e `operator112.spec.ts`.
+
+## 2026-09-26 — 112-6, коммит 9: отчётность — блоки и штрафы 112 в отчёте, CSV и PDF
+
+`internal/reporting/domain.go`: `ReportItem.IntakeBlocks
+[]IntakeBlockScore` и `.IntakePenaltyTotal *float64`; новый тип
+`IntakeBlockScore{CriterionID,Label,Points,MaxPoints}`. `internal/
+reporting/postgres/store.go`: `criterionLabels` расширен десятью id
+рубрики v2, новые `intake112BlockIDs`/`intake112PenaltyIDs`,
+`intake112Breakdown`/`intakeBreakdownFor` читают уже
+запечатанные `score`/`weight`/`penalty_points` из `criteria` jsonb
+итоговой ревизии (гейт на `AssessmentReady`, как `publicErrors`) —
+для ДДС-строк оба поля остаются nil. `csv.go`: два новых хвостовых
+столбца «Блоки 112»/«Штрафы 112» (пусты для ДДС), новый хелпер
+`intakeBlocksText`. `pdf.go`: те же две строки в параграфах карточки,
+если поля заданы. `openapi.yaml`: `ReportItem.intake_blocks`/
+`.intake_penalty_total`, новая схема `IntakeBlockScore`.
+`web/src/api/reporting.ts` + `LessonReport.tsx`: те же два столбца в
+таблице «Карточки» только для `operator112_intake` занятий; убрана
+старая заглушка «CSV и PDF для 112 появятся в срезе 112-5» — экспорт
+теперь общий для обоих типов упражнения.
+
+Validation: `go build ./...`, `gofmt -l` (весь `internal/reporting`),
+`go vet ./...`, `go test ./...`, `python3 design-docs/contracts/
+check.py`, `cd web && npx tsc -b`, `npm run build`, `npm run lint`
+(тот же единственный пред-существующий warning в
+`Operator112ProfileCase.tsx`), `make verify`, `make verify-web` — все
+зелёные. Не выполнялись: `make test-integration`, `npm run test:e2e`
+(отчётность не меняет БД/воркер, только чтение уже существующих
+данных — интеграционные тесты коммита 7 остаются актуальной защитой).
+
+Next: коммит 8 (UI `ItemReview.tsx`/`operator112.spec.ts`, уже
+написан, но ещё не закоммичен и не проверен вручную) — открыть живой
+docker-compose стек в браузере, визуально проверить новую таблицу
+автооценки, прогнать `npm run test:e2e` и закоммитить; затем коммит 10
+(документация: README, seed/README, slice-planning-112.md, CLAUDE.md).
