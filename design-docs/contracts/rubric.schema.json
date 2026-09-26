@@ -90,7 +90,8 @@
               "enum": [
                 "comments",
                 "call_summary",
-                "call_transcript"
+                "call_transcript",
+                "card_description"
               ]
             }
           },

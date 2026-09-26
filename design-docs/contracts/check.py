@@ -39,7 +39,7 @@ def load_json(name: str):
 def main() -> int:
     print("JSON")
     schemas = {n: load_json(n) for n in ["scenario.schema.json", "scenario-file.schema.json", "evidence.schema.json", "evidence.operator112.schema.json", "assessment-inputs.schema.json", "rubric.schema.json", "sse-events.schema.json", "tasks.schema.json", "voice-assets-manifest.schema.json"]}
-    examples = {n: load_json(n) for n in ["scenario.example.json", "evidence.example.json", "rubric.default.json", "rubric.operator112.json", "rubric.operator112.v1.json", "assessment-inputs.example.json"]}
+    examples = {n: load_json(n) for n in ["scenario.example.json", "evidence.example.json", "rubric.default.json", "rubric.operator112.json", "rubric.operator112.v1.json", "rubric.operator112.v3.json", "assessment-inputs.example.json"]}
     for n, v in {**schemas, **examples}.items():
         if v is not None:
             ok(n)
@@ -90,7 +90,7 @@ def main() -> int:
             if s is not None:
                 V.check_schema(s)
                 ok(f"{n} is a valid draft 2020-12 schema")
-        pairs = [("scenario.schema.json", "scenario.example.json"), ("evidence.schema.json", "evidence.example.json"), ("rubric.schema.json", "rubric.default.json"), ("rubric.schema.json", "rubric.operator112.json"), ("rubric.schema.json", "rubric.operator112.v1.json"), ("assessment-inputs.schema.json", "assessment-inputs.example.json")]
+        pairs = [("scenario.schema.json", "scenario.example.json"), ("evidence.schema.json", "evidence.example.json"), ("rubric.schema.json", "rubric.default.json"), ("rubric.schema.json", "rubric.operator112.json"), ("rubric.schema.json", "rubric.operator112.v1.json"), ("rubric.schema.json", "rubric.operator112.v3.json"), ("assessment-inputs.schema.json", "assessment-inputs.example.json")]
         for sn, en in pairs:
             if schemas[sn] is None or examples[en] is None:
                 continue
@@ -206,6 +206,25 @@ def main() -> int:
         del invalid_penalty["criteria"][next(i for i, c in enumerate(invalid_penalty["criteria"]) if c["kind"] == "penalty")]["rule"]
         rejects("penalty criterion without rule", schemas["rubric.schema.json"], invalid_penalty)
 
+        # ADR-028: rubric.operator112.v3.json is rubric-v2 plus one llm
+        # criterion (DESCRIPTION_CONTENT) replacing the deterministic
+        # DESCRIPTION_PRESENT stub — every other criterion id/kind/weight
+        # stays byte-identical to v2, so a v3 lesson's other nine blocks/
+        # penalties score exactly the same way a v2 lesson's do.
+        rubric112v3 = examples["rubric.operator112.v3.json"]
+        v3_by_id = {c["id"]: c for c in rubric112v3["criteria"]}
+        v2_by_id = {c["id"]: c for c in rubric112["criteria"]}
+        llm_criteria = [c for c in rubric112v3["criteria"] if c["kind"] == "llm"]
+        if (rubric112v3["version"] == "operator112/rubric-v3" and len(llm_criteria) == 1
+                and llm_criteria[0]["id"] == "DESCRIPTION_CONTENT" and "DESCRIPTION_PRESENT" not in v3_by_id
+                and all(v3_by_id[cid] == c for cid, c in v2_by_id.items() if cid != "DESCRIPTION_PRESENT")):
+            ok("rubric.operator112.v3.json is rubric-v2 plus DESCRIPTION_CONTENT (ADR-028)")
+        else:
+            fail("rubric.operator112.v3.json must equal rubric-v2 except DESCRIPTION_PRESENT -> DESCRIPTION_CONTENT (llm)")
+        invalid_llm = copy.deepcopy(rubric112v3)
+        del invalid_llm["criteria"][next(i for i, c in enumerate(invalid_llm["criteria"]) if c["kind"] == "llm")]["sources"]
+        rejects("llm criterion without sources", schemas["rubric.schema.json"], invalid_llm)
+
         # 112-6 / ADR-026: a fully-referenced intake112 scenario (expected_card
         # with the extended address, expected_profiles, alternatives, scoring)
         # must validate — this is the "infrastructure ready for a later
@@ -232,15 +251,22 @@ def main() -> int:
                     "alternatives": {"expected_card.address.street": ["Тверская улица"]},
                     "expected_profiles": {"104": {"smell": "yes"}},
                     "scoring": {"disabled": ["DESCRIPTION_PRESENT"], "note": "test"},
+                    "description_questions": [
+                        {"id": "smell", "question": "Указано ли, что ощущается запах газа?"},
+                        {"id": "victims", "question": "Указано ли число пострадавших?"},
+                    ],
                 },
             },
         }
         if V(schemas["scenario.schema.json"], format_checker=V.FORMAT_CHECKER).is_valid(full_reference_112):
-            ok("full intake112.reference (address/profiles/alternatives/scoring) validates (ADR-026)")
+            ok("full intake112.reference (address/profiles/alternatives/scoring/description_questions) validates (ADR-026/ADR-028)")
         else:
             errs = sorted(V(schemas["scenario.schema.json"], format_checker=V.FORMAT_CHECKER).iter_errors(full_reference_112), key=lambda e: str(list(e.path)))
             for e in errs[:10]:
                 fail(f"full intake112.reference: {'/'.join(map(str, e.path))}: {e.message[:160]}")
+        invalid_question = copy.deepcopy(full_reference_112)
+        del invalid_question["intake112"]["reference"]["description_questions"][0]["question"]
+        rejects("description_questions entry without question", schemas["scenario.schema.json"], invalid_question)
         bad_input = copy.deepcopy(examples["assessment-inputs.example.json"])
         bad_input["transcripts"] = [{"call_id": "019230a4-6b1e-7c0a-9a1f-3f2a1b2c3d4e", "recording_sha256": "a" * 64, "state": "ready"}]
         rejects("ready transcript without text/model/parameters", schemas["assessment-inputs.schema.json"], bad_input)

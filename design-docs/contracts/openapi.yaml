@@ -863,6 +863,16 @@ components:
           description: '112-6/ADR-026. Ключ — путь эталона в форме "expected_card.address.street"/"expected_card.applicant_name"; значение — дополнительные допустимые формулировки поверх normalize.TokenSetEqual.'
           additionalProperties: { type: array, items: { type: string } }
         scoring: { $ref: '#/components/schemas/RubricScoringOverride', nullable: true, description: '112-6/ADR-026 — reference.scoring для operator112/rubric-v2 (те же weights/critical/disabled, что ДДС уже использует, только id из rubric.operator112.json).' }
+        description_questions:
+          type: array
+          description: 'ADR-028 (operator112/rubric-v3) — контрольные вопросы к complaint для LLM-судьи DESCRIPTION_CONTENT. Отсутствует/пусто — блок оценивается в 0 без вызова модели.'
+          items: { $ref: '#/components/schemas/Intake112DescriptionQuestion' }
+    Intake112DescriptionQuestion:
+      type: object
+      required: [id, question]
+      properties:
+        id: { type: string }
+        question: { type: string, description: 'Формулируется положительно, например «Указано ли …?».' }
     Intake112ExpectedCard:
       type: object
       properties:
@@ -2261,7 +2271,8 @@ components:
           type: number
         status:
           type: string
-          enum: [met, partial, not_met, not_applicable]
+          enum: [met, partial, not_met, not_applicable, unavailable]
+          description: 'unavailable (ADR-028) — одна судейская проверка вопроса вернула needs_review или не получила ответа; сам критерий тогда needs_review целиком.'
         actual:
           type: string
           nullable: true

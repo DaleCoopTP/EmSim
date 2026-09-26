@@ -165,7 +165,19 @@
                 }
               }
             },
-            "scoring": {"$ref": "#/$defs/scoring"}
+            "scoring": {"$ref": "#/$defs/scoring"},
+            "description_questions": {
+              "type": "array", "maxItems": 20,
+              "description": "ADR-028 (operator112/rubric-v3): контрольные вопросы к complaint («Описание со слов заявителя») для LLM-судьи DESCRIPTION_CONTENT. Формулируются положительно, например «Указано ли …?». Отсутствует/пусто — блок оценивается в 0 без вызова модели (ADR-026 «эталон отсутствует»). Уникальность id проверяется вне схемы (internal/content/validate.go).",
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["id", "question"],
+                "properties": {
+                  "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+                  "question": {"type": "string", "minLength": 1, "maxLength": 300}
+                }
+              }
+            }
           }
         }
       }

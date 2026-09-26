@@ -159,8 +159,8 @@
     },
     "exercise_type": {
       "type": "string",
-      "const": "dds_processing",
-      "description": "Тип упражнения. В первой поставке поддерживается ДДС; operator112_intake получит отдельный контракт позднее."
+      "enum": ["dds_processing", "operator112_intake"],
+      "description": "Тип упражнения — ДДС (112-6/ADR-026 расширило сам конвейер и на operator112_intake, ADR-028 — на semantic_input/judge)."
     },
     "rule_results": {
       "type": "array",
