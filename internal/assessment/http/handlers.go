@@ -146,14 +146,42 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
+// criterionDetailJSON is openapi.yaml's CriterionDetail — a block/penalty
+// criterion's own per-field/per-card/per-service line, output-only (the
+// instructor revision form never sends these back, per 112-6's decision
+// "правка баллами за критерий целиком"; toDomain below has no use for
+// them either).
+type criterionDetailJSON struct {
+	Key       string                     `json:"key"`
+	Label     string                     `json:"label,omitempty"`
+	Points    float64                    `json:"points,omitempty"`
+	MaxPoints float64                    `json:"max_points,omitempty"`
+	Status    assessment.CriterionStatus `json:"status"`
+	Actual    *string                    `json:"actual,omitempty"`
+	Expected  *string                    `json:"expected,omitempty"`
+}
+
+func toCriterionDetailJSON(d assessment.CriterionDetail) criterionDetailJSON {
+	return criterionDetailJSON{Key: d.Key, Label: d.Label, Points: d.Points, MaxPoints: d.MaxPoints, Status: d.Status, Actual: d.Actual, Expected: d.Expected}
+}
+
+// criterionJSON is openapi.yaml's CriterionResult. PenaltyPoints/Details
+// were missing here until this fix (112-6 LLM-stage c2): the instructor
+// review UI's "Подробности" panel (IntakeAutoAssessment.tsx) never had
+// anything to expand, and — the more serious half — an expert's own
+// penalty_points typed into ItemReview.tsx's revision form silently
+// decoded to nil on toDomain, so a submitted penalty correction never
+// actually reached ValidateRevision/Score.Compute.
 type criterionJSON struct {
-	ID           string                     `json:"id"`
-	Status       assessment.CriterionStatus `json:"status"`
-	Score        *float64                   `json:"score"`
-	Weight       float64                    `json:"weight"`
-	Critical     bool                       `json:"critical"`
-	EvidenceRefs []string                   `json:"evidence_refs"`
-	Explanation  string                     `json:"explanation"`
+	ID            string                     `json:"id"`
+	Status        assessment.CriterionStatus `json:"status"`
+	Score         *float64                   `json:"score"`
+	Weight        float64                    `json:"weight"`
+	Critical      bool                       `json:"critical"`
+	EvidenceRefs  []string                   `json:"evidence_refs"`
+	Explanation   string                     `json:"explanation"`
+	PenaltyPoints *float64                   `json:"penalty_points,omitempty"`
+	Details       []criterionDetailJSON      `json:"details,omitempty"`
 }
 
 func toCriterionJSON(c assessment.CriterionResult) criterionJSON {
@@ -161,10 +189,23 @@ func toCriterionJSON(c assessment.CriterionResult) criterionJSON {
 	if refs == nil {
 		refs = []string{}
 	}
-	return criterionJSON{ID: c.ID, Status: c.Status, Score: c.Score, Weight: c.Weight, Critical: c.Critical, EvidenceRefs: refs, Explanation: c.Explanation}
+	var details []criterionDetailJSON
+	if len(c.Details) > 0 {
+		details = make([]criterionDetailJSON, len(c.Details))
+		for i, d := range c.Details {
+			details[i] = toCriterionDetailJSON(d)
+		}
+	}
+	return criterionJSON{
+		ID: c.ID, Status: c.Status, Score: c.Score, Weight: c.Weight, Critical: c.Critical, EvidenceRefs: refs,
+		Explanation: c.Explanation, PenaltyPoints: c.PenaltyPoints, Details: details,
+	}
 }
 func (c criterionJSON) toDomain() assessment.CriterionResult {
-	return assessment.CriterionResult{ID: c.ID, Status: c.Status, Score: c.Score, Weight: c.Weight, Critical: c.Critical, EvidenceRefs: c.EvidenceRefs, Explanation: c.Explanation}
+	return assessment.CriterionResult{
+		ID: c.ID, Status: c.Status, Score: c.Score, Weight: c.Weight, Critical: c.Critical, EvidenceRefs: c.EvidenceRefs,
+		Explanation: c.Explanation, PenaltyPoints: c.PenaltyPoints,
+	}
 }
 
 type assessmentJSON struct {

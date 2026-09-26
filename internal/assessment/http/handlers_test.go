@@ -156,3 +156,41 @@ func TestAssessmentGetAndListShape(t *testing.T) {
 		t.Fatalf("unexpected list: %s", w.Body.String())
 	}
 }
+
+// TestCriterionJSONRoundTripsPenaltyPointsAndDetails is 112-6 LLM-stage
+// c2's own regression test: before this fix, criterionJSON had neither
+// field, so GET .../assessment never surfaced a block's Details (the
+// instructor review's "Подробности" panel had nothing to expand) and,
+// more seriously, POST .../revisions silently dropped an expert's own
+// penalty_points on decode — ValidateRevision/Score.Compute then saw nil
+// regardless of what the instructor typed.
+func TestCriterionJSONRoundTripsPenaltyPointsAndDetails(t *testing.T) {
+	id := uuid.New()
+	points, maxPoints := 5.0, 10.0
+	expected := "Тверская"
+	a := assessment.Assessment{
+		ID: uuid.New(), ItemID: id, Revision: 1, Kind: assessment.KindAuto, Status: assessment.StatusReady,
+		RubricVersion: "operator112/rubric-v2",
+		Criteria: []assessment.CriterionResult{{
+			ID: "P_SERVICES", Status: assessment.CriterionNotMet, Weight: 0, PenaltyPoints: &points,
+			Details: []assessment.CriterionDetail{{Key: "pilot_fire_101", Label: "101", Points: points, MaxPoints: maxPoints, Status: assessment.CriterionNotMet, Expected: &expected}},
+		}},
+	}
+	service := &fakeAssessment{detail: assessment.Detail{Final: &a, Revisions: []assessment.Assessment{a}}}
+	w := httptest.NewRecorder()
+	assessmentMux(service, fakeTraining{}, auth.RoleInstructor).ServeHTTP(w, assessmentRequest("GET", "/api/v1/items/"+id.String()+"/assessment", "", true))
+	requireCode(t, w, 200, "")
+	for _, want := range []string{`"penalty_points":5`, `"details":[{`, `"key":"pilot_fire_101"`, `"max_points":10`, `"expected":"Тверская"`} {
+		if !bytes.Contains(w.Body.Bytes(), []byte(want)) {
+			t.Fatalf("response missing %s: %s", want, w.Body.String())
+		}
+	}
+
+	w = httptest.NewRecorder()
+	body := `{"reason":"проверка штрафа","base_revision":1,"criteria":[{"id":"P_SERVICES","status":"not_met","weight":0,"critical":false,"penalty_points":7}]}`
+	assessmentMux(service, fakeTraining{}, auth.RoleInstructor).ServeHTTP(w, assessmentRequest("POST", "/api/v1/items/"+id.String()+"/assessment/revisions", body, true))
+	requireCode(t, w, 201, "")
+	if len(service.received.Criteria) != 1 || service.received.Criteria[0].PenaltyPoints == nil || *service.received.Criteria[0].PenaltyPoints != 7 {
+		t.Fatalf("decoded revision lost penalty_points: %+v", service.received.Criteria)
+	}
+}
