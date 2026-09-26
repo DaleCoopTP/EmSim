@@ -75,9 +75,6 @@ func (h *Handlers) lessonCSV(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.exportAvailable(w, r, report.Lesson.ID) {
-		return
-	}
 	body, err := reporting.CSV(report)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.CodeInternalError, "report export failed", nil)
@@ -119,9 +116,6 @@ func (h *Handlers) requestPDF(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.exportAvailable(w, r, id) {
-		return
-	}
 	principal, _ := authhttp.PrincipalFromContext(r.Context())
 	file, err := h.reporting.RequestPDF(r.Context(), id, principal.UserID)
 	if err != nil {
@@ -144,19 +138,6 @@ func requestedExerciseType(w http.ResponseWriter, r *http.Request) (content.Exer
 	return exerciseType, true
 }
 
-func (h *Handlers) exportAvailable(w http.ResponseWriter, r *http.Request, lessonID uuid.UUID) bool {
-	principal, _ := authhttp.PrincipalFromContext(r.Context())
-	lesson, _, err := h.training.Lesson(r.Context(), principal, lessonID)
-	if err != nil {
-		writeError(w, r, err)
-		return false
-	}
-	if lesson.ExerciseType == content.ExerciseTypeOperator112Intake {
-		httpapi.WriteError(w, r, httpapi.CodeConflict, "112 CSV/PDF export is available in slice 112-5", nil)
-		return false
-	}
-	return true
-}
 func (h *Handlers) listPDFs(w http.ResponseWriter, r *http.Request) {
 	id, ok := h.authorizedLesson(w, r)
 	if !ok {
