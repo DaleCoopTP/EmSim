@@ -41,11 +41,20 @@ import (
 // what distinguishes these c7 tests from c4's TestOperator112IntakeTransaction,
 // which never registers an evaluator at all.
 func newIntake112AssessmentServiceForTest(pool *pgxpool.Pool, taskStore *tasks.Store) *assessment.Service {
+	return newIntake112AssessmentServiceWithJudgeForTest(pool, taskStore, nil)
+}
+
+// newIntake112AssessmentServiceWithJudgeForTest is newIntake112AssessmentServiceForTest's
+// own ADR-028 variant — operator112_description_judge_test.go's own
+// tests pass a *assessment.JudgeConfig (typically backed by a
+// fakeSemanticJudge) instead of nil, to exercise Handle's own judge
+// call without a real model.
+func newIntake112AssessmentServiceWithJudgeForTest(pool *pgxpool.Pool, taskStore *tasks.Store, judge *assessment.JudgeConfig) *assessment.Service {
 	trainingStore := trainingpg.NewStore(pool)
 	contentStore := contentpg.NewStore(pool)
 	return assessment.NewService(
 		assessmentpg.NewStore(pool), trainingStore, trainingStore, trainingStore, contentStore, taskStore,
-		assessment.Registry{content.ExerciseTypeOperator112Intake: assessmentintake.Evaluator}, nil,
+		assessment.Registry{content.ExerciseTypeOperator112Intake: assessmentintake.Evaluator}, judge,
 	)
 }
 
@@ -62,6 +71,18 @@ type operator112PipelineFixture struct {
 }
 
 func newOperator112PipelineFixture(t *testing.T, ctx context.Context, title string) operator112PipelineFixture {
+	t.Helper()
+	return newOperator112PipelineFixtureWithJudge(t, ctx, title, false)
+}
+
+// newOperator112PipelineFixtureWithJudge is newOperator112PipelineFixture's
+// own ADR-028 variant — judgeEnabled controls whether CreateLesson
+// below freezes operator112/rubric-v2 (false, every existing test in
+// this package) or rubric-v3 (true, operator112_description_judge_
+// test.go's own tests). It never wires an actual model client itself —
+// that is assessment.NewService's own judge argument, entirely separate
+// from this training-side flag (ADR-028: two independent settings).
+func newOperator112PipelineFixtureWithJudge(t *testing.T, ctx context.Context, title string, judgeEnabled bool) operator112PipelineFixture {
 	t.Helper()
 	databaseURL := openTestDatabase(t, ctx)
 	if err := pgstore.Up(ctx, databaseURL); err != nil {
@@ -84,7 +105,7 @@ func newOperator112PipelineFixture(t *testing.T, ctx context.Context, title stri
 	if _, err := contentService.ImportScenarios(ctx, openScenarioDir(t, "../../seed/scenarios"), adminID, adminRole, "pipeline-scenarios"); err != nil {
 		t.Fatal(err)
 	}
-	trainingService := newTrainingService(pool)
+	trainingService := newTrainingServiceWithJudge(pool, judgeEnabled)
 
 	instructor := principal(actor, uuid.Nil)
 	lesson, err := trainingService.CreateLesson(ctx, instructor, training.LessonCreate{
@@ -93,8 +114,12 @@ func newOperator112PipelineFixture(t *testing.T, ctx context.Context, title stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lesson.RubricVersion != "operator112/rubric-v2" {
-		t.Fatalf("new lesson rubric_version = %q, want operator112/rubric-v2", lesson.RubricVersion)
+	wantRubricVersion := "operator112/rubric-v2"
+	if judgeEnabled {
+		wantRubricVersion = "operator112/rubric-v3"
+	}
+	if lesson.RubricVersion != wantRubricVersion {
+		t.Fatalf("new lesson rubric_version = %q, want %q", lesson.RubricVersion, wantRubricVersion)
 	}
 
 	traineeData := newTrainee("pipeline-trainee-"+uuid.NewString(), "")

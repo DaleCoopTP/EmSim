@@ -149,17 +149,19 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportScenarios: %v", err)
 	}
-	// 15 scenarios/16 versions (112-5b added three AI-caller scenarios,
-	// commit 3da6db3, on top of the pre-112-5b 12/13).
-	if scenarioResult.NewScenarios != 15 || scenarioResult.NewVersions != 16 || scenarioResult.Unchanged != 0 {
-		t.Fatalf("ImportScenarios = %+v, want NewScenarios=15 NewVersions=16 Unchanged=0", scenarioResult)
+	// 15 scenarios/19 versions (112-5b added three AI-caller scenarios,
+	// commit 3da6db3, on top of the pre-112-5b 12/13; ADR-028's 112-6
+	// LLM stage added a version 2 to each of those same three scenarios
+	// — description_questions, no new scenario — for 16+3=19 versions).
+	if scenarioResult.NewScenarios != 15 || scenarioResult.NewVersions != 19 || scenarioResult.Unchanged != 0 {
+		t.Fatalf("ImportScenarios = %+v, want NewScenarios=15 NewVersions=19 Unchanged=0", scenarioResult)
 	}
 	scenarioResult2, err := svc.ImportScenarios(ctx, openScenarioDir(t, "../../seed/scenarios"), actorID, actorRole, "req-6")
 	if err != nil {
 		t.Fatalf("ImportScenarios (replay): %v", err)
 	}
-	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 16 {
-		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=16", scenarioResult2)
+	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 19 {
+		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=19", scenarioResult2)
 	}
 
 	// --- read side ---
