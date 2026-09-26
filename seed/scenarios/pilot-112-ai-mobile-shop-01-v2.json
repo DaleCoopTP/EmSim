@@ -1,0 +1,151 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "pilot-112-ai-mobile-shop-01",
+  "version": 2,
+  "title": "ИИ-заявитель: ссора с продавцом салона связи",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "exercise_type": "operator112_intake",
+    "difficulty": 4,
+    "intake112": {
+      "mode": "full_case",
+      "caller_mode": "free_text",
+      "call": {
+        "aon": "+79161313134",
+        "local_time": "02:03",
+        "time_zone": "Europe/Moscow"
+      },
+      "dialogue": {
+        "caller": {
+          "persona": "Ты — раздражённый мужчина, который поссорился с продавцом салона связи и повесил трубку. Говоришь резко, но отвечаешь на вопросы оператора.",
+          "opening": {
+            "id": "opening",
+            "text": "Я поругался с продавцом в «МегаФоне» и бросил трубку. Алло, вы меня слышите?",
+            "reveals": [
+              "complaint",
+              "applicant_status"
+            ]
+          }
+        },
+        "facts": [
+          {
+            "id": "complaint",
+            "label": "Жалобы",
+            "card_path": "/complaint",
+            "knowledge": "initial",
+            "value": "поссорился с продавцом «МегаФона» и бросил трубку",
+            "statement": "Я поссорился с продавцом «МегаФона» и бросил трубку.",
+            "disclosure_patterns": [
+              "поругал",
+              "поссор",
+              "бросил труб"
+            ]
+          },
+          {
+            "id": "applicant_status",
+            "label": "Статус заявителя",
+            "card_path": "/applicant_status",
+            "knowledge": "initial",
+            "value": "participant",
+            "statement": "Я сам участник, поссорился с продавцом.",
+            "disclosure_patterns": [
+              "сам участник",
+              "поссорился я"
+            ]
+          },
+          {
+            "id": "address",
+            "label": "Адрес",
+            "card_path": "/address/descriptive",
+            "knowledge": "on_question",
+            "value": "Москва, Сущёвский Вал, дом 5, строение 1",
+            "statement": "Адрес: Москва, Сущёвский Вал, дом 5, строение 1.",
+            "ask_patterns": [
+              "адрес",
+              "где (вы |ты )?(находитесь|находишься|сейчас|стоите|находится)",
+              "какая улица",
+              "назовите.*(дом|улицу)"
+            ],
+            "disclosure_patterns": [
+              "сущ[её]вск",
+              "адрес"
+            ]
+          },
+          {
+            "id": "name",
+            "label": "ФИО заявителя",
+            "card_path": "/applicant_name",
+            "knowledge": "on_question",
+            "value": "Иванов Иван Иванович",
+            "statement": "Меня зовут Иванов Иван Иванович.",
+            "ask_patterns": [
+              "как вас зовут",
+              "представьтесь",
+              "фио",
+              "фамили"
+            ],
+            "disclosure_patterns": [
+              "иванов иван иванович",
+              "иван иванович"
+            ]
+          },
+          {
+            "id": "phone",
+            "label": "Телефон заявителя",
+            "card_path": "/provided_phone",
+            "knowledge": "on_question",
+            "value": "+79168963254",
+            "statement": "Мой номер телефона: +7 916 896-32-54.",
+            "ask_patterns": [
+              "номер телефона",
+              "ваш телефон",
+              "номер для связи",
+              "перезвонить"
+            ]
+          },
+          {
+            "id": "age",
+            "label": "Возраст заявителя",
+            "card_path": "/age",
+            "knowledge": "on_question",
+            "value": "36",
+            "statement": "Мне 36 лет.",
+            "ask_patterns": [
+              "сколько вам лет",
+              "ваш возраст",
+              "назовите.*возраст"
+            ],
+            "disclosure_patterns": [
+              "36 лет",
+              "тридцать шесть"
+            ]
+          }
+        ]
+      },
+      "reference": {
+        "expected_types": [
+          "gas_explosion"
+        ],
+        "case_description": "Ссора с продавцом не входит ни в один тип каталога 112 (не взрыв газа и не ДТП с возгоранием). expected_types/expected_services — эталон-заглушка до 112-6, реальным основанием оценки не является. У сценария намеренно нет отдельного факта с точным ориентиром — единственный проверяемый риск: не выдумывает ли модель точное место (ориентир, этаж, подъезд), которого в фактах нет, вместо того чтобы опереться на уже сообщённый адрес или сказать, что уточнить нечем.",
+        "expected_services": [
+          "pilot_gas_104"
+        ],
+        "description_questions": [
+          {
+            "id": "argument",
+            "question": "Указано ли, что заявитель поссорился с продавцом?"
+          },
+          {
+            "id": "shop",
+            "question": "Указано ли, что конфликт произошёл в «МегаФоне»?"
+          },
+          {
+            "id": "ended_call",
+            "question": "Указано ли, что заявитель бросил трубку?"
+          }
+        ]
+      }
+    }
+  }
+}
