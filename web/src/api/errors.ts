@@ -20,6 +20,12 @@ export function errorMessage(error: unknown): string {
       return "Конфликт состояния. Обновите страницу и повторите действие.";
     case "not_found":
       return "Не найдено.";
+    case "stale_draft":
+      return "Черновик изменён с момента загрузки. Обновите страницу, чтобы не потерять чужие правки.";
+    case "has_blocking_issues":
+      return "Сначала устраните ошибки проверки (вкладка «Проверка»).";
+    case "unsupported_for_editor":
+      return "Редактор 112-7 работает только со сценариями «полный кейс» + «ИИ-заявитель».";
     case "validation_failed":
       if (field === "workstation_no") {
         if (reason === "required") return "Укажите номер рабочего места.";

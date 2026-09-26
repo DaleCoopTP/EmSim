@@ -7,6 +7,8 @@ import { WorkstationsRoute } from "./routes/admin/Workstations";
 import { HomeRoute } from "./routes/Home";
 import { ScenarioCatalogueRoute } from "./routes/instructor/ScenarioCatalogue";
 import { ScenarioDetailRoute } from "./routes/instructor/ScenarioDetail";
+import { ScenarioEditorRoute } from "./routes/instructor/ScenarioEditor";
+import { ScenarioPreviewRoute } from "./routes/instructor/ScenarioPreview";
 import { LessonsRoute } from "./routes/instructor/Lessons";
 import { LessonDetailRoute } from "./routes/instructor/LessonDetail";
 import { MonitorRoute } from "./routes/instructor/Monitor";
@@ -46,7 +48,10 @@ export default function App() {
           <Route element={<RequireAuth roles={["instructor"]} />}>
             <Route element={<Layout />}>
               <Route path="/instructor/scenarios" element={<ScenarioCatalogueRoute />} />
+              <Route path="/instructor/scenarios/new" element={<ScenarioEditorRoute />} />
               <Route path="/instructor/scenarios/:scenarioId" element={<ScenarioDetailRoute />} />
+              <Route path="/instructor/scenarios/:scenarioId/edit" element={<ScenarioEditorRoute />} />
+              <Route path="/instructor/preview/:itemId" element={<ScenarioPreviewRoute />} />
               <Route path="/instructor/lessons" element={<LessonsRoute />} />
               <Route path="/instructor/lessons/:lessonId" element={<LessonDetailRoute />} />
               <Route path="/instructor/lessons/:lessonId/monitor" element={<MonitorRoute />} />

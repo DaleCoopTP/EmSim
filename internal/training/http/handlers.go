@@ -94,6 +94,13 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	itemRead := func(handler http.HandlerFunc) http.Handler {
 		return authhttp.SessionMiddleware(h.auth, h.cookieSecure)(authhttp.RequireRole(auth.GroupItemRead)(handler))
 	}
+	// itemActions is POST /items/{itemId}/actions (112-7/ADR-027): unlike
+	// every other trainee-only route, this one also admits an instructor
+	// previewing their own operator-112 scenario — see GroupItemActions'
+	// own doc comment for why that is safe at the route level.
+	itemActions := func(handler http.HandlerFunc) http.Handler {
+		return authhttp.SessionMiddleware(h.auth, h.cookieSecure)(authhttp.RequireRole(auth.GroupItemActions)(handler))
+	}
 
 	mux.Handle("GET /api/v1/lessons", lessons(h.listLessons))
 	mux.Handle("POST /api/v1/lessons", lessons(h.createLesson))
@@ -113,7 +120,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/my/run", trainee(h.myRun))
 	mux.Handle("GET /api/v1/my/items", trainee(h.myItems))
 	mux.Handle("GET /api/v1/my/stream", trainee(h.streamMy))
-	mux.Handle("POST /api/v1/items/{itemId}/actions", trainee(h.execute))
+	mux.Handle("POST /api/v1/items/{itemId}/actions", itemActions(h.execute))
 	mux.Handle("PUT /api/v1/items/{itemId}/calls/{callId}/recording", trainee(h.uploadRecording))
 	mux.Handle("GET /api/v1/items/{itemId}/calls/{callId}/recording", itemRead(h.downloadRecording))
 	mux.Handle("GET /api/v1/items/{itemId}/contacts/{contactKey}/phrases/{phrase}", trainee(h.voicePhrase))
@@ -1051,20 +1058,33 @@ func toDeliveredEventsJSON(events []training.DeliveredEvent) []deliveredEventJSO
 	return out
 }
 
-func traineeIntakeState(item training.Item) (*training.IntakeState, []string) {
-	state := *item.IntakeState
-	if (state.Mode != "card_only" && state.Mode != "full_case") || state.Catalog == nil {
-		return &state, nil
+// availableServiceCodesForState is the deduplicated list of every
+// service a card_only/full_case catalog's rules can ever suggest — not
+// secret (no reasons/rules attached, just codes), so both the trainee
+// operator and 112-7/ADR-027's own preview-run instructor get it: the
+// "add service" modal (web's Operator112ProfileCase) needs it to let
+// either one manually adjust the suggested set, not just accept it.
+func availableServiceCodesForState(state *training.IntakeState) []string {
+	if state == nil || (state.Mode != "card_only" && state.Mode != "full_case") || state.Catalog == nil {
+		return nil
 	}
-	full := state.Catalog
-	services := make([]string, 0, len(full.ServiceRules))
-	seen := make(map[string]bool, len(full.ServiceRules))
-	for _, rule := range full.ServiceRules {
+	services := make([]string, 0, len(state.Catalog.ServiceRules))
+	seen := make(map[string]bool, len(state.Catalog.ServiceRules))
+	for _, rule := range state.Catalog.ServiceRules {
 		if !seen[rule.ServiceCode] {
 			services = append(services, rule.ServiceCode)
 			seen[rule.ServiceCode] = true
 		}
 	}
+	return services
+}
+
+func traineeIntakeState(item training.Item) *training.IntakeState {
+	state := *item.IntakeState
+	if (state.Mode != "card_only" && state.Mode != "full_case") || state.Catalog == nil {
+		return &state
+	}
+	full := state.Catalog
 	visible := *full
 	visible.Types = make([]content.IntakeIncidentType, len(full.Types))
 	for i, incidentType := range full.Types {
@@ -1082,7 +1102,7 @@ func traineeIntakeState(item training.Item) (*training.IntakeState, []string) {
 	visible.ServiceRules = []content.IntakeServiceRule{}
 	state.Catalog = &visible
 	state.InactiveProfiles = nil
-	return &state, services
+	return &state
 }
 
 func toItemJSON(item training.Item, actions []training.Action, events []training.DeliveredEvent, reference *content.Reference, intakeReference *content.Intake112Reference, intakeDialogue *content.Intake112Dialogue, now time.Time, traineeView bool) itemJSON {
@@ -1097,9 +1117,9 @@ func toItemJSON(item training.Item, actions []training.Action, events []training
 	}
 	if item.IntakeCard != nil {
 		state := item.IntakeState
-		var availableServices []string
+		availableServices := availableServiceCodesForState(state)
 		if traineeView && state != nil {
-			state, availableServices = traineeIntakeState(item)
+			state = traineeIntakeState(item)
 		}
 		return itemJSON{itemSummaryJSON: toItemSummaryJSON(item), Mode: string(item.Mode),
 			Card: item.IntakeCard, IntakeState: state, AvailableServiceCodes: availableServices, Dispatch: item.IntakeDispatch,

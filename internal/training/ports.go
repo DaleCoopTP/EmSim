@@ -46,6 +46,10 @@ type WorkstationDirectory interface {
 type ScenarioReader interface {
 	VersionByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (content.ScenarioVersionRecord, error)
 	ScenarioByKey(ctx context.Context, tx pgx.Tx, key string) (content.ScenarioRecord, error)
+	// ScenarioByID is 112-7/ADR-027's own addition — StartPreview needs
+	// created_by to check that the actor starting a preview run on a
+	// draft version actually owns that scenario.
+	ScenarioByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (content.ScenarioRecord, error)
 	VersionByNumber(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID, version int) (content.ScenarioVersionRecord, error)
 	LatestIntakeCatalog(ctx context.Context, tx pgx.Tx) (content.IntakeCatalog, error)
 	IntakeCatalogByVersion(ctx context.Context, tx pgx.Tx, version int) (content.IntakeCatalog, error)

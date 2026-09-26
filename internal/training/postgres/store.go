@@ -149,8 +149,14 @@ func (s *Store) LessonByID(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock tr
 	return scanLesson(tx.QueryRow(ctx, query, id))
 }
 
+// ListLessonsByInstructor excludes mode='preview' unconditionally
+// (112-7/ADR-027): a preview lesson is a throwaway one-off the editor
+// creates every time its author previews a draft, never a real lesson
+// the instructor manages here — it would only clutter this list. Unlike
+// state, this is not a caller-supplied filter; there is no way to ask
+// for preview lessons back through this method.
 func (s *Store) ListLessonsByInstructor(ctx context.Context, tx pgx.Tx, instructorID uuid.UUID, state *training.LessonState) ([]training.Lesson, error) {
-	query := `SELECT ` + lessonColumns + ` FROM lessons WHERE instructor_id = $1`
+	query := `SELECT ` + lessonColumns + ` FROM lessons WHERE instructor_id = $1 AND mode != 'preview'`
 	args := []any{instructorID}
 	if state != nil {
 		query += ` AND state = $2`
@@ -219,7 +225,15 @@ func (s *Store) SetStopCutoffForOpenItems(ctx context.Context, tx pgx.Tx, lesson
 
 // ------------------------------------------------------------ assignments
 
-const assignmentColumns = `a.lesson_id, a.workstation_id, w.number, a.user_id, a.scenario_version_ids`
+// assignmentColumns' workstation_id/number are COALESCEd to zero-UUID/0
+// rather than left NULL — 112-7/ADR-027's own preview assignments have no
+// workstation (migrations/00017), and training.Assignment.WorkstationID/
+// WorkstationNo stay plain uuid.UUID/int (not pointers) to avoid a much
+// larger refactor across every other place this package already compares
+// them; uuid.Nil is not a workstation any real row can have, so it is a
+// safe "no workstation" sentinel here and in runSelectColumns/
+// itemSelectColumns below.
+const assignmentColumns = `a.lesson_id, COALESCE(a.workstation_id, '00000000-0000-0000-0000-000000000000'::uuid), COALESCE(w.number, 0), a.user_id, a.scenario_version_ids`
 
 func scanAssignment(row pgx.Row) (training.Assignment, error) {
 	var a training.Assignment
@@ -233,7 +247,7 @@ func scanAssignment(row pgx.Row) (training.Assignment, error) {
 func (s *Store) AssignmentsByLesson(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID) ([]training.Assignment, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT `+assignmentColumns+`
-		FROM assignments a JOIN workstations w ON w.id = a.workstation_id
+		FROM assignments a LEFT JOIN workstations w ON w.id = a.workstation_id
 		WHERE a.lesson_id = $1
 		ORDER BY w.number
 	`, lessonID)
@@ -267,7 +281,7 @@ func (s *Store) ReplaceAssignments(ctx context.Context, tx pgx.Tx, lessonID uuid
 	for _, a := range assignments {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO assignments (lesson_id, workstation_id, user_id, scenario_version_ids)
-			VALUES ($1, $2, $3, $4)
+			VALUES ($1, NULLIF($2, '00000000-0000-0000-0000-000000000000'::uuid), $3, $4)
 		`, lessonID, a.WorkstationID, a.UserID, a.ScenarioVersionIDs); err != nil {
 			return mapErr(err)
 		}
@@ -277,8 +291,8 @@ func (s *Store) ReplaceAssignments(ctx context.Context, tx pgx.Tx, lessonID uuid
 
 // ------------------------------------------------------------ runs
 
-const runSelectColumns = `r.exercise_type, r.id, r.lesson_id, r.user_id, r.workstation_id, w.number, r.mode, r.state, r.level_at_start, r.next_offer_at, r.queue_cursor, r.started_at, r.finished_at`
-const runFrom = `FROM runs r JOIN workstations w ON w.id = r.workstation_id`
+const runSelectColumns = `r.exercise_type, r.id, r.lesson_id, r.user_id, COALESCE(r.workstation_id, '00000000-0000-0000-0000-000000000000'::uuid), COALESCE(w.number, 0), r.mode, r.state, r.level_at_start, r.next_offer_at, r.queue_cursor, r.started_at, r.finished_at`
+const runFrom = `FROM runs r LEFT JOIN workstations w ON w.id = r.workstation_id`
 
 func scanRun(row pgx.Row) (training.Run, error) {
 	var r training.Run
@@ -293,7 +307,7 @@ func scanRun(row pgx.Row) (training.Run, error) {
 func (s *Store) InsertRun(ctx context.Context, tx pgx.Tx, r training.Run) (training.Run, error) {
 	err := tx.QueryRow(ctx, `
 		INSERT INTO runs (exercise_type, id, lesson_id, user_id, workstation_id, mode, state, level_at_start, next_offer_at, queue_cursor, started_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9, $10)
+		VALUES ($1, $2, $3, $4, NULLIF($5, '00000000-0000-0000-0000-000000000000'::uuid), $6, 'active', $7, $8, $9, $10)
 		RETURNING started_at
 	`, r.ExerciseType, r.ID, r.LessonID, r.UserID, r.WorkstationID, r.Mode, r.LevelAtStart, r.NextOfferAt, r.QueueCursor, r.StartedAt).
 		Scan(&r.StartedAt)
@@ -425,7 +439,7 @@ func (s *Store) FinishLesson(ctx context.Context, tx pgx.Tx, id uuid.UUID, finis
 
 // ------------------------------------------------------------ items
 
-const itemSelectColumns = `i.id, i.run_id, r.lesson_id, r.user_id, w.number,
+const itemSelectColumns = `i.id, i.run_id, r.lesson_id, r.user_id, COALESCE(w.number, 0),
 	i.scenario_version_id, sv.digest, COALESCE(sv.body ->> 'target_service', ''), i.exercise_type,
 	r.mode, i.ordinal, i.spawned_from, i.state, i.reaction,
 	i.card, i.workflow, i.pilot_goal, i.intake_state,
@@ -433,7 +447,7 @@ const itemSelectColumns = `i.id, i.run_id, r.lesson_id, r.user_id, w.number,
 	i.offered_at, i.opened_at, i.primary_at, i.closed_at, i.close_reason`
 const itemFrom = `FROM items i
 	JOIN runs r ON r.id = i.run_id
-	JOIN workstations w ON w.id = r.workstation_id
+	LEFT JOIN workstations w ON w.id = r.workstation_id
 	JOIN scenario_versions sv ON sv.id = i.scenario_version_id`
 
 func scanItem(row pgx.Row) (training.Item, error) {

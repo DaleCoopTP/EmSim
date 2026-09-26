@@ -50,6 +50,16 @@ const (
 	// the handler itself still tells the two views apart and enforces
 	// ownership.
 	GroupItemRead Group = "item_read"
+	// GroupItemActions is POST /items/{itemId}/actions (112-7/ADR-027): a
+	// trainee acting on their own item, as before, plus an instructor
+	// acting on their own operator-112 preview run's sole item (that run
+	// has no workstation and no other participant). training.Service.
+	// Execute still rejects any call whose run.UserID != actor.UserID
+	// regardless of role, so this route grant alone never lets an
+	// instructor touch another user's item — it only removes the
+	// route-level block that would otherwise stop a preview author from
+	// reaching their own item's command endpoint.
+	GroupItemActions Group = "item_actions"
 	// GroupTasks is GET /tasks/{id} — polling status of a background task
 	// (scenario generation, import, report build) the caller itself
 	// started. openapi.yaml tags it "tasks", distinct from "admin", even
@@ -72,6 +82,7 @@ var groupRoles = map[Group][]Role{
 	GroupAssessment:  {RoleInstructor},
 	GroupTraineeSelf: {RoleTrainee},
 	GroupItemRead:    {RoleInstructor, RoleTrainee},
+	GroupItemActions: {RoleInstructor, RoleTrainee},
 	GroupReports:     {RoleInstructor},
 	GroupTasks:       {RoleAdmin, RoleInstructor},
 }

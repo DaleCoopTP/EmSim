@@ -63,6 +63,15 @@ type Mode string
 const (
 	ModeIntro    Mode = "intro"
 	ModeTraining Mode = "training"
+	// ModePreview is 112-7/ADR-027's own third mode: a one-shot lesson
+	// created by StartPreview so a scenario's own author can run their
+	// draft as its sole participant, with no workstation
+	// (migrations/00017 — assignments/runs.workstation_id is nullable
+	// only for this mode). It is never a valid POST /lessons request
+	// mode (CreateLesson rejects it the same way it already rejects
+	// anything but intro/training); it exists purely so a preview
+	// lesson/run's own Mode field has a name.
+	ModePreview Mode = "preview"
 )
 
 // CommandType is actions.type / Command.Type. CallStart/CallEnd/

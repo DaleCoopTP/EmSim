@@ -22,7 +22,8 @@ func TestTraineeIntakeProjectionOnlyRevealsActiveProfiles(t *testing.T) {
 	item := training.Item{IntakeCard: &training.IntakeCard{Profiles: map[string]training.IntakeProfile{}},
 		IntakeState: &training.IntakeState{Mode: "card_only", Catalog: full,
 			InactiveProfiles: map[string]training.IntakeProfile{"101": {DefinitionID: "101"}}}}
-	state, services := traineeIntakeState(item)
+	services := availableServiceCodesForState(item.IntakeState)
+	state := traineeIntakeState(item)
 	if len(state.Catalog.Profiles) != 0 || len(state.Catalog.ServiceRules) != 0 || state.InactiveProfiles != nil || len(services) != 3 {
 		t.Fatalf("initial projection leaked definitions: %+v, %v", state, services)
 	}
@@ -34,7 +35,7 @@ func TestTraineeIntakeProjectionOnlyRevealsActiveProfiles(t *testing.T) {
 		t.Fatalf("initial projection exposed future fields or rules: %s", encoded)
 	}
 	item.IntakeCard.Profiles["104"] = training.IntakeProfile{DefinitionID: "104"}
-	state, _ = traineeIntakeState(item)
+	state = traineeIntakeState(item)
 	if len(state.Catalog.Profiles) != 1 || state.Catalog.Profiles[0].ID != "104" || len(full.Profiles) != 2 || len(full.ServiceRules) != 3 {
 		t.Fatalf("active projection or stored catalog changed: %+v, %+v", state.Catalog, full)
 	}

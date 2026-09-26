@@ -58,6 +58,32 @@ func DecodeFile(r io.Reader) (raw any, file File, err error) {
 	return raw, file, nil
 }
 
+// DecodeBody is DecodeFile's own counterpart for a standalone scenario
+// body — no key/version/title/origin wrapper — the shape 112-7/ADR-027's
+// editor endpoints (POST/PUT/validate/probe /scenarios/...) exchange.
+// Like DecodeFile it returns two views: raw (duplicate-key-checked,
+// json.Number-preserving, for schema.Validator.ValidateBody and Digest)
+// and the typed Body decoded from the same bytes.
+func DecodeBody(r io.Reader) (raw any, body Body, err error) {
+	dec := json.NewDecoder(r)
+	dec.UseNumber()
+	raw, err = decodeUnique(dec)
+	if err != nil {
+		return nil, Body{}, err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, Body{}, fmt.Errorf("trailing content after JSON document")
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil, Body{}, fmt.Errorf("re-encode scenario body: %w", err)
+	}
+	if err := json.Unmarshal(b, &body); err != nil {
+		return nil, Body{}, fmt.Errorf("decode scenario body: %w", err)
+	}
+	return raw, body, nil
+}
+
 // decodeUnique reads one JSON value from dec, rejecting any object with a
 // repeated key at any depth. Numbers decode as json.Number (dec must have
 // UseNumber set) so Digest sees the literal the file actually contains.

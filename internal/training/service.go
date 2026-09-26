@@ -689,12 +689,17 @@ func (s *Service) closeInterruptedItem(ctx context.Context, tx pgx.Tx, exercise 
 // on the ordinary close path (recordDecision) and the stop-triggered one
 // (closeInterruptedItem). Intro carries no assessment at all
 // (slice-planning.md §9: "intro не ставит задачу оценки, не создаёт
-// итоговую оценку"): only mode=training items ever get one.
+// итоговую оценку"): only mode=training and mode=preview items get one.
+// Preview (112-7/ADR-027) needs the same real rubric-v2 auto-assessment a
+// trainee gets — its exclusion from stats/history/
+// trainee_assessment_state happens downstream (internal/assessment's
+// version-bump skip, internal/reporting's lesson_mode filter), not by
+// skipping evaluation here.
 // assessment.evaluate's own Spec/handler are registered by
 // internal/assessment's composition, never by training — this package
 // only ever enqueues, per KindAssessmentEvaluate's own doc comment.
 func (s *Service) enqueueEvaluateWaiting(ctx context.Context, tx pgx.Tx, lesson Lesson, item Item, evidence Evidence, now time.Time) error {
-	if lesson.Mode != ModeTraining {
+	if lesson.Mode != ModeTraining && lesson.Mode != ModePreview {
 		return nil
 	}
 	// 112-6/ADR-026's c4: operator112/rubric-v1 (the pre-112-6 manual-only
@@ -979,7 +984,8 @@ func (s *Service) startOneAssignment(ctx context.Context, tx pgx.Tx, lesson Less
 		return err
 	}
 
-	return s.offerQueueVersion(ctx, tx, lesson, run, a, 0, now, nil)
+	_, err = s.offerQueueVersion(ctx, tx, lesson, run, a, 0, now, nil)
+	return err
 }
 
 // offerQueueVersion snapshots the next approved scenario into an offered
@@ -992,18 +998,21 @@ type spawnOrigin struct {
 	itemID uuid.UUID
 }
 
-func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesson, run Run, assignment Assignment, queueIndex int, now time.Time, origin *spawnOrigin) error {
+// offerQueueVersion returns the id of the item it just created — used by
+// StartPreview (112-7/ADR-027), the only caller that needs it back; every
+// other call site still just checks the error.
+func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesson, run Run, assignment Assignment, queueIndex int, now time.Time, origin *spawnOrigin) (uuid.UUID, error) {
 	if queueIndex < 0 || queueIndex >= len(assignment.ScenarioVersionIDs) {
-		return fmt.Errorf("training: queue index %d out of range", queueIndex)
+		return uuid.Nil, fmt.Errorf("training: queue index %d out of range", queueIndex)
 	}
 	versionID := assignment.ScenarioVersionIDs[queueIndex]
 	version, err := s.scenarios.VersionByID(ctx, tx, versionID)
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	if lesson.ExerciseType == content.ExerciseTypeOperator112Intake {
 		if version.Body.Intake112 == nil {
-			return fmt.Errorf("training: 112 scenario has no intake")
+			return uuid.Nil, fmt.Errorf("training: 112 scenario has no intake")
 		}
 		itemID := uuid.New()
 		call := content.Intake112Call{}
@@ -1015,11 +1024,11 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 		switch version.Body.Intake112.Mode {
 		case "card_only", "full_case":
 			if lesson.IntakeCatalogVersion == nil {
-				return fmt.Errorf("training: lesson has no intake catalog snapshot")
+				return uuid.Nil, fmt.Errorf("training: lesson has no intake catalog snapshot")
 			}
 			catalog, err := s.scenarios.IntakeCatalogByVersion(ctx, tx, *lesson.IntakeCatalogVersion)
 			if err != nil {
-				return fmt.Errorf("training: intake catalog missing: %w", err)
+				return uuid.Nil, fmt.Errorf("training: intake catalog missing: %w", err)
 			}
 			intakeState.Mode, intakeState.Catalog = version.Body.Intake112.Mode, &catalog
 			if version.Body.Intake112.Mode == "card_only" {
@@ -1054,16 +1063,16 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 			Mode:        lesson.Mode, TimingEffective: lesson.Timing,
 			Deadlines: Deadlines{OpenAt: now, PrimaryAt: now}, OfferedAt: now}
 		if _, err := s.store.InsertItem(ctx, tx, item); err != nil {
-			return err
+			return uuid.Nil, err
 		}
 		if err := s.store.SetRunQueueCursor(ctx, tx, run.ID, queueIndex+1); err != nil {
-			return err
+			return uuid.Nil, err
 		}
-		return s.notify(ctx, tx, lesson.ID, run.UserID, item.ID)
+		return item.ID, s.notify(ctx, tx, lesson.ID, run.UserID, item.ID)
 	}
 	svc, err := s.services.ServiceByCode(ctx, tx, version.Body.TargetService)
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	openAt := now.Add(time.Duration(lesson.Timing.OpenS) * time.Second)
 	card := content.ProjectCard(version.Body.Card)
@@ -1084,15 +1093,15 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 		OfferedAt:       now,
 	}
 	if _, err := s.store.InsertItem(ctx, tx, item); err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	if err := s.store.SetRunQueueCursor(ctx, tx, run.ID, queueIndex+1); err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	if err := s.scheduleEventsForAnchor(ctx, tx, item, version.Body.Events, "offered", now); err != nil {
-		return err
+		return uuid.Nil, err
 	}
-	return s.notify(ctx, tx, lesson.ID, run.UserID, item.ID)
+	return item.ID, s.notify(ctx, tx, lesson.ID, run.UserID, item.ID)
 }
 
 // checkSpawnQueuePlan makes event-driven cards deterministic: the next queue
@@ -1187,7 +1196,7 @@ func (s *Service) Execute(ctx context.Context, actor auth.Principal, itemID uuid
 		if run.UserID != actor.UserID {
 			return ErrNotFound
 		}
-		if actor.WorkstationID == nil || *actor.WorkstationID != run.WorkstationID {
+		if !workstationMatches(actor, run) {
 			return ErrWorkstationMismatch
 		}
 
@@ -1586,7 +1595,7 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	if lesson.Level != auth.LevelHard && run.QueueCursor < len(assignment.ScenarioVersionIDs) {
 		// A normal close advances an ordered queue. Hard-mode parallel
 		// issuance is intentionally delegated to C5's scheduler.
-		if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, closedAt, nil); err != nil {
+		if _, err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, closedAt, nil); err != nil {
 			return Receipt{}, err
 		}
 		return receipt, nil
@@ -1961,7 +1970,7 @@ func (s *Service) tickHardRun(ctx context.Context, runID uuid.UUID) error {
 		if run.QueueCursor >= len(assignment.ScenarioVersionIDs) {
 			return s.store.SetRunNextOfferAt(ctx, tx, run.ID, nil)
 		}
-		if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, now, nil); err != nil {
+		if _, err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, now, nil); err != nil {
 			return err
 		}
 		if lesson.Timing.SpawnEveryS == nil {
@@ -2140,7 +2149,7 @@ func (s *Service) spawnEventCard(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 		return validationErr("scenario_version_ids", "spawn_card kind is unsupported")
 	}
 	origin := &spawnOrigin{itemID: item.ID}
-	if err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, now, origin); err != nil {
+	if _, err := s.offerQueueVersion(ctx, tx, lesson, run, assignment, run.QueueCursor, now, origin); err != nil {
 		return err
 	}
 	if lesson.Level == auth.LevelHard && lesson.Timing.SpawnEveryS != nil {
@@ -2191,7 +2200,7 @@ func (s *Service) ItemForTrainee(ctx context.Context, actor auth.Principal, item
 		if run.UserID != actor.UserID {
 			return ErrNotFound
 		}
-		if actor.WorkstationID == nil || *actor.WorkstationID != run.WorkstationID {
+		if !workstationMatches(actor, run) {
 			return ErrWorkstationMismatch
 		}
 		actions, err = s.store.ActionsByItem(ctx, tx, itemID)
@@ -2321,7 +2330,7 @@ func (s *Service) UploadRecording(ctx context.Context, actor auth.Principal, ite
 			return err
 		}
 		_ = lesson
-		if run.UserID != actor.UserID || actor.WorkstationID == nil || *actor.WorkstationID != run.WorkstationID {
+		if run.UserID != actor.UserID || !workstationMatches(actor, run) {
 			return ErrNotFound
 		}
 		call, err := s.store.CallByID(ctx, tx, callID, LockUpdate)
@@ -2405,7 +2414,7 @@ func (s *Service) VoicePhraseForTrainee(ctx context.Context, actor auth.Principa
 		if err != nil {
 			return err
 		}
-		if run.UserID != actor.UserID || actor.WorkstationID == nil || *actor.WorkstationID != run.WorkstationID {
+		if run.UserID != actor.UserID || !workstationMatches(actor, run) {
 			return ErrNotFound
 		}
 		version, err := s.scenarios.VersionByID(ctx, tx, item.ScenarioVersionID)

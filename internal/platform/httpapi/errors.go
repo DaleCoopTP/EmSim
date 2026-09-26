@@ -32,6 +32,12 @@ const (
 	CodeRecordingDeadlinePassed ErrorCode = "recording_deadline_passed"
 	CodeStaleRevision           ErrorCode = "stale_revision"
 	CodeStaleRecommendation     ErrorCode = "stale_recommendation"
+	// CodeStaleDraft/CodeHasBlockingIssues/CodeUnsupportedForEditor are
+	// 112-7/ADR-027's own codes — the operator-112 scenario editor's
+	// PUT/approve/preview-runs endpoints.
+	CodeStaleDraft           ErrorCode = "stale_draft"
+	CodeHasBlockingIssues    ErrorCode = "has_blocking_issues"
+	CodeUnsupportedForEditor ErrorCode = "unsupported_for_editor"
 )
 
 // statusFor is the fixed HTTP status each code carries. Five of them —
@@ -62,6 +68,9 @@ var statusFor = map[ErrorCode]int{
 	CodeRecordingDeadlinePassed: http.StatusConflict,
 	CodeStaleRevision:           http.StatusConflict,
 	CodeStaleRecommendation:     http.StatusConflict,
+	CodeStaleDraft:              http.StatusConflict,
+	CodeHasBlockingIssues:       http.StatusUnprocessableEntity,
+	CodeUnsupportedForEditor:    http.StatusUnprocessableEntity,
 }
 
 // StatusFor returns the HTTP status WriteError sends for code, or 500 for

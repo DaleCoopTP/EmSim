@@ -182,12 +182,20 @@ paths:
         '200': { description: OK, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/ScenarioSummary' } }, total: { type: integer } } } } } }
     post:
       tags: [content]
-      summary: Создать сценарий вручную (версия 1, draft)
-      description: Не реализовано в срезе 2 (каталог в этом срезе только загружается штатным CLI-импортом из подготовленных файлов, slice-planning.md §3). Редактор появляется в срезе 11; маршрут не зарегистрирован и отвечает 404 до этого среза.
+      summary: Создать (или скопировать) сценарий 112 — версия 1, draft
+      description: 'Срез 112-7/ADR-027, только operator112_intake full_case+free_text. copy_from_version_id копирует любую версию (свою, чужую approved, или файловый сид) с тем же mode/caller_mode в новый черновик под своим авторством; иначе — 422 unsupported_for_editor. Для ДДС остаётся не реализовано (срез 11); значение exercise_type=dds_processing отвечает 404.'
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScenarioCreate' } } } }
       responses:
         '201': { description: Создан, content: { application/json: { schema: { $ref: '#/components/schemas/Scenario' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/Validation' }
+  /intake112/catalog:
+    get:
+      tags: [content]
+      summary: Каталог 112 для редактора (типы, профильные карты, службы, service_rules)
+      description: 'Срез 112-7. Роль — instructor. То же содержимое, из которого intake_state обучаемого уже строится (internal/content/postgres.IntakeCatalog) — не секрет, здесь только собрано в одном ответе ради редактора.'
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Intake112Catalog' } } } }
   /scenarios/generate:
     post:
       tags: [content]
@@ -220,11 +228,13 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
     put:
       tags: [content]
-      summary: Правка — создаёт новую draft-версию
-      description: Не реализовано в срезе 2 — до утверждённого среза 11 контент только загружается импортом (CLI) и редактируется повторным импортом с явной version. Маршрут не зарегистрирован и отвечает 404 до среза 11.
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScenarioBody' } } } }
+      summary: Правка черновика 112 — всегда новой draft-версией
+      description: 'Срез 112-7/ADR-027, только operator112_intake full_case+free_text владельца. base_digest — digest версии, прочитанной клиентом; несовпадение → 409 stale_draft. Каждый PUT создаёт версию N+1 (draft) и переводит прежнюю latest-версию в superseded — без правки на месте (упрощение ADR-027: content не должен знать, ссылается ли training на черновик через предпросмотр). Ответ несёт issues[] (все, включая warning) — сохранение с error-issues разрешено, это просто незаконченный черновик. Для ДДС и для чужого/утверждённого без своего черновика остаётся не реализовано.'
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScenarioEdit' } } } }
       responses:
-        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scenario' } } } }
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ScenarioEditResult' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Validation' }
     delete:
       tags: [content]
@@ -240,6 +250,38 @@ paths:
       description: Роль — instructor. Метаданные всех версий (id, version, status, digest, атрибуция утверждения); полное тело исторической (superseded) версии этот endpoint не отдаёт.
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScenarioVersionSummary' } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /scenarios/{scenarioId}/validate:
+    parameters: [ { $ref: '#/components/parameters/ScenarioId' } ]
+    post:
+      tags: [content]
+      summary: Проверить черновик без сохранения
+      description: Срез 112-7/ADR-027. Роль — instructor, только владелец черновика (иначе 404). Тело — то же, что уйдёт в PUT; ответ — полный список issues[], включая warning, без записи.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScenarioBody' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, required: [issues], properties: { issues: { type: array, items: { $ref: '#/components/schemas/ValidationIssue' } } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /scenarios/{scenarioId}/probe:
+    parameters: [ { $ref: '#/components/parameters/ScenarioId' } ]
+    post:
+      tags: [content]
+      summary: Тестер фраз — какие факты открывает пробная реплика
+      description: Срез 112-7/ADR-027. Прогоняет текст через тот же детерминированный классификатор, что internal/training/operator112/aicaller использует при сборке промпта модели — без обращения к модели. body — как в /validate, ещё не сохранённое состояние формы (тестер фраз работает с тем, что редактируется прямо сейчас, а не с последним сохранённым черновиком). Роль — instructor, только владелец черновика.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [text, body], properties: { text: { type: string, maxLength: 2000 }, body: { $ref: '#/components/schemas/ScenarioBody' } } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, required: [opened], properties: { opened: { type: array, items: { type: object, required: [fact_id, kind], properties: { fact_id: { type: string }, kind: { type: string, enum: [reveal, ask] } } } } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /scenarios/{scenarioId}/preview-runs:
+    parameters: [ { $ref: '#/components/parameters/ScenarioId' } ]
+    post:
+      tags: [content]
+      summary: Пройти черновик самому — одноразовое занятие mode=preview
+      description: 'Срез 112-7/ADR-027. Роль — instructor, только владелец версии; version_id должен принадлежать этому сценарию и не иметь ни одного error-issue (422 has_blocking_issues иначе). Останавливает уже активный preview-прогон этого же автора, затем создаёт lessons(mode=preview)/assignments(без РМ)/run/item на самого автора и запускает его — тот же item, что и обычный обучаемый использует (POST /items/{id}/actions, GET /items/{id}). Оценивается rubric-v2, но не входит в отчёты/историю/прогресс. Завершение — обычный POST /lessons/{id}/stop.'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [version_id], properties: { version_id: { type: string, format: uuid } } } } } }
+      responses:
+        '201': { description: Создан, content: { application/json: { schema: { type: object, required: [lesson_id, item_id], properties: { lesson_id: { type: string, format: uuid }, item_id: { type: string, format: uuid } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
   /scenarios/{scenarioId}/regenerate:
     parameters: [ { $ref: '#/components/parameters/ScenarioId' } ]
     post:
@@ -253,10 +295,12 @@ paths:
     parameters: [ { $ref: '#/components/parameters/ScenarioId' } ]
     post:
       tags: [content]
-      summary: Утвердить текущую draft-версию; ставит задачу озвучки
-      description: Не реализовано в срезе 2 — импорт сразу создаёт approved-версию, отдельного шага утверждения преподавателем нет. Появляется вместе с редактором в срезе 11; маршрут не зарегистрирован и отвечает 404 до этого среза.
+      summary: Утвердить черновик 112 (без озвучки — 112 не использует voice_assets)
+      description: 'Срез 112-7/ADR-027, только operator112_intake full_case+free_text владельца, без error-issues (422 has_blocking_issues иначе). base_digest — как в PUT (409 stale_draft на несовпадение). Переводит прежнюю approved-версию сценария в superseded и черновик — в approved, в одной транзакции. Для ДДС остаётся не реализовано (срез 11), задача озвучки для 112 не ставится (у 112 нет voice_assets/Piper-пути).'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [version_id, base_digest], properties: { version_id: { type: string, format: uuid }, base_digest: { type: string } } } } } }
       responses:
         '200': { description: Утверждено, content: { application/json: { schema: { $ref: '#/components/schemas/Scenario' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Validation' }
   /scenarios/{scenarioId}/preview:
@@ -620,7 +664,7 @@ components:
           properties:
             code:
               type: string
-              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, call_required, call_in_progress, call_not_active, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation]
+              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, call_required, call_in_progress, call_not_active, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation, stale_draft, has_blocking_issues, unsupported_for_editor]
             message: { type: string }
             details: { type: object, additionalProperties: true }
         request_id: { type: string }
@@ -716,6 +760,7 @@ components:
         has_events: { type: boolean }
         has_voice: { type: boolean, description: 'Наличие подготовленного аудио (voice_assets), не просто присутствие contacts/events. Озвучка появляется в срезе 11 — до этого поле всегда false у каталога.' }
         updated_at: { type: string, format: date-time }
+        created_by: { type: string, format: uuid, description: 'Срез 112-7/ADR-027. Автор не секретен для инструкторского каталога (утверждённый сценарий и так виден всем) — нужен веб-редактору, чтобы решить, показывать ли «Редактировать»/«Копировать» для конкретного сценария.' }
     Scenario:
       allOf:
         - $ref: '#/components/schemas/ScenarioSummary'
@@ -725,15 +770,54 @@ components:
             body: { $ref: '#/components/schemas/ScenarioBody' }
             version_id: { type: string, format: uuid }
             digest: { type: string, description: hex sha256 }
+            version_status: { type: string, enum: [draft, approved, superseded], description: 'Срез 112-7/ADR-027. Только когда GET вернул владельца собственный черновик через owner-only fallback (обычный approved-ответ его не заполняет).' }
+            issues: { type: array, items: { $ref: '#/components/schemas/ValidationIssue' }, description: 'Срез 112-7/ADR-027. Заполняется тем же fallback''ом, что и version_status.' }
+    ScenarioEdit:
+      type: object
+      required: [base_digest, body]
+      description: Срез 112-7/ADR-027 — PUT /scenarios/{id}'s тело.
+      properties:
+        base_digest: { type: string, description: digest версии, прочитанной клиентом перед правкой. }
+        title: { type: string, maxLength: 200 }
+        difficulty: { type: integer, minimum: 1, maximum: 10 }
+        body: { $ref: '#/components/schemas/ScenarioBody' }
+    ScenarioEditResult:
+      type: object
+      required: [version, version_id, digest, issues]
+      description: PUT /scenarios/{id}'s ответ — версия всегда на 1 больше предыдущей (ADR-027 — каждый PUT создаёт новую draft-версию, без правки на месте).
+      properties:
+        version: { type: integer }
+        version_id: { type: string, format: uuid }
+        digest: { type: string, description: hex sha256 новой версии. }
+        issues: { type: array, items: { $ref: '#/components/schemas/ValidationIssue' } }
+    ValidationIssue:
+      type: object
+      required: [path, code, severity]
+      description: Срез 112-7/ADR-027 — content.ValidateDetailed's один элемент. severity=warning не блокирует предпросмотр/утверждение, error блокирует.
+      properties:
+        path: { type: string, description: 'JSON Pointer-подобный путь внутри body, например intake112.dialogue.facts[2].card_path.' }
+        code: { type: string }
+        severity: { type: string, enum: [error, warning] }
+        message: { type: string }
+    RubricScoringOverride:
+      type: object
+      description: 'ADR-013 — reference.scoring, общая форма для ДДС и 112 (ADR-026): weights/critical/disabled, id проверяются против рубрики соответствующего exercise_type/rubric_version.'
+      properties:
+        weights: { type: object, additionalProperties: { type: number, minimum: 0, maximum: 100 } }
+        critical: { type: array, items: { type: string } }
+        disabled: { type: array, items: { type: string } }
+        note: { type: string }
     ScenarioCreate:
       type: object
-      required: [title, target_service, difficulty, body]
+      required: [title, difficulty]
+      description: 'Срез 112-7/ADR-027 — только operator112_intake full_case+free_text; target_service остаётся зарезервирован для ДДС (срез 11, не реализовано). Ровно одно из body/copy_from_version_id: body — тело нового черновика; copy_from_version_id — версия для копирования (своя, чужая approved или файловый сид), иначе 422 unsupported_for_editor, если её mode/caller_mode не full_case/free_text.'
       properties:
         title: { type: string, maxLength: 200 }
-        target_service: { type: string }
+        target_service: { type: string, description: Только ДДС; не реализовано в этом срезе. }
         difficulty: { type: integer, minimum: 1, maximum: 10 }
         ticket_id: { type: string, format: uuid }
         body: { $ref: '#/components/schemas/ScenarioBody' }
+        copy_from_version_id: { type: string, format: uuid }
     ExerciseType:
       type: string
       enum: [dds_processing, operator112_intake]
@@ -749,6 +833,7 @@ components:
       required: [reference]
       properties:
         mode: { type: string, enum: [incoming_call, card_only, full_case], description: Отсутствие означает incoming_call для старых версий. full_case (ADR-023) объединяет диалог с заявителем и профильные карты, финал — notify_services. }
+        caller_mode: { type: string, enum: [prepared, free_text], description: 'Отсутствие/"prepared" — сценарный диалог 112-2; "free_text" (112-5a/ADR-024) — окно чата с заявителем. Только у full_case. Редактор 112-7 создаёт исключительно free_text.' }
         call:
           type: object
           required: [aon, local_time, time_zone]
@@ -759,32 +844,51 @@ components:
             script: { type: array, items: { type: string }, description: Только утверждённые сценарии 112-1. }
         dialogue: { $ref: '#/components/schemas/Intake112Dialogue' }
         recipient_services: { type: array, items: { type: string }, minItems: 1, maxItems: 1, description: Только для incoming_call. }
-        reference:
+        reference: { $ref: '#/components/schemas/Intake112Reference' }
+    Intake112Reference:
+      type: object
+      description: 'Закрытый эталон — доступен только преподавателю (owner для draft), никогда обучаемому. Обязательность полей зависит от mode: incoming_call требует recipient_service+expected_card (старая форма); full_case требует expected_types/case_description/expected_services и запрещает recipient_service, expected_card — необязателен (112-6/ADR-026 "эталон отсутствует" — отсутствующий блок просто получает 0, не отдельный статус); card_only требует expected_types/case_description, запрещает recipient_service/expected_card. expected_profiles/alternatives/scoring — 112-6/ADR-026, необязательны при любом mode.'
+      properties:
+        recipient_service: { type: string, description: Только incoming_call. }
+        expected_types: { type: array, items: { type: string }, description: card_only/full_case — коды intake-catalog.json's types. }
+        case_description: { type: string, description: Закрытое описание ситуации card_only/full_case. }
+        expected_services: { type: array, items: { type: string }, description: full_case — коды служб для notify_services (ADR-023) и 112-6's P_SERVICES. }
+        expected_card: { $ref: '#/components/schemas/Intake112ExpectedCard', nullable: true, description: incoming_call — обязателен. full_case — необязателен, эталон 112-6's ADDRESS_FIELDS/описания/P_ADDRESS_REGION/P_APPLICANT_NAME. }
+        expected_profiles:
           type: object
-          required: [expected_card, recipient_service]
-          properties:
-            recipient_service: { type: string }
-            expected_types: { type: array, items: { type: string }, description: Закрытый эталон card_only/full_case; определения карт здесь не хранятся. }
-            case_description: { type: string, description: Закрытое описание ситуации card_only/full_case. }
-            expected_services: { type: array, items: { type: string }, description: Закрытый эталон full_case — коды служб для ручного разбора notify_services (ADR-023). }
-            expected_card:
-              type: object
-              required: [applicant_status, age, address, incident_type, complaint, victims_count]
-              properties:
-                applicant_status: { type: string, const: victim }
-                age: { type: integer }
-                address:
-                  type: object
-                  required: [city, street, house, building, landmark]
-                  properties:
-                    city: { type: string }
-                    street: { type: string }
-                    house: { type: string }
-                    building: { type: string }
-                    landmark: { type: string }
-                incident_type: { type: string, const: medical_assistance_request }
-                complaint: { type: string }
-                victims_count: { type: integer }
+          description: '112-6/ADR-026. Ключ — id профильной карты (intake-catalog.json, например "104"); значение — {field_id: строка | строка[]} (массив только для полей kind=multiple).'
+          additionalProperties: { type: object, additionalProperties: true }
+        alternatives:
+          type: object
+          description: '112-6/ADR-026. Ключ — путь эталона в форме "expected_card.address.street"/"expected_card.applicant_name"; значение — дополнительные допустимые формулировки поверх normalize.TokenSetEqual.'
+          additionalProperties: { type: array, items: { type: string } }
+        scoring: { $ref: '#/components/schemas/RubricScoringOverride', nullable: true, description: '112-6/ADR-026 — reference.scoring для operator112/rubric-v2 (те же weights/critical/disabled, что ДДС уже использует, только id из rubric.operator112.json).' }
+    Intake112ExpectedCard:
+      type: object
+      properties:
+        applicant_status: { type: string }
+        applicant_name: { type: string, description: '112-6/ADR-026 — сравнивается, только если ФИО раскрыто в разговоре (P_APPLICANT_NAME).' }
+        age: { type: integer }
+        address: { $ref: '#/components/schemas/Intake112ReferenceAddress' }
+        incident_type: { type: string }
+        complaint: { type: string }
+        victims_count: { type: integer }
+    Intake112ReferenceAddress:
+      type: object
+      description: '112-6/ADR-026 — поля Intake112Address без object/landmark (по решению пользователя не оцениваются). Каждое поле необязательно: отсутствующее просто не входит в эталон ADDRESS_FIELDS (поэлементно).'
+      properties:
+        country: { type: string }
+        region: { type: string }
+        okrug: { type: string }
+        district: { type: string }
+        city: { type: string }
+        street: { type: string }
+        house: { type: string }
+        building: { type: string }
+        structure: { type: string }
+        flat: { type: string }
+        entrance: { type: string }
+        floor: { type: string }
     Intake112Dialogue:
       type: object
       description: Полный сценарий; доступен только преподавателю. Обучаемому выдаются текущие вопросы и произнесённые реплики.
@@ -1247,14 +1351,7 @@ components:
         pilot_goal: { type: string, enum: [accept_card], description: Пилотное упрощение цели прохождения; не команда закрытия. Отсутствует у сценариев с обычными правилами завершения. }
         guide_refs: { type: array, items: { type: string } }
         notes: { type: string }
-        scoring:
-          type: object
-          description: Поправки к рубрике по умолчанию (ADR-013); отсутствие блока = дефолт.
-          properties:
-            weights: { type: object, additionalProperties: { type: number, minimum: 0, maximum: 100 } }
-            critical: { type: array, items: { type: string } }
-            disabled: { type: array, items: { type: string } }
-            note: { type: string }
+        scoring: { $ref: '#/components/schemas/RubricScoringOverride', description: Поправки к рубрике по умолчанию (ADR-013); отсутствие блока = дефолт. }
 
     LessonCreate:
       type: object
@@ -1263,7 +1360,7 @@ components:
       properties:
         exercise_type: { $ref: '#/components/schemas/ExerciseType' }
         title: { type: string, maxLength: 200 }
-        mode: { type: string, enum: [intro, training] }
+        mode: { type: string, enum: [intro, training, preview], description: 'preview (срез 112-7/ADR-027) существует только для отклика на GET-эндпоинтах — POST /lessons его отклоняет; preview-занятие создаётся исключительно POST /scenarios/{id}/preview-runs.' }
         level: { $ref: '#/components/schemas/Level' }
         timing:
           type: object
@@ -1376,7 +1473,7 @@ components:
         exercise_type: { $ref: '#/components/schemas/ExerciseType' }
         run_id: { type: string, format: uuid }
         lesson: { $ref: '#/components/schemas/Lesson' }
-        mode: { type: string, enum: [intro, training] }
+        mode: { type: string, enum: [intro, training, preview] }
         workstation_no: { type: integer, description: РМ, на котором идёт прогон — сверяется с РМ текущей сессии обучаемого. }
         current_item_id: { type: string, format: uuid, nullable: true }
         queue_left: { type: integer }
@@ -1498,13 +1595,13 @@ components:
         - type: object
           required: [card, actions, events, calls, server_time, mode, allowed_transitions]
           properties:
-            mode: { type: string, enum: [intro, training] }
+            mode: { type: string, enum: [intro, training, preview] }
             card:
               oneOf:
                 - { $ref: '#/components/schemas/CardView' }
                 - { $ref: '#/components/schemas/Intake112Card' }
             intake_state: { $ref: '#/components/schemas/Intake112State' }
-            available_service_codes: { type: array, items: { type: string }, description: Доступные учебные службы для ручного выбора в режиме card_only; не раскрывает условия предложений. }
+            available_service_codes: { type: array, items: { type: string }, description: Доступные учебные службы для ручного выбора в режиме card_only/full_case (обучаемому и преподавателю на своём предпросмотре, 112-7/ADR-027); не раскрывает условия предложений. }
             available_questions: { type: array, items: { $ref: '#/components/schemas/Intake112QuestionOption' }, description: Только вопросы, разрешённые в текущем состоянии вызова. }
             intake_dialogue_reference: { $ref: '#/components/schemas/Intake112Dialogue', description: Только преподавателю в режиме 112. }
             dispatch: { $ref: '#/components/schemas/Intake112Dispatch' }
@@ -2381,7 +2478,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         title: { type: string }
-        mode: { type: string, enum: [intro, training] }
+        mode: { type: string, enum: [intro, training, preview] }
         finished_at: { type: string, format: date-time }
 
     PublicError:

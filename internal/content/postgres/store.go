@@ -190,6 +190,24 @@ func (s *Store) UpdateScenarioDifficulty(ctx context.Context, tx pgx.Tx, scenari
 	return nil
 }
 
+func (s *Store) UpdateScenarioTitle(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID, title string) error {
+	_, err := tx.Exec(ctx, `UPDATE scenarios SET title = $2, updated_at = clock_timestamp() WHERE id = $1`,
+		scenarioID, title)
+	if err != nil {
+		return content.ErrStorage
+	}
+	return nil
+}
+
+func (s *Store) UpdateScenarioStatus(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID, status string) error {
+	_, err := tx.Exec(ctx, `UPDATE scenarios SET status = $2, updated_at = clock_timestamp() WHERE id = $1`,
+		scenarioID, status)
+	if err != nil {
+		return content.ErrStorage
+	}
+	return nil
+}
+
 // ListScenarios implements content.Store.ListScenarios's filter/paging
 // contract, joined to each scenario's current approved version for the
 // version number and has_events a ScenarioSummary carries (slice 2 gives
@@ -208,11 +226,26 @@ func (s *Store) ListScenarios(ctx context.Context, tx pgx.Tx, filter content.Sce
 	status := nullableString(filter.Status)
 	difficultyMin := nullableInt(filter.DifficultyMin)
 	difficultyMax := nullableInt(filter.DifficultyMax)
+	requestingUserID := nullableUUID(filter.RequestingUserID)
 
+	// sv picks the approved version when one exists (everyone's normal
+	// view); only for the requesting caller's own scenario, absent any
+	// approved version, it falls back to that scenario's own latest
+	// version instead (112-7/ADR-027: "Мои черновики" — see
+	// content.ScenarioFilter.RequestingUserID's own doc comment for why
+	// this is not a plain INNER JOIN). Any other scenario with no
+	// approved version stays invisible, exactly as before this change.
 	const where = `
 		FROM scenarios s
-		JOIN scenario_versions sv ON sv.scenario_id = s.id AND sv.status = 'approved'
-		WHERE ($1::text IS NULL OR s.target_service = $1)
+		LEFT JOIN LATERAL (
+			SELECT * FROM scenario_versions sv2
+			WHERE sv2.scenario_id = s.id
+			  AND (sv2.status = 'approved' OR ($6::uuid IS NOT NULL AND s.created_by = $6))
+			ORDER BY (sv2.status = 'approved') DESC, sv2.version DESC
+			LIMIT 1
+		) sv ON true
+		WHERE sv.id IS NOT NULL
+		  AND ($1::text IS NULL OR s.target_service = $1)
 		  AND ($2::text IS NULL OR s.status = $2)
 		  AND ($3::int IS NULL OR s.difficulty >= $3)
 		  AND ($4::int IS NULL OR s.difficulty <= $4)
@@ -220,7 +253,7 @@ func (s *Store) ListScenarios(ctx context.Context, tx pgx.Tx, filter content.Sce
 	`
 
 	var total int
-	if err := tx.QueryRow(ctx, `SELECT count(*) `+where, targetService, status, difficultyMin, difficultyMax, exerciseType).Scan(&total); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT count(*) `+where, targetService, status, difficultyMin, difficultyMax, exerciseType, requestingUserID).Scan(&total); err != nil {
 		return nil, 0, content.ErrStorage
 	}
 
@@ -230,8 +263,8 @@ func (s *Store) ListScenarios(ctx context.Context, tx pgx.Tx, filter content.Sce
 		       sv.exercise_type, sv.version, jsonb_array_length(COALESCE(sv.body->'events', '[]'::jsonb)) > 0
 		`+where+`
 		ORDER BY s.updated_at DESC, s.id
-		LIMIT $6 OFFSET $7
-	`, targetService, status, difficultyMin, difficultyMax, exerciseType, pageSize, (page-1)*pageSize)
+		LIMIT $7 OFFSET $8
+	`, targetService, status, difficultyMin, difficultyMax, exerciseType, requestingUserID, pageSize, (page-1)*pageSize)
 	if err != nil {
 		return nil, 0, content.ErrStorage
 	}
@@ -264,6 +297,13 @@ func nullableInt(n int) any {
 		return nil
 	}
 	return n
+}
+
+func nullableUUID(id uuid.UUID) any {
+	if id == uuid.Nil {
+		return nil
+	}
+	return id
 }
 
 // --------------------------------------------------- scenario_versions
@@ -417,6 +457,25 @@ func (s *Store) InsertScenarioVersion(ctx context.Context, tx pgx.Tx, v content.
 
 func (s *Store) SupersedeApprovedVersion(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID) (bool, error) {
 	tag, err := tx.Exec(ctx, `UPDATE scenario_versions SET status = 'superseded' WHERE scenario_id = $1 AND status = 'approved'`, scenarioID)
+	if err != nil {
+		return false, content.ErrStorage
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+func (s *Store) SupersedeVersion(ctx context.Context, tx pgx.Tx, versionID uuid.UUID) (bool, error) {
+	tag, err := tx.Exec(ctx, `UPDATE scenario_versions SET status = 'superseded' WHERE id = $1 AND status IN ('draft', 'approved')`, versionID)
+	if err != nil {
+		return false, content.ErrStorage
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+func (s *Store) ApproveVersion(ctx context.Context, tx pgx.Tx, versionID uuid.UUID, approverID uuid.UUID) (bool, error) {
+	tag, err := tx.Exec(ctx, `
+		UPDATE scenario_versions SET status = 'approved', approved_by = $2, approved_at = clock_timestamp()
+		WHERE id = $1 AND status = 'draft'
+	`, versionID, approverID)
 	if err != nil {
 		return false, content.ErrStorage
 	}

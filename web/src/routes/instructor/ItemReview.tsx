@@ -6,6 +6,7 @@ import { ApiError, api } from "../../api/client";
 import { errorMessage } from "../../api/errors";
 import type { components } from "../../api/schema";
 import { formatDateTime } from "../../format";
+import { IntakeAutoAssessment, isPenaltyCriterion, criterionStatusLabels, type RubricEffectiveCriterion } from "../../components/IntakeAutoAssessment";
 
 type CriterionStatus = CriterionResult["status"];
 type Item = components["schemas"]["Item"];
@@ -22,19 +23,8 @@ type IntakeNotification = { item_id: string; action_id: string; services: { serv
 type IntakeReviewState = { mode?: string; catalog?: ReviewCatalog; transcript?: IntakeReviewLine[]; caller_mode?: "prepared" | "free_text"; caller_turns?: IntakeReviewCallerTurn[] } & ReviewServiceState;
 type IntakeReviewItem = Item & { card: IntakeCard; intake_reference?: unknown; intake_dialogue_reference?: { facts: DialogueFact[] }; intake_state?: IntakeReviewState; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; notification?: IntakeNotification };
 type IntakeReviewEvidence = { final_card?: IntakeCard; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; notification?: IntakeNotification; intake_state?: IntakeReviewState; actions?: IntakeReviewAction[] };
-type CriterionDetail = components["schemas"]["CriterionDetail"];
-type RubricEffectiveCriterion = { id: string; title?: string; kind?: string; disabled?: boolean; weight?: number; critical?: boolean };
-const labels: Record<string, string> = { met: "выполнено", partial: "частично", not_met: "не выполнено", not_applicable: "не применимо", unavailable: "не проверено" };
+const labels = criterionStatusLabels;
 const manualStatuses: CriterionStatus[] = ["met", "partial", "not_met", "not_applicable"];
-
-// 112-6/ADR-026: operator112/rubric-v2's criteria are split into scored
-// blocks (kind=deterministic, a 0..1 fraction of their own weight) and
-// penalties (kind=penalty, a flat points deduction) — the instructor
-// review UI shows and edits each shape differently, unlike DDS's
-// uniform met/partial/not_met/not_applicable criteria.
-function isPenaltyCriterion(rubricCriteria: Record<string, RubricEffectiveCriterion>, id: string): boolean {
-  return rubricCriteria[id]?.kind === "penalty";
-}
 
 export function ItemReviewRoute() {
   const { itemId = "" } = useParams();
@@ -69,7 +59,7 @@ export function ItemReviewRoute() {
 	<p>Автооценка: {detail.automatic_state ?? "нет"}; итог: {detail.final ? `${detail.final.status}${detail.final.score == null ? "" : ` · ${detail.final.score.toFixed(1)}`}` : "ещё нет"}</p>
 	{isIntake ? <>
 		<h2>Автоматическая оценка</h2>
-		<IntakeCriteriaTable criteria={autoCriteria} rubricCriteria={rubricByID} />
+		<IntakeAutoAssessment criteria={autoCriteria} rubricCriteria={rubricByID} />
 		<IntakeReviewPanel item={item.data as unknown as IntakeReviewItem} evidence={evidence as unknown as IntakeReviewEvidence} />
 	</> : <>
 		<h2>Карточка и эталон</h2>
@@ -143,49 +133,6 @@ function buildIntakeRevisionCriteria(sourceCriteria: CriterionResult[], rubricCr
   });
 }
 
-// IntakeCriteriaTable is operator112/rubric-v2's own read-only auto-
-// assessment display (112-6/ADR-026): blocks (their own points out of
-// weight, plus an expandable per-field/per-card Details breakdown) and
-// penalties (points charged, plus which field/service/card triggered
-// them) shown as two separate tables, since they are scored — and
-// charged — by entirely different rules.
-function IntakeCriteriaTable({ criteria, rubricCriteria }: { criteria: CriterionResult[]; rubricCriteria: Record<string, RubricEffectiveCriterion> }) {
-  if (criteria.length === 0) return <p>Автооценка ещё не готова.</p>;
-  const blocks = criteria.filter((c) => !isPenaltyCriterion(rubricCriteria, c.id));
-  const penalties = criteria.filter((c) => isPenaltyCriterion(rubricCriteria, c.id));
-  const detailText = (d: CriterionDetail) => {
-    const parts = [d.actual ? `заполнено: ${d.actual}` : null, d.expected ? `ожидалось: ${d.expected}` : null];
-    const suffix = parts.filter(Boolean).join(", ");
-    return `${d.label ?? d.key}: ${labels[d.status] ?? d.status}${suffix ? ` (${suffix})` : ""} — ${d.points ?? 0}/${d.max_points ?? 0}`;
-  };
-  return <>
-    <h3>Блоки</h3>
-    <table><thead><tr><th>Блок</th><th>Баллы</th><th>Статус</th><th>Основание</th></tr></thead><tbody>
-      {blocks.map((c) => {
-        const weight = rubricCriteria[c.id]?.weight ?? c.weight;
-        const points = c.score != null ? round2(c.score * weight) : null;
-        return <tr key={c.id}>
-          <td>{rubricCriteria[c.id]?.title ?? c.id}{c.critical ? " · критичный" : ""}</td>
-          <td>{points == null ? "—" : `${points} из ${weight}`}</td>
-          <td>{labels[c.status] ?? c.status}</td>
-          <td>{c.explanation || "—"}
-            {c.details?.length ? <details><summary>Подробности ({c.details.length})</summary><ul>{c.details.map((d) => <li key={d.key}>{detailText(d)}</li>)}</ul></details> : null}
-          </td>
-        </tr>;
-      })}
-    </tbody></table>
-    <h3>Штрафы</h3>
-    <table><thead><tr><th>Штраф</th><th>Баллы</th><th>Основание</th></tr></thead><tbody>
-      {penalties.map((c) => <tr key={c.id}>
-        <td>{rubricCriteria[c.id]?.title ?? c.id}</td>
-        <td>{c.status === "not_applicable" ? "—" : `−${c.penalty_points ?? 0}`}</td>
-        <td>{c.explanation || "—"}
-          {c.details?.length ? <details><summary>Подробности ({c.details.length})</summary><ul>{c.details.map((d) => <li key={d.key}>{d.label ?? d.key}</li>)}</ul></details> : null}
-        </td>
-      </tr>)}
-    </tbody></table>
-  </>;
-}
 
 function IntakeReviewPanel({ item, evidence }: { item: IntakeReviewItem; evidence: IntakeReviewEvidence }) {
   const mode = item.intake_state?.mode ?? evidence.intake_state?.mode;

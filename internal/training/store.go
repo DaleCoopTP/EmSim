@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"emsim/internal/auth"
 	"emsim/internal/platform/audit"
 
 	"github.com/google/uuid"
@@ -36,6 +37,19 @@ var (
 	// matching the run's assigned workstation (slice-planning.md §4).
 	ErrWorkstationMismatch = errors.New("workstation mismatch")
 )
+
+// workstationMatches reports whether actor may act on run as its own
+// participant: the ordinary rule requires the caller's session
+// workstation to equal the run's own; a preview run (112-7/ADR-027) has
+// no workstation at all (migrations/00017) — its own author, already
+// checked separately via run.UserID == actor.UserID at every call site
+// below, needs no workstation match at all.
+func workstationMatches(actor auth.Principal, run Run) bool {
+	if run.Mode == ModePreview {
+		return true
+	}
+	return actor.WorkstationID != nil && *actor.WorkstationID == run.WorkstationID
+}
 
 // ValidationError names the request field ReplaceAssignments/CreateLesson
 // rejected and why — the same shape content.ValidationError/

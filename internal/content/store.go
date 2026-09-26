@@ -174,6 +174,18 @@ type ScenarioFilter struct {
 	DifficultyMax int
 	Page          int
 	PageSize      int
+	// RequestingUserID is 112-7/ADR-027's own addition: the authenticated
+	// caller, always set by the HTTP layer (never client-supplied). A
+	// scenario with no approved version at all (Status="draft" — the
+	// editor's own CreateOperator112Scenario/SaveOperator112Draft never
+	// touches scenarios.status past creation, so this only ever describes
+	// a scenario never yet approved) has nothing for this list's own
+	// "JOIN ... approved" to match — it is invisible to everyone by
+	// default. Setting this field additionally surfaces the caller's own
+	// such scenarios (never anyone else's, matching ADR-027's "черновик —
+	// автору"), so the existing status=draft filter becomes the "Мои
+	// черновики" view rather than a dead option.
+	RequestingUserID uuid.UUID
 }
 
 // Store is the narrow persistence port Service needs (CLAUDE.md: "declare
@@ -203,6 +215,18 @@ type Store interface {
 	ScenarioByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (ScenarioRecord, error)
 	InsertScenario(ctx context.Context, tx pgx.Tx, s ScenarioRecord) error
 	UpdateScenarioDifficulty(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID, difficulty int) error
+	// UpdateScenarioTitle is 112-7/ADR-027's own write — PUT
+	// /scenarios/{id} may rename the scenario alongside creating a new
+	// version.
+	UpdateScenarioTitle(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID, title string) error
+	// UpdateScenarioStatus is 112-7/ADR-027's own write: scenarios.status
+	// used to be set once at import (always "approved") and never
+	// touched again; the editor's own approve transitions a scenario
+	// created as "draft" (no approved version yet) to "approved" once
+	// its first version is approved. It never needs to move back to
+	// "draft" or to "archived" in this slice (archiving is out of
+	// scope — slice-112-7-plan.md §8).
+	UpdateScenarioStatus(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID, status string) error
 	ListScenarios(ctx context.Context, tx pgx.Tx, filter ScenarioFilter) ([]ScenarioSummary, int, error)
 
 	// MaxVersion returns 0 (not ErrNotFound) when the scenario has no
@@ -227,6 +251,19 @@ type Store interface {
 	// approved_at (scenario_versions_approval_shape, migrations/00004).
 	// It is a no-op (found=false) for a scenario's first version.
 	SupersedeApprovedVersion(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID) (found bool, err error)
+	// SupersedeVersion is 112-7/ADR-027's own generalization: every PUT
+	// from the editor supersedes whatever the scenario's previous latest
+	// version was, draft or approved (approve's own already-narrower
+	// SupersedeApprovedVersion above stays for the file-import path,
+	// which never touches a draft). No-op (found=false) if versionID is
+	// already superseded or does not exist.
+	SupersedeVersion(ctx context.Context, tx pgx.Tx, versionID uuid.UUID) (found bool, err error)
+	// ApproveVersion transitions one specific draft version to approved
+	// (112-7/ADR-027's own approve, by version id rather than "the
+	// scenario's current draft" — the editor always knows exactly which
+	// version base_digest was read from). found=false if versionID does
+	// not exist or is not currently draft.
+	ApproveVersion(ctx context.Context, tx pgx.Tx, versionID uuid.UUID, approverID uuid.UUID) (found bool, err error)
 
 	AuditRecord(ctx context.Context, tx pgx.Tx, entry audit.Entry) error
 }

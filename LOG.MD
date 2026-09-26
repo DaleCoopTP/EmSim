@@ -2768,3 +2768,248 @@ c4 (постановка задачи в training) → c5–c6 (оценщик
 (UI разбора) → c9 (отчётность + правка блокировки экспорта) → c10
 (документация). LLM-критерии (`rubric-v3`) и профильная приёмка карт
 104/101 (наследие 112-3) остаются открытыми пунктами вне этого среза.
+
+## 2026-09-26 — 112-7: план детализирован, решения пользователя, старт реализации
+
+Пользователь принял решения по срезу 112-7 (`slice-planning-112.md` §11):
+(1) предпросмотр проходит сам преподаватель-автор — новое одноразовое
+занятие `mode=preview`, участник без рабочего места; (2) предпросмотр
+получает автооценку `operator112/rubric-v2`, но она не попадает в
+отчёты/историю/прогресс/`trainee_assessment_state`; (3) черновик и его
+эталон видит и правит только автор, утверждённая версия доступна всем
+преподавателям, чужой сценарий можно только скопировать в свой новый
+черновик; (4) редактор в этом срезе поддерживает только
+`mode="full_case"` + `caller_mode="free_text"` (ИИ-заявитель) —
+авторинг `prepared`-диалога и `card_only` через UI уходит в техдолг
+(файловый импорт остаётся для них единственным путём).
+
+Написан [`slice-112-7-plan.md`](slice-112-7-plan.md) (коммиты c1–c10),
+`slice-planning-112.md` обновлён (шапка, таблица §3, §11 с пометкой о
+сужении объёма, §14 — новый пункт техдолга). ADR-027 оформляется
+отдельным коммитом (c1) вместе с контрактами.
+
+Установленные при планировании факты: `scenarios`/`scenario_versions`
+уже поддерживают авторство без миграции (draft/approved/superseded,
+`created_by`, `source_key` nullable, одна approved на сценарий);
+`POST/PUT /scenarios`, `.../approve` уже описаны в openapi.yaml, но не
+зарегистрированы в `internal/content/http/handlers.go`;
+`content.Validate` сегодня возвращает только первую ошибку — редактору
+нужен полный список; `training.checkAssignableVersion` требует
+`approved`, `lessons.mode`/`runs.mode` ∈ {intro, training},
+`assignments`/`runs` требуют рабочее место (NOT NULL) — миграция под
+`preview` меняет это; `enqueueEvaluateWaiting` и отчётность уже
+фильтруют по `lesson.Mode`/`lesson_mode`, что даёт готовый шов для
+исключения preview.
+
+Next: коммит c1 — ADR-027 и контракты (openapi.yaml пути/схемы,
+`schema.sql` + новая миграция под `preview`, `check.py`).
+
+## 2026-09-26 — 112-7 c1: ADR-027 и контракты
+
+[ADR-027](design-docs/adr/027-operator112-scenario-editor.md) —
+владение/версии черновика, `PUT`/`approve` с `base_digest`, права
+доступа (404 на чужой черновик), каталог 112 для инструктора,
+предпросмотр как занятие `mode=preview` (миграция), исключение preview
+из оценки статистики/отчётности.
+
+Контракты: `design-docs/contracts/openapi.yaml` — новые пути
+`GET /intake112/catalog`, `POST /scenarios/{id}/validate`,
+`POST /scenarios/{id}/probe`, `POST /scenarios/{id}/preview-runs`;
+переписаны описания `POST /scenarios`, `PUT /scenarios/{id}`,
+`POST /scenarios/{id}/approve` (реализованы для 112, ДДС по-прежнему
+не реализован); новые схемы `ScenarioEdit`/`ScenarioEditResult`/
+`ValidationIssue`/`RubricScoringOverride`; `Intake112Reference`/
+`Intake112ExpectedCard`/`Intake112ReferenceAddress` вынесены в именованные
+схемы и приведены в соответствие с `internal/content/body.go`
+(`expected_profiles`/`alternatives`/`scoring`/`applicant_name`/полный
+адрес без `object`/`landmark`) — это исправляет расхождение,
+оставшееся с 112-6 c1 (openapi не получил тогда полную форму эталона);
+`caller_mode` добавлен в `Intake112Scenario`; `mode` расширен до
+`preview` в `Lesson`/`MyRun`/`Item`/`ReportLesson` (не в
+`LessonCreate` — `POST /lessons` server-side отклоняет `preview`,
+`training.Service.CreateLesson` уже проверяет `Mode != Intro &&
+Mode != Training`); новые коды ошибок `stale_draft`/
+`has_blocking_issues`/`unsupported_for_editor`.
+
+Миграция `migrations/00017_operator112_preview_lessons.sql`: `preview`
+в CHECK `lessons.mode`/`runs.mode`; `workstation_id` nullable на
+`runs`/`assignments`; `assignments`' PK → `(lesson_id, user_id)` (PK
+столбец нельзя оставить NOT NULL-освобождённым, пока он в PK — пришлось
+сначала сменить PK, потом снимать NOT NULL, ошибка обнаружена и
+исправлена при живом прогоне миграции против одноразового
+Postgres-контейнера); `runs`' `UNIQUE(lesson_id, workstation_id)` →
+частичный индекс `WHERE workstation_id IS NOT NULL` (тот же приём, что
+`assignments`). `ExpectedSchemaVersion` → 17.
+`schema.sql` не тронут — по установленному в 112-1..112-6 прецеденту
+(последний раз обновлён в `ff1afa8`, до всех intake-миграций) он не
+синхронизируется с каждой миграцией; `check.py`'s DDL-прогон против
+него уже падает на main (`reject_immutable_change() does not exist`) —
+подтверждено `git stash` до правок, не регрессия этого коммита.
+
+Validation: `go build ./...`, `gofmt -l` — чисто; миграция up/down
+проверена вживую на одноразовом `postgres:16-alpine` (не на
+compose-стенде проекта) — обе стороны применяются без ошибок, после
+проверки возвращена в состояние `up`; `python3
+design-docs/contracts/check.py` — зелёный (53 пути, все схемы/примеры);
+DDL-часть `check.py` (только при `DATABASE_URL`) не входит в
+регрессию — тот же результат на main.
+
+Next: c2 — `internal/content`: `ValidateDetailed` (список issues вместо
+первой ошибки), новые проверки авторинга (`unreachable_expected_field`,
+`profile_outside_expected_types`, `profile_option_invalid`,
+`services_diverge_from_rules`, `ambiguous_ask_pattern`,
+`unknown_expected_profile/service/scoring_criterion/alternative_path`,
+`unknown_reveal`), чистый классификатор фактов (`probe`) вынесенный из
+`aicaller`, unit-тесты.
+
+## 2026-09-26 — 112-7 c2: ValidateDetailed, авторские проверки, вынос классификатора
+
+`internal/content/validate_detailed.go` — `ValidateDetailed(body,
+catalog) ([]ValidationIssue, error)`: сперва обычный `Validate` (без
+изменений, тем же первым-ошибка поведением для файлового импорта);
+если тело уже структурно валидно и это `operator112_intake` —
+`collectIntake112AuthoringIssues` добавляет к нему многократные
+проверки из ADR-027: `unreachable_expected_field` (эталонное поле,
+которое ни один факт free_text-диалога не может раскрыть — `initial`
+всегда достижимо, `on_question` только если есть `ask_patterns`;
+`country/region/okrug` — warning, остальное — error),
+`profile_outside_expected_types` (карта в `expected_profiles` не
+входит ни в один `expected_types` через `intake-catalog.json`'s
+`types[].profile_ids`), `services_diverge_from_rules` (warning;
+пересчитывает `service_rules` по `expected_types`/`expected_profiles`
+и сравнивает с `expected_services`, пропуская правило с
+неотвеченным `field_id` — не гадает), `ambiguous_ask_pattern`
+(warning; два факта делят один и тот же `ask_patterns[0]`). Часть
+кодов из плана (`unknown_reveal`, `contradicts_fact`,
+`profile_option_invalid`, `unknown_scoring_criterion` и т.д.) уже
+блокируют структурную проверку внутри `Validate` — коллектор их не
+дублирует, они просто не могут дойти до этой стадии.
+
+Классификатор фактов (`FactAsked`/`AskedFacts`/`DiscloseReveals`,
+раньше — `internal/training/operator112/aicaller/classify.go`)
+перенесён в `internal/content/intake_classify.go` без изменения
+поведения — нужен и будущему `/probe` (c3, чистая функция без модели),
+и уже существующему `aicaller`; `content` ниже `training` по слоям,
+поэтому канонический дом — здесь. `aicaller/classify.go` стал тонким
+форвардером (`FactAsked`/`AskedFacts`/`DiscloseReveals` вызывают
+`content.*`), добавлен `content.MatchesPattern` для `replier.go`'s
+`scriptedAnswer`. Вызывающий код и тесты `aicaller` не менялись.
+
+Тесты — `internal/content/validate_detailed_test.go`: структурная
+ошибка даёt один issue (регрессия); чистый сценарий не даёт issues;
+недостижимое поле (error) и его понижение до warning для
+country/region/okrug; поле, достижимое через `ask_patterns`, не
+считается недостижимым; карта вне `expected_types`; расхождение
+`expected_services` с `service_rules` (и обратный случай — совпадение
+не даёт warning); неоднозначный `ask_patterns[0]`.
+
+Validation: `go build ./...`, `gofmt -l` — чисто; `go test
+./internal/...` — весь пакет зелёный (включая `aicaller` и
+`assessment/operator112`, не задетые рефакторингом).
+
+Next: c3 — `internal/content`: create/copy/save (с версионированием
+черновика по `base_digest`)/approve, права владения (404 на чужой
+черновик), `GET /intake112/catalog`, HTTP-хендлеры, audit.
+
+## 2026-09-26 — 112-7 c3–c4: сервис редактора, HTTP, предпросмотр-занятие
+
+Status: completed
+Slice: 112-7
+
+Changed:
+- `internal/content/editor.go` (new): `EditorScenario`/`ScenarioCreateInput`/`ScenarioEditInput`, `CreateOperator112Scenario` (новый черновик или копия чужой approved-версии), `SaveOperator112Draft` (правка на месте, пока черновик не используется предпросмотром; иначе версия N+1 и `superseded` для прежней — оптимистичная блокировка по `base_digest`, `stale_draft` при конфликте), `ValidateOperator112Draft`/`ProbeOperator112` (используют перенесённый в c2 классификатор), `ApproveOperator112Scenario` (переводит прежнюю `approved` в `superseded` в той же транзакции), `IntakeCatalogForInstructor`. Права владельца — `scenarios.created_by`; чужой черновик всюду отдаёт `ErrNotFound`, чужой approved можно только копировать (`ErrUnsupportedForEditor` для не-`full_case`/`free_text`).
+- `internal/content/store.go`, `internal/content/postgres/store.go`: `SupersedeVersion`/`ApproveVersion`/`UpdateScenarioStatus`/`UpdateScenarioTitle`.
+- `internal/content/http/editor_handlers.go` (new) + `handlers.go`: `POST /scenarios`, `PUT /scenarios/{id}`, `POST /scenarios/{id}/validate`, `POST /scenarios/{id}/probe`, `POST /scenarios/{id}/approve`, `POST /scenarios/{id}/preview-runs`, `GET /intake112/catalog`; `GET /scenarios/{id}` теперь при `ErrNotFound` от обычного пути дополнительно пробует `EditorScenarioDetail` владельца (черновик виден только автору тем же эндпоинтом, который отдаёт approved всем).
+- `cmd/emsim/api.go`: `contenthttp.NewHandlers` получил `training.Service` как `previewStarter` (по образцу `assessmenthttp`/`reportinghttp` — кросс-модульная зависимость только на транспортном слое, не в домене `content`).
+- `migrations/00017_operator112_preview_lessons.sql` + `ExpectedSchemaVersion=17`: `preview` в `lessons_mode_check`/`runs_mode_check`; `runs.workstation_id`/`assignments.workstation_id` nullable; `assignments` PK → `(lesson_id, user_id)` + частичный `UNIQUE(lesson_id, workstation_id) WHERE workstation_id IS NOT NULL`; проверено up/down на разовом контейнере `postgres:16-alpine` (не dev-стек проекта), контейнер удалён после проверки.
+- `internal/training/domain.go` (`ModePreview`), `internal/training/ports.go` (`ScenarioReader.ScenarioByID`), `internal/training/preview.go` (new): `Service.StartPreview` одной транзакцией останавливает предыдущий активный preview автора (штатный `Stop`), проверяет владение и `operator112_intake`+`Intake112!=nil`, строит `lessons`/`assignments`/`runs`/`items` напрямую через store-методы — **не** через `ReplaceAssignments`/`Start`/`checkAssignableVersion` (see ADR-027's "уточнение по факту реализации": обычный путь назначения по-прежнему требует `approved` без исключений, предпросмотр просто не проходит через него).
+- `internal/training/store.go`: `workstationMatches(actor, run) bool` — `true` без сверки РМ для `run.Mode==preview`, иначе прежнее сравнение; заменил 4 дублированных проверки в `service.go` (`Execute`, get-item, upload-recording, voice-phrase — все места, где раньше был инлайн `actor.WorkstationID==nil||...`).
+- `internal/training/service.go`: `offerQueueVersion` возвращает `(uuid.UUID, error)` (новый item id нужен `StartPreview`), 4 вызывающих места обновлены.
+- `internal/auth/authz.go`: новая `GroupItemActions` (`{instructor, trainee}`) — `POST /items/{id}/actions` было `GroupTrainee`-only, что блокировало маршрут для инструктора-автора predпросмотра ещё до вызова `Execute` (которая уже готова: `run.UserID==actor.UserID` проверяется независимо от роли, `workstationMatches` покрывает preview). `GET /items/{id}` новой группы не потребовал — `GroupItemRead` уже пускал обе роли, а `ItemForInstructor` проверяет `lesson.InstructorID==actor.UserID`, что для собственного preview-занятия автора уже истинно.
+- `internal/content/http/handlers_test.go`: `TestScenarioDetailNotFoundMapsTo404` донастроен (`editorDetailErr` тоже `ErrNotFound` — иначе тест давал ложный зелёный на новом fallback-пути), добавлен `TestScenarioDetailFallsBackToOwnerDraftOnNotFound`.
+- `internal/training/http/handlers_test.go`: `TestRoutesRequireAuthenticationAndCorrectRoles` — `POST .../actions` вынесен из общего `traineeRoutes` (там инструктор теперь легитимен), добавлен `TestPreviewInstructorReachesItemActions` (маршрутный уровень; предметную проверку владения делает существующий `TestOwnershipAndWorkstationErrors`/`service_test.go`).
+- `design-docs/adr/027-operator112-scenario-editor.md`: добавлено уточнение по факту реализации (`checkAssignableVersion` не расширялась исключением — `StartPreview` её не вызывает; авторизация команд реализована `GroupItemActions`, а не веткой внутри хендлера).
+
+Decisions:
+- Зафиксировано расхождение между ADR-027 (черновик плана: "checkAssignableVersion получает исключение") и реализацией (StartPreview обходит её целиком) — задокументировано в самой ADR как уточнение, а не тихо исправлено.
+
+Validation: `go build ./...`, `go vet ./...`, `gofmt -l .` — чисто; `go test ./internal/...` — весь пакет зелёный; `python3 design-docs/contracts/check.py` — все проверки прошли (DDL-шаг пропущен, `DATABASE_URL` не задан).
+
+Next: c5 — `enqueueEvaluateWaiting` для `ModePreview`; пропуск версии `trainee_assessment_state` для preview (`internal/assessment`); фильтр `lesson_mode != 'preview'` везде, где уже фильтруется `lesson_mode != 'intro'` (`internal/reporting/postgres/store.go`).
+
+## 2026-09-26 — 112-7 c5: preview получает реальную оценку, но не влияет на статистику
+
+Status: completed
+Slice: 112-7
+
+Changed:
+- `internal/training/service.go`: `enqueueEvaluateWaiting` теперь ставит `assessment.evaluate` для `lesson.Mode ∈ {ModeTraining, ModePreview}` (было только `ModeTraining`) — preview получает настоящую rubric-v2 auto-оценку, видимую автору через существующий `GET /items/{id}/assessment`.
+- `internal/assessment/service.go`: `CreateExpertRevision` пропускает `store.BumpTraineeStateVersion` при `item.Mode == training.ModePreview` — единственное место, где вообще двигается версия основания рекомендаций (сам auto rev=1 её не трогает); preview-оценка никогда не станет основанием будущей рекомендации.
+- `internal/training/postgres/store.go`: `ListLessonsByInstructor` получил безусловный `AND mode != 'preview'` — без него одноразовые preview-занятия захламляли бы `GET /lessons` вперемешку с настоящими.
+- `design-docs/adr/027-operator112-scenario-editor.md`: уточнение по факту реализации — `lesson_report_rows`'s `JOIN workstations` (не `LEFT JOIN`) уже молча исключает любой preview-run (workstation_id всегда NULL там, миграция 00017), так что `LessonReport`/CSV/PDF/`ResultsFor`/`ProgressFor` не потребовали ни одной правки SQL; `/users/{id}/progress` и `/groups/progress` из RFC-001 §5 в коде не реализованы вовсе, фильтровать нечего.
+
+Decisions:
+- Первоначальный план ADR-027 предполагал добавить `lesson_mode != 'preview'` фильтр в несколько мест `internal/reporting`; по факту это уже гарантировано схемой (INNER JOIN на nullable `workstation_id`) везде, кроме списка занятий, который читает `lessons` напрямую, а не `lesson_report_rows`. Задокументировано в ADR, а не исправлено тихо.
+
+Validation: `go build ./...`, `go vet ./...` — чисто; `go test ./internal/...` — весь пакет зелёный (без новых unit-тестов: `enqueueEvaluateWaiting`/`CreateExpertRevision`/SQL-исключение через JOIN — не покрыты фикстурами в этом модуле уже сегодня, проверяются интеграционно; c6 добавит сквозной прогон preview→auto-оценка→отсутствие в отчётах); `python3 design-docs/contracts/check.py` — все проверки прошли.
+
+Next: c6 — интеграционные тесты против настоящего PostgreSQL: полный цикл create→edit→validate→preview→auto-assessment→approve→assign→trainee-run; конкурентный PUT на один черновик; проверка, что preview-lesson реально пропадает из `lesson_report_rows`/`GET /lessons`, а `trainee_assessment_state.version` не растёт.
+
+## 2026-09-26 — 112-7 c6: интеграционные тесты редактора и предпросмотра против PostgreSQL
+
+Status: completed
+Slice: 112-7
+
+Changed:
+- `test/integration/operator112_editor_test.go` (new, `//go:build integration`):
+  - `TestOperator112EditorVersionLifecycleAgainstRealDatabase` — `CreateOperator112Scenario`/`SaveOperator112Draft`/`ApproveOperator112Scenario` против реальной БД: создание v1 draft; чужой инструктор получает `ErrNotFound` и на `EditorScenarioDetail`, и на `SaveOperator112Draft`; сохранение с устаревшим `base_digest` — `ErrStaleDraft`, без побочных эффектов; корректное сохранение создаёт v2 и переводит v1 в `superseded` (подтверждено прямым SQL-чтением статуса) — эмпирически проверяет ADR-027's "каждый PUT создаёт новую версию"; утверждение со старым digest отклоняется, с текущим — проходит; копия чужого утверждённого сценария создаёт новый scenario_id с `created_by` = копирующий.
+  - `TestOperator112PreviewRunEndToEndExcludedFromStatistics` — `insertOwnedOperator112Version` кладёт тело реального seed-сценария (`pilot-112-full-gas-road-traffic-fire-01`) как версию, принадлежащую тестовому инструктору (ни один файловый seed не принадлежит обычному инструктору, только импортирующему admin), затем `StartPreview` → проверка `lessons.mode='preview'` и `runs.workstation_id IS NULL` прямым SQL; инструктор проходит свой же item тем же путём, что и обычный `closeFullCaseItem` (`ItemForTrainee`/`Execute` не различают роль — только `run.UserID`/`workstationMatches`); close реально ставит `assessment.evaluate` → coordinator → `claimAndHandle` даёt один `auto rev=1 ready` (переиспользованы `newIntake112AssessmentServiceForTest`/`mustRunCoordinatorTick`/`claimAndHandle`/`readAssessments` из `operator112_assessment_pipeline_test.go`); `ListLessons` для этого инструктора не содержит preview-lesson, но содержит его же обычный `f.lesson`; `SELECT count(*) FROM lesson_report_rows WHERE item_id=$1` = 0 (эмпирическое подтверждение ADR-027's находки про `INNER JOIN workstations`); экспертная ревизия (`CreateExpertRevision`, критерии через уже существующий `resolveAllCriteria`) не двигает `trainee_assessment_state.version` (читается напрямую SQL, отсутствие строки трактуется как версия 0).
+  - Мелкие переиспользуемые хелперы: `unmarshalScenarioBody` (тело сценарного JSON → `content.Body`), `insertOwnedOperator112Version` (аналог уже существующего `insertLegacyIncomingCallVersion`, но с параметризуемым владельцем), `traineeStateVersion`.
+
+Decisions:
+- Для проверки предпросмотра сознательно взято тело реального `prepared`-диалогового seed-сценария (а не `full_case`+`free_text`, единственный формат, который создаёт сам редактор), напрямую вставленное в БД с `created_by`=инструктор — `StartPreview` в коде не требует `caller_mode="free_text"`, только `exercise_type=operator112_intake && Intake112≠nil`, так что это честно проверяет именно preview-инфраструктуру (лишённую воркстейшна, изолированную от отчётности), не задваивая уже покрытую editor-only-eligibility unit-тестами (`editor_test.go`) логику "редактор создаёт только full_case+free_text".
+
+Validation: собственно новый файл — `go build -tags=integration ./test/integration/...`, `go vet -tags=integration ./test/integration/...` — чисто; запуск против разового `postgres:16-alpine` контейнера (`TEST_DATABASE_URL`, не dev-стек проекта, контейнер удалён после прогона) — оба новых теста **PASS**, затем весь `go test -tags=integration -count=1 ./test/integration/...` (66 c) — **PASS**, включая уже существующие 112/DDS сценарии, т.е. без регрессий. Дополнительно: `make verify` (format-check, build, test, vet, staticcheck) — чисто; `python3 design-docs/contracts/check.py` — все проверки прошли.
+
+## 2026-09-26 — 112-7 c7 prep: два бэкенд-пробела, найденные при старте web UI
+
+Status: completed
+Slice: 112-7
+
+Changed:
+- `internal/training/http/handlers.go`: `traineeIntakeState` больше не возвращает `available_service_codes` — эту часть вынесена в отдельную `availableServiceCodesForState`, которую `toItemJSON` теперь вызывает **для обеих** веток (инструктор и обучаемый), а не только для `traineeView`. Причина: `web/Operator112ProfileCase.tsx` (переиспользуется для предпросмотра 112-7 без изменений) читает `item.available_service_codes` в модалке «Список оповещаемых служб» для ручного добавления/снятия службы; раньше это поле оставалось `nil` для инструктора, и предпросмотр мог использовать только автоматически предложенный список, без ручной правки — расхождение с обычным прохождением обучаемого. Список кодов служб не секретен (в отличие от самих `service_rules` с условиями), поэтому его показ инструктору не нарушает никакой границы. `internal/training/http/intake_projection_test.go` и новый `TestOperator112InstructorItemGetsAvailableServiceCodesToo` (`handlers_test.go`) проверяют это явно.
+- `internal/content/store.go`, `internal/content/postgres/store.go`, `internal/content/http/handlers.go`: `GET /scenarios` (`ListScenarios`) раньше `JOIN scenario_versions sv ON sv.status='approved'` — обычный INNER JOIN, из-за которого сценарий без единой утверждённой версии **не мог появиться в списке вообще ни для кого**, включая собственного автора при фильтре `status=draft` (этот фильтр в UI уже существовал, но был мёртвым). Добавлено `ScenarioFilter.RequestingUserID` (всегда ставится HTTP-слоем из `authhttp.PrincipalFromContext`, никогда не приходит от клиента); SQL заменён на `LEFT JOIN LATERAL`, который берёт approved-версию как раньше, а при её отсутствии — последнюю версию сценария, но только если `s.created_by = RequestingUserID`. Так план 112-7 «фильтр «Мои черновики»» реализован переиспользованием уже существующего `status=draft` в `ScenarioCatalogueRoute` (новый отдельный переключатель не нужен) — решение зафиксировано здесь, а не в новом UI-элементе.
+
+Decisions:
+- «Мои черновики» — это существующий `status=draft` фильтр, а не новый элемент интерфейса: черновик по ADR-027 в принципе виден только автору, поэтому «показать черновики» и «показать мои черновики» — один и тот же запрос после этого исправления.
+
+Validation: `go build ./...`, `go vet ./...`, `gofmt -l` — чисто; `go test ./internal/...` — весь пакет зелёный. Новый интеграционный тест `TestScenarioListSurfacesOwnDraftsOnlyToTheirAuthor` (`test/integration/operator112_editor_test.go`) плюс полный `go test -tags=integration -count=1 ./test/integration/...` (67 с) против разового `postgres:16-alpine` (удалён после прогона) — всё **PASS**, без регрессий в остальных сценариях каталога/112.
+
+Next: c7–c9 — web UI: `api/content.ts` хуки (`useCreateScenario`/`useSaveScenario`/`useApproveScenario`/`useValidateScenario`/`useProbe`/`useIntakeCatalog`), исправление предсуществующего риска падения `ScenarioDetail.tsx` (безусловное обращение к `call.aon`/`call.script.map` на кейсах без `call`/`script`), 5-вкладочный редактор, экран предпросмотра (переиспользование `Operator112ProfileCase`/`CallerChat`), вынос панели авто-оценки из `ItemReview.tsx` в общий компонент, `operator112-editor.spec.ts` e2e. Перед началом — прочитать текущий `web/src/routes/instructor/*` и `web/src/api/content.ts`, чтобы не дублировать уже существующие паттерны хуков/роутинга.
+
+## 2026-09-26 — 112-7 c7–c10: веб-редактор, предпросмотр, e2e и документация — срез завершён
+
+Status: completed
+Slice: 112-7
+
+Changed:
+- `web/src/api/content.ts`: `Intake112EditorBody`/`emptyIntake112Body` (единственная форма, которую редактор создаёт — `full_case`+`free_text`, включая обязательные, но всегда-пустые `dialogue.initial`/`questions` для соответствия общей wire-схеме), `EditorScenario`, `useIntake112Catalog`, `useCreateScenario`/`useSaveScenario`/`useValidateScenario`/`useProbeScenario`/`useApproveScenario`/`useStartPreviewRun`.
+- `web/src/routes/instructor/ScenarioEditor.tsx` (new): `/instructor/scenarios/new` и `/:scenarioId/edit` — один компонент с переключателем вкладок (Общее/Заявитель/Факты/Эталон/Проверка) вместо пяти отдельных маршрутов; «Создать черновик» создаёт сценарий и переключает URL на `/edit`; «Проверить»/тестер фраз/«Пройти самому»/«Утвердить» — прямые вызовы соответствующих мутаций.
+- `web/src/routes/instructor/ScenarioPreview.tsx` (new): `/instructor/preview/:itemId` — тонкая обёртка вокруг `useItem`+`Operator112ProfileCase` (переиспользован без изменений: обычный `GET/POST /items/{id}...` не различает роль, только `run.user_id`/`workstationMatches`, уже готовые в c4). `lessonId` передаётся через `navigate(..., {state})`, чтобы показать кнопку «Завершить предпросмотр» (`POST /lessons/{id}/stop`) — необязательна: следующий `StartPreview` того же автора всё равно останавливает предыдущий прогон сам.
+- `web/src/components/IntakeAutoAssessment.tsx` (new): панель блоков/штрафов rubric-v2, вынесенная из `ItemReview.tsx` (там теперь просто импортируется) — используется предпросмотром 112-7 один в один с разбором преподавателя.
+- `web/src/routes/instructor/ScenarioDetail.tsx`: исправлен реальный краш на `full_case`/`free_text` сценариях (`intake.call.script.map`/`reference.expected_card.age` на `undefined`) — сепарирован `Operator112ScenarioDetail`, который читает `GET /scenarios/{id}`'s собственное тело (не отдельный `/preview`, который 404-ит на неутверждённом черновике), показывает факты/эталон по фактической форме intake112 и добавляет кнопки Копировать/Редактировать/Предпросмотр/Утвердить с проверкой владения на клиенте (`created_by`).
+- `web/src/routes/instructor/ScenarioCatalogue.tsx`: кнопка «+ Создать сценарий 112».
+- `web/src/api/errors.ts`: тексты для `stale_draft`/`has_blocking_issues`/`unsupported_for_editor`.
+- `web/src/App.tsx`: три новых маршрута.
+- **Реальный бэкенд-баг, найденный через e2e в реальном браузере** (не ловится `tsc`/`lint`/юнит-тестами с моками): `internal/content/http/handlers.go`'s `toValidationIssuesJSON` возвращал `nil` при отсутствии замечаний → JSON `"issues": null` вместо `[]` для полей, объявленных в `openapi.yaml` как `required` (`ScenarioEditResult`, ответ `/validate`) — `issues.filter(...)` в `ScenarioEditor.tsx` падал на `null`, крашя всё SPA (пустой экран, React root размонтирован) в момент клика «Пройти самому» после «Проверить». Исправлено: `toValidationIssuesJSON` всегда возвращает не-nil (возможно пустой) срез — `omitempty` у `scenarioJSON.Issues` по-прежнему опускает пустой срез, так что владелец-only fallback не меняет поведение. Плюс defensive `?? []` в двух местах `ScenarioEditor.tsx`, которые раньше не подстраховывались.
+- Попутно (обнаружено при чтении `Operator112ProfileCase.tsx` для переиспользования в предпросмотре): `internal/training/http/handlers.go`'s `available_service_codes` раньше вычислялся только для `traineeView` — инструктор на своём предпросмотре не мог вручную скорректировать список служб в модалке «Список оповещаемых служб» (мог только принять автопредложение). Вынесено в отдельную `availableServiceCodesForState`, вызывается для обеих ветвей; `openapi.yaml`'s описание поля обновлено.
+- `design-docs/contracts/openapi.yaml`: `ScenarioSummary.created_by` (не секретно — утверждённый сценарий и так виден всем инструкторам; нужно клиенту для решения «показывать ли Редактировать»), `Scenario.version_status`/`.issues` (уже существовали в ответе `GET /scenarios/{id}`, но не были описаны в контракте — исправлена документационная рассинхронизация), исправлено устаревшее описание `PUT /scenarios/{id}` («правка на месте» — на самом деле всегда новая версия, ADR-027).
+- `README.md` (новый раздел «Редактор сценариев 112 (срез 112-7)»), `seed/README.md` (раздел «Редактор 112-7 и файловый импорт»), `CLAUDE.md` (новый пункт про 112-7 в Current delivery state, обновлены Code map/remaining order), `slice-planning-112.md` (шапка, таблица §3, статус §11, финальный абзац), `slice-112-7-plan.md` (статус «реализован», отметка по коммитам, уточнение по факту реализации про `expected_profiles`/`alternatives`/`scoring` без отдельного UI).
+
+Decisions:
+- «Мои черновики» реализовано переиспользованием существующего `status=draft` фильтра (задокументировано в предыдущей записи), а не новым UI-элементом — здесь только подтверждение, что каталог с этим фильтром действительно показывает свежесозданный черновик после исправления `ListScenarios`.
+- `expected_profiles`/`alternatives`/`scoring` не получили отдельного UI в редакторе (только `expected_types`/`case_description`/`expected_services`/`expected_card`) — не блокирует ни один пункт Definition of Done, задокументировано как явное сужение в `slice-112-7-plan.md` §8, а не тихо опущено.
+
+Validation: `go build ./...`, `go vet ./...`, `gofmt -l` — чисто; `go test ./internal/...` — весь пакет зелёный; `npx tsc -b` и `npm run lint` (web) — чисто (только 4 pre-existing/безопасных warning'а); `npm run build` (web) — успешно. `python3 design-docs/contracts/check.py` — все проверки прошли. Интеграционный прогон против разового `postgres:16-alpine` — без регрессий. **e2e против реального docker-compose стека** (`npm run test:e2e`, сборка образа с обоими бэкенд-фиксами): новый `web/e2e/operator112-editor.spec.ts` (создание через UI → факты/эталон → «Создать черновик» → «Проверить» без блокирующих ошибок → «Пройти самому» → реальное прохождение ARM-интерфейса до «Кейс завершён» → «Завершить предпросмотр» → подтверждение отсутствия в списке занятий → «Утвердить» → появление в конструкторе занятия для назначения) и все 6 существующих спеков (`operator112.spec.ts` ×4, `operator112-profiles.spec.ts`, `smoke.spec.ts`) — **7/7 PASS**, без регрессий.
+
+Next: срез 112-7 полностью завершён (c1–c10). Следующий шаг по `slice-planning-112.md` — 112-5b этап 2 (замер W0, `llama-server`/GGUF в compose) либо LLM-критерии rubric-v3, либо 112-8/112-9 — по решению пользователя.

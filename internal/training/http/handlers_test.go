@@ -171,9 +171,12 @@ func requireError(t *testing.T, response *httptest.ResponseRecorder, status int,
 func TestRoutesRequireAuthenticationAndCorrectRoles(t *testing.T) {
 	id := uuid.New().String()
 	lessonRoutes := []struct{ method, path string }{{"GET", "/api/v1/lessons"}, {"POST", "/api/v1/lessons"}, {"GET", "/api/v1/lessons/options"}, {"GET", "/api/v1/lessons/" + id}, {"PUT", "/api/v1/lessons/" + id + "/assignments"}, {"POST", "/api/v1/lessons/" + id + "/start"}, {"GET", "/api/v1/lessons/" + id + "/runs/" + id + "/actions"}}
-	traineeRoutes := []struct{ method, path string }{{"GET", "/api/v1/my/run"}, {"GET", "/api/v1/my/items"}, {"POST", "/api/v1/items/" + id + "/actions"}}
+	// traineeRoutes are trainee-only (unlike POST .../actions below,
+	// 112-7/ADR-027 gives no instructor exception here).
+	traineeRoutes := []struct{ method, path string }{{"GET", "/api/v1/my/run"}, {"GET", "/api/v1/my/items"}}
+	itemActionsRoute := struct{ method, path string }{"POST", "/api/v1/items/" + id + "/actions"}
 	all := append(append([]struct{ method, path string }{}, lessonRoutes...), traineeRoutes...)
-	all = append(all, struct{ method, path string }{"GET", "/api/v1/items/" + id})
+	all = append(all, itemActionsRoute, struct{ method, path string }{"GET", "/api/v1/items/" + id})
 	for _, route := range all {
 		response := httptest.NewRecorder()
 		trainingMux(trainingFixture(), trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest(route.method, route.path, nil, false))
@@ -194,8 +197,31 @@ func TestRoutesRequireAuthenticationAndCorrectRoles(t *testing.T) {
 		}
 	}
 	response := httptest.NewRecorder()
+	trainingMux(trainingFixture(), trainingPrincipal(auth.RoleAdmin)).ServeHTTP(response, trainingRequest(itemActionsRoute.method, itemActionsRoute.path, []byte(`{}`), true))
+	requireError(t, response, 403, "forbidden")
+
+	response = httptest.NewRecorder()
 	trainingMux(trainingFixture(), trainingPrincipal(auth.RoleAdmin)).ServeHTTP(response, trainingRequest("GET", "/api/v1/items/"+id, nil, true))
 	requireError(t, response, 403, "forbidden")
+}
+
+// TestPreviewInstructorReachesItemActions is 112-7/ADR-027's own route-
+// level check: unlike every other trainee-only route, POST
+// /items/{id}/actions must also admit an instructor (GroupItemActions),
+// since a preview run's sole participant is its author. This only checks
+// the route no longer 403s the request before it reaches the service —
+// training.Service.Execute (internal/training/service_test.go) is what
+// actually enforces run.UserID == actor.UserID and the workstationMatches
+// preview exception.
+func TestPreviewInstructorReachesItemActions(t *testing.T) {
+	svc := trainingFixture()
+	svc.executeReceipt = training.Receipt{Outcome: training.OutcomeApplied}
+	response := httptest.NewRecorder()
+	body := `{"command_id":"` + uuid.New().String() + `","expected_seq":0,"type":"open","payload":{}}`
+	trainingMux(svc, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("POST", "/api/v1/items/"+svc.item.ID.String()+"/actions", []byte(body), true))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
 }
 
 func TestOwnershipAndWorkstationErrors(t *testing.T) {
@@ -325,6 +351,40 @@ func TestOperator112ItemProjectsOnlyAvailableQuestions(t *testing.T) {
 	trainingMux(svc, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("GET", "/api/v1/items/"+svc.item.ID.String(), nil, true))
 	if response.Code != 200 || !strings.Contains(response.Body.String(), "СЕКРЕТНЫЙ АДРЕС") {
 		t.Fatalf("instructor missing dialogue reference: %d %s", response.Code, response.Body.String())
+	}
+}
+
+// TestOperator112InstructorItemGetsAvailableServiceCodesToo is 112-7/
+// ADR-027's own regression: web's Operator112ProfileCase (reused as-is
+// for a preview run's instructor) needs available_service_codes to let
+// the operator manually adjust the suggested set in its "add service"
+// modal — this field must not stay trainee-only just because the
+// instructor branch otherwise carries the full, untrimmed catalog.
+func TestOperator112InstructorItemGetsAvailableServiceCodesToo(t *testing.T) {
+	svc := trainingFixture()
+	card := training.UnansweredIntakeCard("112-1", "+79161313131", "02:03", "Europe/Moscow")
+	svc.item.ExerciseType = content.ExerciseTypeOperator112Intake
+	svc.item.IntakeCard = &card
+	svc.item.IntakeState = &training.IntakeState{Mode: "full_case", Catalog: &content.IntakeCatalog{
+		Version: 1,
+		ServiceRules: []content.IntakeServiceRule{
+			{ID: "gas", ProfileID: "104", ServiceCode: "pilot_gas_104"},
+			{ID: "fire", ProfileID: "101", ServiceCode: "pilot_fire_101"},
+		},
+	}}
+	response := httptest.NewRecorder()
+	trainingMux(svc, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("GET", "/api/v1/items/"+svc.item.ID.String(), nil, true))
+	if response.Code != 200 {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		AvailableServiceCodes []string `json:"available_service_codes"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.AvailableServiceCodes) != 2 {
+		t.Fatalf("available_service_codes = %v, want [pilot_gas_104 pilot_fire_101]", body.AvailableServiceCodes)
 	}
 }
 

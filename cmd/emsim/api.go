@@ -191,9 +191,14 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.
 	authhttp.NewHandlers(authService, cfg.CookieSecure).Register(apiMux)
 	authhttp.NewAdminHandlers(authService, cfg.CookieSecure).Register(apiMux)
 
-	contenthttp.NewHandlers(contentService, authService, cfg.CookieSecure).Register(apiMux)
-
+	// trainingService is built before content's own handlers (112-7/
+	// ADR-027: POST /scenarios/{id}/preview-runs needs training.Service.
+	// StartPreview as its previewStarter port) — content itself still
+	// never imports training, only content/http does, the same way
+	// assessment/reporting's own http packages already take
+	// *training.Service.
 	trainingService := newTrainingService(pool, mustTaskEnqueuer(pool))
+	contenthttp.NewHandlers(contentService, trainingService, authService, cfg.CookieSecure).Register(apiMux)
 	traininghttp.NewHandlers(trainingService, authService, cfg.CookieSecure, hub).Register(apiMux)
 	assessmentService := newAssessmentService(pool, mustTaskEnqueuer(pool))
 	assessmenthttp.NewHandlers(assessmentService, trainingService, authService, cfg.CookieSecure).Register(apiMux)

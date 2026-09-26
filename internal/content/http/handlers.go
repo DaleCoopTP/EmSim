@@ -35,6 +35,32 @@ type contentService interface {
 	ScenarioDetail(ctx context.Context, id uuid.UUID) (content.ScenarioDetail, error)
 	ScenarioVersions(ctx context.Context, id uuid.UUID) ([]content.VersionSummary, error)
 	ScenarioPreview(ctx context.Context, id uuid.UUID) (content.ScenarioPreview, error)
+
+	// The methods below back the 112-7/ADR-027 scenario editor
+	// (editor_handlers.go) — declared here alongside the read-only
+	// methods above rather than as a second interface, matching this
+	// package's existing convention of one consumer-owned port per HTTP
+	// package (internal/auth/http's own single Service interface).
+	CreateOperator112Scenario(ctx context.Context, actorID uuid.UUID, in content.ScenarioCreateInput) (content.EditorScenario, error)
+	EditorScenarioDetail(ctx context.Context, actorID, scenarioID uuid.UUID) (content.EditorScenario, error)
+	SaveOperator112Draft(ctx context.Context, actorID, scenarioID uuid.UUID, in content.ScenarioEditInput) (content.EditorScenario, error)
+	ValidateOperator112Draft(ctx context.Context, actorID, scenarioID uuid.UUID, body content.Body) ([]content.ValidationIssue, error)
+	ProbeOperator112(ctx context.Context, actorID, scenarioID uuid.UUID, body content.Body, text string) ([]content.ProbeMatch, error)
+	ApproveOperator112Scenario(ctx context.Context, actorID, scenarioID, versionID uuid.UUID, baseDigestHex string) (content.EditorScenario, error)
+	IntakeCatalogForInstructor(ctx context.Context) (content.IntakeCatalog, error)
+}
+
+// previewStarter is content/http's own consumer-owned port onto
+// training's StartPreview (112-7/ADR-027): POST
+// /scenarios/{id}/preview-runs needs to actually create a run, which
+// only training can do, but content itself (unlike content/http) never
+// depends on training — RFC-001 §4.2's dependency table lists training
+// as depending on content, not the reverse. *training.Service satisfies
+// this structurally, the same way assessment/reporting's own http
+// packages already take a *training.Service parameter for their own
+// cross-module reads.
+type previewStarter interface {
+	StartPreview(ctx context.Context, actorID, scenarioID, versionID uuid.UUID) (lessonID, itemID uuid.UUID, err error)
 }
 
 // authenticator is the session-verification port SessionMiddleware needs
@@ -44,15 +70,17 @@ type authenticator interface {
 	Authenticate(ctx context.Context, token string) (auth.Principal, error)
 }
 
-// Handlers owns GET /services and the /scenarios* catalogue routes.
+// Handlers owns GET /services, the /scenarios* catalogue routes, and
+// (112-7/ADR-027) the operator-112 scenario editor's own routes.
 type Handlers struct {
 	content      contentService
+	preview      previewStarter
 	auth         authenticator
 	cookieSecure bool
 }
 
-func NewHandlers(content contentService, authService authenticator, cookieSecure bool) *Handlers {
-	return &Handlers{content: content, auth: authService, cookieSecure: cookieSecure}
+func NewHandlers(content contentService, preview previewStarter, authService authenticator, cookieSecure bool) *Handlers {
+	return &Handlers{content: content, preview: preview, auth: authService, cookieSecure: cookieSecure}
 }
 
 // Register adds this package's routes to mux, each behind
@@ -68,9 +96,16 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	}
 	mux.Handle("GET /api/v1/services", servicesGroup(h.listServices))
 	mux.Handle("GET /api/v1/scenarios", contentGroup(h.listScenarios))
+	mux.Handle("POST /api/v1/scenarios", contentGroup(h.createScenario))
 	mux.Handle("GET /api/v1/scenarios/{scenarioId}", contentGroup(h.scenarioDetail))
+	mux.Handle("PUT /api/v1/scenarios/{scenarioId}", contentGroup(h.saveDraft))
 	mux.Handle("GET /api/v1/scenarios/{scenarioId}/versions", contentGroup(h.scenarioVersions))
 	mux.Handle("GET /api/v1/scenarios/{scenarioId}/preview", contentGroup(h.scenarioPreview))
+	mux.Handle("POST /api/v1/scenarios/{scenarioId}/validate", contentGroup(h.validateDraft))
+	mux.Handle("POST /api/v1/scenarios/{scenarioId}/probe", contentGroup(h.probe))
+	mux.Handle("POST /api/v1/scenarios/{scenarioId}/approve", contentGroup(h.approveScenario))
+	mux.Handle("POST /api/v1/scenarios/{scenarioId}/preview-runs", contentGroup(h.startPreviewRun))
+	mux.Handle("GET /api/v1/intake112/catalog", contentGroup(h.intakeCatalog))
 }
 
 func (h *Handlers) listServices(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +147,9 @@ func (h *Handlers) listScenarios(w http.ResponseWriter, r *http.Request) {
 		Page:          queryIntOrDefault(query, "page", 1),
 		PageSize:      min(queryIntOrDefault(query, "page_size", 50), 200), // openapi.yaml PageSize: maximum 200
 	}
+	if actor, ok := authhttp.PrincipalFromContext(r.Context()); ok {
+		filter.RequestingUserID = actor.UserID
+	}
 	if filter.ExerciseType != "" && !filter.ExerciseType.Valid() {
 		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "invalid exercise_type", map[string]any{"field": "exercise_type"})
 		return
@@ -129,6 +167,11 @@ func (h *Handlers) listScenarios(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, scenarioListJSON{Items: summaries, Total: total})
 }
 
+// scenarioDetail is GET /scenarios/{id}: the approved version for
+// everyone (unchanged since slice 2), or — 112-7/ADR-027 — if there is
+// none yet, the caller's own latest draft (404 for anyone else, same as
+// before: a scenario with no approved version and no draft of the
+// caller's own is indistinguishable from one that does not exist).
 func (h *Handlers) scenarioDetail(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("scenarioId"))
 	if err != nil {
@@ -136,11 +179,25 @@ func (h *Handlers) scenarioDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detail, err := h.content.ScenarioDetail(r.Context(), id)
+	if err == nil {
+		writeJSON(w, r, http.StatusOK, toScenarioJSON(detail))
+		return
+	}
+	if !errors.Is(err, content.ErrNotFound) {
+		writeScenarioLookupError(w, r, err)
+		return
+	}
+	actor, ok := authhttp.PrincipalFromContext(r.Context())
+	if !ok {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "scenario not found", nil)
+		return
+	}
+	editorDetail, err := h.content.EditorScenarioDetail(r.Context(), actor.UserID, id)
 	if err != nil {
 		writeScenarioLookupError(w, r, err)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, toScenarioJSON(detail))
+	writeJSON(w, r, http.StatusOK, toEditorScenarioJSON(editorDetail))
 }
 
 func (h *Handlers) scenarioVersions(w http.ResponseWriter, r *http.Request) {
@@ -276,13 +333,18 @@ type scenarioSummaryJSON struct {
 	// until slice 11 (openapi.yaml ScenarioSummary.has_voice).
 	HasVoice  bool   `json:"has_voice"`
 	UpdatedAt string `json:"updated_at"`
+	// CreatedBy is 112-7/ADR-027's own addition — not secret (an approved
+	// scenario is already visible to every instructor), needed so the web
+	// editor can decide whether to offer "Редактировать"/"Копировать" for
+	// a given scenario without a second request.
+	CreatedBy string `json:"created_by"`
 }
 
 func toScenarioSummaryJSON(s content.ScenarioSummary) scenarioSummaryJSON {
 	return scenarioSummaryJSON{
 		ID: s.ID.String(), Title: s.Title, ExerciseType: string(s.ExerciseType), TargetService: s.TargetService, Difficulty: s.Difficulty,
 		Status: s.Status, Origin: s.Origin, Version: s.Version, SourceKey: s.SourceKey,
-		HasEvents: s.HasEvents, HasVoice: false, UpdatedAt: formatTime(s.UpdatedAt),
+		HasEvents: s.HasEvents, HasVoice: false, UpdatedAt: formatTime(s.UpdatedAt), CreatedBy: s.CreatedBy.String(),
 	}
 }
 
@@ -297,9 +359,17 @@ func toScenarioSummaryJSON(s content.ScenarioSummary) scenarioSummaryJSON {
 // canonical bytes as-is keeps the response byte-consistent with Digest.
 type scenarioJSON struct {
 	scenarioSummaryJSON
-	Body      json.RawMessage `json:"body"`
-	VersionID string          `json:"version_id"`
-	Digest    string          `json:"digest"`
+	Body json.RawMessage `json:"body"`
+	// VersionID/Digest describe the version Body carries: the current
+	// approved one, or — 112-7/ADR-027's own owner-only fallback in
+	// scenarioDetail — the caller's own latest draft/approved/superseded
+	// version. VersionStatus/Issues are only ever populated by that
+	// fallback (empty JSON string/omitted array for the ordinary
+	// approved-version response, unchanged since slice 2).
+	VersionID     string                `json:"version_id"`
+	Digest        string                `json:"digest"`
+	VersionStatus string                `json:"version_status,omitempty"`
+	Issues        []validationIssueJSON `json:"issues,omitempty"`
 }
 
 func toScenarioJSON(d content.ScenarioDetail) scenarioJSON {
@@ -309,6 +379,42 @@ func toScenarioJSON(d content.ScenarioDetail) scenarioJSON {
 		VersionID:           d.VersionID.String(),
 		Digest:              hex.EncodeToString(d.Digest[:]),
 	}
+}
+
+func toEditorScenarioJSON(e content.EditorScenario) scenarioJSON {
+	summary := content.ScenarioSummary{ScenarioRecord: e.ScenarioRecord, ExerciseType: e.Body.ExerciseType, Version: e.Version, HasEvents: len(e.Body.Events) > 0}
+	return scenarioJSON{
+		scenarioSummaryJSON: toScenarioSummaryJSON(summary),
+		Body:                json.RawMessage(e.BodyJSON),
+		VersionID:           e.VersionID.String(),
+		Digest:              hex.EncodeToString(e.Digest[:]),
+		VersionStatus:       e.Status,
+		Issues:              toValidationIssuesJSON(e.Issues),
+	}
+}
+
+type validationIssueJSON struct {
+	Path     string `json:"path"`
+	Code     string `json:"code"`
+	Severity string `json:"severity"`
+	Message  string `json:"message,omitempty"`
+}
+
+// toValidationIssuesJSON always returns a non-nil (possibly empty) slice:
+// Go's encoding/json still omits an empty-but-non-nil slice wherever the
+// caller's own field has "omitempty" (scenarioJSON.Issues, only ever
+// populated by the owner-only draft fallback), but every other caller's
+// "issues" field is a required, always-present array per openapi.yaml
+// (ScenarioEditResult, POST .../validate) — those must never serialize
+// as JSON null, which the web editor's own callers do not all guard
+// against (112-7/ADR-027's own regression: clicking "Проверить" on an
+// issue-free draft crashed the whole SPA on issues.filter(null)).
+func toValidationIssuesJSON(issues []content.ValidationIssue) []validationIssueJSON {
+	out := make([]validationIssueJSON, len(issues))
+	for i, issue := range issues {
+		out[i] = validationIssueJSON{Path: issue.Path, Code: issue.Code, Severity: string(issue.Severity), Message: issue.Message}
+	}
+	return out
 }
 
 type versionSummaryJSON struct {

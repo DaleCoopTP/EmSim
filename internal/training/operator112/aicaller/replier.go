@@ -133,7 +133,7 @@ func scriptedAnswer(facts []content.Intake112Fact, askedThisTurn []string, messa
 			continue
 		}
 		for _, variant := range fact.AnswerVariants {
-			if variant.When == "" || matchesAny([]string{variant.When}, message) {
+			if variant.When == "" || content.MatchesPattern(variant.When, message) {
 				return variant.Text, true
 			}
 		}

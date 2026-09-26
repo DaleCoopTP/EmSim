@@ -48,7 +48,10 @@ export function ScenarioCatalogueRoute() {
     <section className="instructor-page scenario-catalogue">
       <header className="page-heading">
         <div><h1>Сценарии</h1><p>Каталог учебных происшествий для назначения на рабочие места.</p></div>
-        <span className="page-count">{total} сценариев</span>
+        <div className="scenario-catalogue-actions">
+          <span className="page-count">{total} сценариев</span>
+          <Link to="/instructor/scenarios/new" className="arm-primary-action">+ Создать сценарий 112</Link>
+        </div>
       </header>
       <form className="scenario-filters arm-filters" onSubmit={(e) => e.preventDefault()}>
         <label>

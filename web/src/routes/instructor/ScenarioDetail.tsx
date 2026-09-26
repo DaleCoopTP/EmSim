@@ -1,13 +1,19 @@
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
+  useApproveScenario,
+  useCreateScenario,
   useScenario,
   useScenarioPreview,
   useScenarioVersions,
+  useStartPreviewRun,
   type CardPreview,
+  type Intake112Fact,
+  type Scenario,
   type ScenarioReference,
   type ScenarioVersionSummary,
 } from "../../api/content";
 import { errorMessage } from "../../api/errors";
+import type { Me } from "../../api/useMe";
 import { IncidentCard } from "../../components/IncidentCard";
 import { formatDateTime } from "../../format";
 import { reactionLabel, scenarioStatusLabel, versionStatusLabel } from "../../labels";
@@ -17,52 +23,42 @@ import { reactionLabel, scenarioStatusLabel, versionStatusLabel } from "../../la
 // assigning it — IncidentCard is the same allowlist view a trainee will
 // see (slice 3), the blocks below it are instructor-only (the эталон is
 // never sent to a trainee — internal/content's Reference doc comment).
-// Deliberately no edit/approve controls and no raw-JSON view: until
-// slice 11 scenarios are prepared, reviewed and loaded outside the UI.
+// The operator112 branch (112-7/ADR-027) reads straight from GET
+// /scenarios/{id}'s own body instead of the separate /preview endpoint:
+// unlike the DDS branch below, an operator112 scenario the caller owns
+// may still be an unapproved draft, and /preview only ever resolves an
+// *approved* version (404 otherwise) — this route must still render a
+// draft the caller's own GET /scenarios/{id} (owner-only fallback,
+// internal/content/http's scenarioDetail) already returned successfully.
 export function ScenarioDetailRoute() {
   const { scenarioId = "" } = useParams();
+  const me = useOutletContext<Me>();
+  const navigate = useNavigate();
   const scenario = useScenario(scenarioId);
   const preview = useScenarioPreview(scenarioId);
 
-  if (scenario.isPending || preview.isPending) {
+  if (scenario.isPending) {
     return <p>Загрузка…</p>;
   }
   if (scenario.isError) {
     return <p className="error">{errorMessage(scenario.error)}</p>;
   }
+
+  const s = scenario.data;
+  if (s.exercise_type === "operator112_intake") {
+    return <Operator112ScenarioDetail s={s} me={me} onNavigate={navigate} />;
+  }
+
+  if (preview.isPending) {
+    return <p>Загрузка…</p>;
+  }
   if (preview.isError) {
     return <p className="error">{errorMessage(preview.error)}</p>;
   }
-
-  const s = scenario.data;
   if ("intake112" in preview.data) {
-    const intake = preview.data.intake112;
-    return (
-      <section className="instructor-page scenario-detail">
-        <p className="back-link"><Link to="/instructor/scenarios">← К сценариям</Link></p>
-        <header className="page-heading scenario-heading">
-          <div><h1>{s.title}</h1><p>Оператор 112 · версия {s.version}</p></div>
-          <span className={`status-badge status-${s.status}`}>{scenarioStatusLabel(s.status)}</span>
-        </header>
-        <div className="scenario-review-grid">
-          <section className="scenario-reference-pane">
-            <h2>Подготовленный вызов</h2>
-            <p>АОН: {intake.call.aon} · {intake.call.local_time} МСК</p>
-            <ol>{intake.call.script.map((line, index) => <li key={index}>{line}</li>)}</ol>
-          </section>
-          <section className="scenario-reference-pane">
-            <h2>Эталон для преподавателя</h2>
-            <dl>
-              <dt>Возраст</dt><dd>{intake.reference.expected_card.age}</dd>
-              <dt>Место</dt><dd>{Object.values(intake.reference.expected_card.address).join(", ")}</dd>
-              <dt>Жалобы</dt><dd>{intake.reference.expected_card.complaint}</dd>
-              <dt>Адресат</dt><dd>{intake.reference.recipient_service}</dd>
-            </dl>
-          </section>
-        </div>
-        <VersionsBlock scenarioId={scenarioId} />
-      </section>
-    );
+    // Unreachable in practice (s.exercise_type already routed operator112
+    // above), kept only so TypeScript can narrow preview.data below.
+    return null;
   }
   const { card, reference } = preview.data;
 
@@ -90,6 +86,133 @@ export function ScenarioDetailRoute() {
         <EventsBlock hasEvents={s.has_events ?? false} />
         <CallBlock reference={reference} card={card} />
       </div>
+      <VersionsBlock scenarioId={scenarioId} />
+    </section>
+  );
+}
+
+// The wire's own ScenarioBody is intentionally loose ({exercise_type} &
+// {[key: string]: unknown}) — this narrows it to just what this
+// read-only detail view displays, across every intake112 shape
+// (prepared/free_text, incoming_call/card_only/full_case), not only the
+// editor's own full_case+free_text one (Intake112EditorBody).
+type Intake112DisplayBody = {
+  exercise_type: "operator112_intake";
+  intake112: {
+    mode?: "incoming_call" | "card_only" | "full_case";
+    caller_mode?: "prepared" | "free_text";
+    call?: { aon: string; local_time: string; script?: string[] };
+    dialogue?: { facts: Intake112Fact[]; caller?: { persona: string; opening: { text: string } } };
+    reference: {
+      expected_types?: string[];
+      case_description?: string;
+      expected_services?: string[];
+      expected_card?: Record<string, unknown>;
+      recipient_service?: string;
+    };
+  };
+};
+
+// operator112EditorEligible mirrors internal/content/editor.go's own
+// function of the same name: only full_case+free_text scenarios can be
+// edited/copied/previewed through the 112-7 editor. A prepared-dialogue
+// or card_only/incoming_call scenario (still only ever created by file
+// import — slice-112-7-plan.md's own scope decision 4) is shown
+// read-only here, same as before this change.
+function operator112EditorEligible(intake: Intake112DisplayBody["intake112"]): boolean {
+  return intake.mode === "full_case" && intake.caller_mode === "free_text";
+}
+
+function Operator112ScenarioDetail({ s, me, onNavigate }: { s: Scenario; me: Me; onNavigate: (path: string, options?: { replace?: boolean }) => void }) {
+  const scenarioId = s.id;
+  const intake = (s.body as unknown as Intake112DisplayBody).intake112;
+  const eligible = operator112EditorEligible(intake);
+  const isOwner = s.created_by === me.user.id;
+  const errorCount = (s.issues ?? []).filter((issue) => issue.severity === "error").length;
+  const hasDraft = s.version_status === "draft" || s.version_status === "superseded";
+  const canPreviewOrApprove = isOwner && eligible && (s.version_status === "approved" || (hasDraft && errorCount === 0));
+
+  const createMutation = useCreateScenario();
+  const approveMutation = useApproveScenario();
+  const startPreview = useStartPreviewRun();
+
+  const copy = () => {
+    createMutation.mutate(
+      { title: `${s.title} (копия)`, difficulty: s.difficulty, copyFromVersionId: s.version_id },
+      { onSuccess: (created) => onNavigate(`/instructor/scenarios/${created.id}/edit`) },
+    );
+  };
+  const approve = () => {
+    if (!s.version_id || !s.digest) return;
+    approveMutation.mutate({ scenarioId, versionId: s.version_id, baseDigest: s.digest });
+  };
+  const preview = () => {
+    if (!s.version_id) return;
+    startPreview.mutate(
+      { scenarioId, versionId: s.version_id },
+      { onSuccess: (result) => onNavigate(`/instructor/preview/${result.item_id}`) },
+    );
+  };
+
+  return (
+    <section className="instructor-page scenario-detail">
+      <p className="back-link"><Link to="/instructor/scenarios">← К сценариям</Link></p>
+      <header className="page-heading scenario-heading">
+        <div><h1>{s.title}</h1><p>Оператор 112 · версия {s.version}{intake.mode ? ` · ${intake.mode}` : ""}{intake.caller_mode ? ` · ${intake.caller_mode}` : ""}</p></div>
+        <span className={`status-badge status-${s.version_status ?? s.status}`}>{versionStatusLabel(s.version_status) !== "—" ? versionStatusLabel(s.version_status) : scenarioStatusLabel(s.status)}</span>
+      </header>
+
+      {!eligible && (
+        <p className="notice">Этот сценарий использует подготовленный диалог или карточку без разговора — редактор 112-7 поддерживает только «полный кейс» с ИИ-заявителем; такие сценарии по-прежнему готовятся файловым импортом.</p>
+      )}
+      {isOwner && errorCount > 0 && (
+        <p className="error">Черновик содержит {errorCount} блокирующих ошибок проверки — откройте редактор, чтобы их устранить.</p>
+      )}
+
+      <div className="scenario-review-grid">
+        {intake.call && (
+          <section className="scenario-reference-pane">
+            <h2>{intake.mode === "full_case" ? "Вызов" : "Подготовленный вызов"}</h2>
+            <p>АОН: {intake.call.aon} · {intake.call.local_time} МСК</p>
+            {intake.call.script && <ol>{intake.call.script.map((line, index) => <li key={index}>{line}</li>)}</ol>}
+          </section>
+        )}
+        <section className="scenario-reference-pane">
+          <h2>Эталон для преподавателя</h2>
+          <dl>
+            {intake.reference.expected_types && <><dt>Ожидаемые типы</dt><dd>{intake.reference.expected_types.join(", ") || "—"}</dd></>}
+            {intake.reference.expected_services && <><dt>Ожидаемые службы</dt><dd>{intake.reference.expected_services.join(", ") || "—"}</dd></>}
+            {intake.reference.case_description && <><dt>Описание ситуации</dt><dd>{intake.reference.case_description}</dd></>}
+            {intake.reference.recipient_service && <><dt>Адресат</dt><dd>{intake.reference.recipient_service}</dd></>}
+            {!intake.reference.expected_card && <><dt>Ожидаемая карточка</dt><dd>Эталон не задан — соответствующие блоки оценки получат 0.</dd></>}
+          </dl>
+        </section>
+      </div>
+
+      {intake.dialogue && intake.dialogue.facts.length > 0 && (
+        <section className="scenario-reference-pane">
+          <h2>Факты заявителя</h2>
+          {intake.dialogue.caller && <p>Персона: {intake.dialogue.caller.persona}. Вступление: «{intake.dialogue.caller.opening.text}»</p>}
+          <table>
+            <thead><tr><th>Название</th><th>card_path</th><th>Знание</th><th>Значение</th></tr></thead>
+            <tbody>{intake.dialogue.facts.map((fact) => (
+              <tr key={fact.id}><td>{fact.label || fact.id}</td><td>{fact.card_path ?? "—"}</td><td>{fact.knowledge}</td><td>{fact.value ?? "—"}</td></tr>
+            ))}</tbody>
+          </table>
+        </section>
+      )}
+
+      <div className="scenario-editor-actions">
+        {eligible && <button type="button" disabled={createMutation.isPending} onClick={copy}>Копировать в свой черновик</button>}
+        {isOwner && eligible && <Link to={`/instructor/scenarios/${scenarioId}/edit`} className="arm-primary-action">Редактировать</Link>}
+        {isOwner && eligible && <button type="button" disabled={!canPreviewOrApprove || startPreview.isPending} onClick={preview}>Пройти самому (предпросмотр)</button>}
+        {isOwner && eligible && hasDraft && <button type="button" disabled={!canPreviewOrApprove || approveMutation.isPending} onClick={approve}>Утвердить</button>}
+        {createMutation.isError && <p className="error">{errorMessage(createMutation.error)}</p>}
+        {startPreview.isError && <p className="error">{errorMessage(startPreview.error)}</p>}
+        {approveMutation.isError && <p className="error">{errorMessage(approveMutation.error)}</p>}
+        {approveMutation.isSuccess && <p>Сценарий утверждён.</p>}
+      </div>
+
       <VersionsBlock scenarioId={scenarioId} />
     </section>
   );

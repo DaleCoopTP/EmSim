@@ -55,6 +55,65 @@ type fakeContentService struct {
 
 	previewResult content.ScenarioPreview
 	previewErr    error
+
+	createResult content.EditorScenario
+	createErr    error
+
+	editorDetailResult content.EditorScenario
+	editorDetailErr    error
+
+	saveResult content.EditorScenario
+	saveErr    error
+
+	validateIssues []content.ValidationIssue
+	validateErr    error
+
+	probeResult []content.ProbeMatch
+	probeErr    error
+
+	approveResult content.EditorScenario
+	approveErr    error
+
+	catalogResult content.IntakeCatalog
+	catalogErr    error
+}
+
+func (f *fakeContentService) CreateOperator112Scenario(context.Context, uuid.UUID, content.ScenarioCreateInput) (content.EditorScenario, error) {
+	return f.createResult, f.createErr
+}
+
+func (f *fakeContentService) EditorScenarioDetail(context.Context, uuid.UUID, uuid.UUID) (content.EditorScenario, error) {
+	return f.editorDetailResult, f.editorDetailErr
+}
+
+func (f *fakeContentService) SaveOperator112Draft(context.Context, uuid.UUID, uuid.UUID, content.ScenarioEditInput) (content.EditorScenario, error) {
+	return f.saveResult, f.saveErr
+}
+
+func (f *fakeContentService) ValidateOperator112Draft(context.Context, uuid.UUID, uuid.UUID, content.Body) ([]content.ValidationIssue, error) {
+	return f.validateIssues, f.validateErr
+}
+
+func (f *fakeContentService) ProbeOperator112(context.Context, uuid.UUID, uuid.UUID, content.Body, string) ([]content.ProbeMatch, error) {
+	return f.probeResult, f.probeErr
+}
+
+func (f *fakeContentService) ApproveOperator112Scenario(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string) (content.EditorScenario, error) {
+	return f.approveResult, f.approveErr
+}
+
+func (f *fakeContentService) IntakeCatalogForInstructor(context.Context) (content.IntakeCatalog, error) {
+	return f.catalogResult, f.catalogErr
+}
+
+// fakePreviewStarter is previewStarter's own test double.
+type fakePreviewStarter struct {
+	lessonID, itemID uuid.UUID
+	err              error
+}
+
+func (f *fakePreviewStarter) StartPreview(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (uuid.UUID, uuid.UUID, error) {
+	return f.lessonID, f.itemID, f.err
 }
 
 func (f *fakeContentService) ListServices(context.Context) ([]content.ServiceRecord, error) {
@@ -88,7 +147,7 @@ func traineePrincipal() auth.Principal {
 
 func newTestMux(content *fakeContentService, auth *fakeAuth) *http.ServeMux {
 	mux := httpapi.NewMux()
-	NewHandlers(content, auth, true).Register(mux)
+	NewHandlers(content, &fakePreviewStarter{}, auth, true).Register(mux)
 	return mux
 }
 
@@ -213,10 +272,33 @@ func TestListScenariosRejectsInvertedDifficultyRange(t *testing.T) {
 
 func TestScenarioDetailNotFoundMapsTo404(t *testing.T) {
 	auth := &fakeAuth{validToken: "tok", principal: instructorPrincipal()}
-	mux := newTestMux(&fakeContentService{detailErr: content.ErrNotFound}, auth)
+	mux := newTestMux(&fakeContentService{detailErr: content.ErrNotFound, editorDetailErr: content.ErrNotFound}, auth)
 	response := httptest.NewRecorder()
 	wrapped(mux).ServeHTTP(response, authedRequest(http.MethodGet, "/api/v1/scenarios/"+uuid.New().String(), "tok"))
 	assertErrorEnvelope(t, response, http.StatusNotFound, "not_found")
+}
+
+func TestScenarioDetailFallsBackToOwnerDraftOnNotFound(t *testing.T) {
+	id := uuid.New()
+	editorDetail := content.EditorScenario{
+		ScenarioRecord: content.ScenarioRecord{ID: id, Title: "Draft", Status: "draft"},
+		VersionID:      uuid.New(), Version: 1, Status: "draft",
+		Body: content.Body{ExerciseType: content.ExerciseTypeOperator112Intake}, BodyJSON: []byte(`{}`),
+	}
+	auth := &fakeAuth{validToken: "tok", principal: instructorPrincipal()}
+	mux := newTestMux(&fakeContentService{detailErr: content.ErrNotFound, editorDetailResult: editorDetail}, auth)
+	response := httptest.NewRecorder()
+	wrapped(mux).ServeHTTP(response, authedRequest(http.MethodGet, "/api/v1/scenarios/"+id.String(), "tok"))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", response.Code, response.Body.String())
+	}
+	var got scenarioJSON
+	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.VersionStatus != "draft" {
+		t.Errorf("VersionStatus = %q, want draft", got.VersionStatus)
+	}
 }
 
 func TestScenarioDetailBadUUIDMapsTo404(t *testing.T) {

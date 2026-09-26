@@ -473,8 +473,16 @@ func (s *Service) CreateExpertRevision(ctx context.Context, itemID, createdBy uu
 			return err
 		}
 
-		if err := s.store.BumpTraineeStateVersion(ctx, tx, evidenceBody.TraineeID, evidenceBody.ExerciseType); err != nil {
-			return err
+		// 112-7/ADR-027: a preview run's own auto-assessment is real
+		// (enqueueEvaluateWaiting now fires for it too) but must never
+		// move the basis a future recommendation/advice would use —
+		// trainee_assessment_state stays untouched for preview, the same
+		// way intro never reaches this method's caller at all (intro has
+		// no evidence to revise, since it gets no assessment either).
+		if item.Mode != training.ModePreview {
+			if err := s.store.BumpTraineeStateVersion(ctx, tx, evidenceBody.TraineeID, evidenceBody.ExerciseType); err != nil {
+				return err
+			}
 		}
 		if err := s.store.AuditRecord(ctx, tx, audit.Entry{
 			Action: "assessment.expert_revision", ResourceType: "item", ResourceID: &itemID, ActorID: &createdBy,
