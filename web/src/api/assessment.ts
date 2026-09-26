@@ -20,7 +20,7 @@ export interface AssessmentDetail {
   automatic_state: LessonAssessmentRow["automatic_state"];
   final: Assessment | null;
   revisions: Assessment[];
-  rubric_effective: { version?: string; criteria?: Array<{ id: string; disabled?: boolean; weight?: number; critical?: boolean }> };
+  rubric_effective: { version?: string; criteria?: Array<{ id: string; title?: string; kind?: string; disabled?: boolean; weight?: number; critical?: boolean }> };
   evidence: Evidence;
 }
 

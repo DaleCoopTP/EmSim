@@ -170,13 +170,27 @@ test("operator 112: instructor assignment → incoming call → saved draft → 
   await expect(page.locator(".intake-review-card").first().getByText("Ориентир: метро ВДНХ", { exact: true })).toBeVisible();
   await expect(page.locator(".intake-review-card").first().getByText(/На место: \+79161313131/)).toBeVisible();
   await expect(page.getByText(/Адресат: 03 · Скорая помощь/)).toBeVisible();
-  const statuses = page.locator("form.lesson-form tbody select");
-  await statuses.nth(0).selectOption("partial");
-  await statuses.nth(1).selectOption("met");
-  await statuses.nth(2).selectOption("met");
+  // 112-6/ADR-026: this lesson is created through the UI, so it freezes
+  // today's operator112/rubric-v2 (never rubric-v1) — the legacy
+  // incoming_call/dispatch_intake route this test exercises never gets
+  // an automatic score (operator112_legacy_route), so the expert form's
+  // block inputs all start at 0 and every block needs an explicit value,
+  // same as ValidateRevision's own base_revision=0 "full set required"
+  // rule. Address is only half filled (matches this scenario's own
+  // "частично" spirit from before rubric-v2 existed); everything else
+  // scores in full; no penalties. Total = 17.5 + 25 + 15 + 7.5 + 7.5 + 10 = 82.5.
+  const setPoints = async (title: string, points: number) => {
+    await page.locator("form.lesson-form tr", { hasText: title }).locator("input[type=number]").fill(String(points));
+  };
+  await setPoints("Адрес происшествия", 17.5);
+  await setPoints("Профильные карты", 25);
+  await setPoints("Темы разговора с заявителем", 15);
+  await setPoints("Норматив ответа на вызов", 7.5);
+  await setPoints("Норматив заполнения карточки", 7.5);
+  await setPoints("Описание со слов заявителя", 10);
   await page.getByLabel("Причина").fill("Карточка заполнена частично, передача выполнена");
   await page.getByRole("button", { name: "Сохранить экспертную оценку" }).click();
-  await expect(page.getByText(/итог: ready · 80\.0/)).toBeVisible();
+  await expect(page.getByText(/итог: ready · 82\.5/)).toBeVisible();
   await page.getByRole("button", { name: "Выйти" }).click();
   await page.getByLabel("Логин").fill("e2e-112-trainee");
   await page.getByLabel("Пароль").fill(password);
@@ -184,7 +198,7 @@ test("operator 112: instructor assignment → incoming call → saved draft → 
   await page.getByRole("button", { name: "Войти" }).click();
   await page.getByRole("link", { name: "История" }).click();
   await expect(page.getByRole("heading", { name: "Моя история" })).toBeVisible();
-  await expect(page.getByRole("table").last().getByText("80.0")).toBeVisible();
+  await expect(page.getByRole("table").last().getByText("82.5")).toBeVisible();
   const results = await (await ok(await page.request.get("/api/v1/my/results?exercise_type=operator112_intake"))).json();
   expect(results).toHaveLength(1);
   expect(JSON.stringify(results)).not.toContain("intake_reference");
@@ -346,6 +360,30 @@ test("operator 112: full case — call, questions, incident types, profile cards
   await expect(notifiedLine).toBeVisible();
   await expect(notifiedLine).toContainText("pilot_gas_104");
   await expect(notifiedLine).toContainText("pilot_fire_101");
+
+  // 112-6/ADR-026: closing a full_case item now produces a real
+  // deterministic auto assessment (worker close -> coordinator ->
+  // pending -> auto rev=1), shown as a block/penalty breakdown instead
+  // of only the manual "Оценка преподавателя" form. This seed
+  // (pilot-112-full-gas-road-traffic-fire-01) has no expected_card/
+  // expected_profiles reference yet, so ADDRESS_FIELDS/PROFILE_CARDS
+  // score 0 by ADR-026's own "эталон отсутствует" rule — not
+  // needs_review, not a blank state.
+  await expect(page.getByRole("heading", { name: "Автоматическая оценка" })).toBeVisible();
+  await expect(page.getByText(/Автооценка: (waiting|pending|leased|done)/)).toBeVisible({ timeout: 15_000 });
+  // Scoped to the read-only "Блоки"/"Штрафы" tables specifically — the
+  // "Экспертная оценка" revision form below also has a row per criterion
+  // (same rubric title text), so an unscoped `tr` locator matches both.
+  const blocksTable = page.locator('h3:has-text("Блоки") + table');
+  const addressRow = blocksTable.locator("tr", { hasText: "Адрес происшествия" });
+  await expect(addressRow).toBeVisible({ timeout: 15_000 });
+  await expect(addressRow).toContainText("0 из 35");
+  await expect(addressRow).toContainText("не выполнено");
+  const penaltiesTable = page.locator('h3:has-text("Штрафы") + table');
+  const servicesRow = penaltiesTable.locator("tr", { hasText: "Штраф: неверный список служб" });
+  await expect(servicesRow).toBeVisible();
+  await expect(servicesRow).toContainText("−0"); // notified services matched expected_services exactly
+  await expect(servicesRow).toContainText("список служб совпадает с эталоном");
 });
 
 test("operator 112: free-text caller chat — async stub replies, draft survives them, hold cancels a pending turn", async ({ page }) => {

@@ -22,8 +22,19 @@ type IntakeNotification = { item_id: string; action_id: string; services: { serv
 type IntakeReviewState = { mode?: string; catalog?: ReviewCatalog; transcript?: IntakeReviewLine[]; caller_mode?: "prepared" | "free_text"; caller_turns?: IntakeReviewCallerTurn[] } & ReviewServiceState;
 type IntakeReviewItem = Item & { card: IntakeCard; intake_reference?: unknown; intake_dialogue_reference?: { facts: DialogueFact[] }; intake_state?: IntakeReviewState; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; notification?: IntakeNotification };
 type IntakeReviewEvidence = { final_card?: IntakeCard; dispatch?: { service_code: string; sent_at: string; card_snapshot: IntakeCard }; notification?: IntakeNotification; intake_state?: IntakeReviewState; actions?: IntakeReviewAction[] };
+type CriterionDetail = components["schemas"]["CriterionDetail"];
+type RubricEffectiveCriterion = { id: string; title?: string; kind?: string; disabled?: boolean; weight?: number; critical?: boolean };
 const labels: Record<string, string> = { met: "выполнено", partial: "частично", not_met: "не выполнено", not_applicable: "не применимо", unavailable: "не проверено" };
 const manualStatuses: CriterionStatus[] = ["met", "partial", "not_met", "not_applicable"];
+
+// 112-6/ADR-026: operator112/rubric-v2's criteria are split into scored
+// blocks (kind=deterministic, a 0..1 fraction of their own weight) and
+// penalties (kind=penalty, a flat points deduction) — the instructor
+// review UI shows and edits each shape differently, unlike DDS's
+// uniform met/partial/not_met/not_applicable criteria.
+function isPenaltyCriterion(rubricCriteria: Record<string, RubricEffectiveCriterion>, id: string): boolean {
+  return rubricCriteria[id]?.kind === "penalty";
+}
 
 export function ItemReviewRoute() {
   const { itemId = "" } = useParams();
@@ -33,25 +44,39 @@ export function ItemReviewRoute() {
   const [reason, setReason] = useState("");
   const [override, setOverride] = useState("");
   const [changes, setChanges] = useState<Record<string, CriterionStatus>>({});
+  const [pointsChanges, setPointsChanges] = useState<Record<string, number>>({});
   const sourceCriteria = useMemo(() => review.data?.final?.criteria ?? review.data?.rubric_effective.criteria?.filter((c) => !c.disabled).map((c) => ({ id: c.id, status: "not_met" as CriterionStatus, weight: c.weight ?? 0, critical: !!c.critical, evidence_refs: [], explanation: "" })) ?? [], [review.data]);
-  const mutation = useMutation({ mutationFn: () => createAssessmentRevision(itemId, { reason, base_revision: review.data?.final?.revision ?? 0, score_override: override === "" ? undefined : Number(override), criteria: sourceCriteria.map((c) => ({ ...c, status: changes[c.id] ?? (c.status === "unavailable" ? "not_met" : c.status) })) }), onSuccess: async () => { setReason(""); setOverride(""); setChanges({}); await client.invalidateQueries({ queryKey: assessmentQueryKey(itemId) }); } });
+  const rubricByID = useMemo(() => Object.fromEntries((review.data?.rubric_effective.criteria ?? []).map((c) => [c.id, c])), [review.data]);
+  const isIntake = item.data?.exercise_type === "operator112_intake";
+  const mutation = useMutation({
+    mutationFn: () => createAssessmentRevision(itemId, {
+      reason, base_revision: review.data?.final?.revision ?? 0, score_override: override === "" ? undefined : Number(override),
+      criteria: isIntake ? buildIntakeRevisionCriteria(sourceCriteria, rubricByID, pointsChanges)
+        : sourceCriteria.map((c) => ({ ...c, status: changes[c.id] ?? (c.status === "unavailable" ? "not_met" : c.status) })),
+    }),
+    onSuccess: async () => { setReason(""); setOverride(""); setChanges({}); setPointsChanges({}); await client.invalidateQueries({ queryKey: assessmentQueryKey(itemId) }); },
+  });
   if (review.isPending || item.isPending) return <p>Загрузка…</p>;
   if (review.isError) return <p className="error">{errorMessage(review.error)}</p>;
   if (item.isError) return <p className="error">{errorMessage(item.error)}</p>;
   const detail = review.data;
   const evidence = detail.evidence;
-  const isIntake = item.data.exercise_type === "operator112_intake";
   const stale = mutation.error instanceof ApiError && mutation.error.code === "stale_revision";
+  const autoCriteria = detail.final?.kind === "auto" ? detail.final.criteria : detail.revisions.find((r) => r.kind === "auto")?.criteria ?? [];
   return <section>
     <p><Link to="/instructor/lessons">← К занятиям</Link></p>
     <h1>Разбор карточки № {item.data.card_number}</h1>
-	<p>{isIntake ? "Оценка преподавателя" : `Автооценка: ${detail.automatic_state ?? "нет"}`}; итог: {detail.final ? `${detail.final.status}${detail.final.score == null ? "" : ` · ${detail.final.score.toFixed(1)}`}` : "ещё нет"}</p>
-	{isIntake ? <IntakeReviewPanel item={item.data as unknown as IntakeReviewItem} evidence={evidence as unknown as IntakeReviewEvidence} /> : <>
+	<p>Автооценка: {detail.automatic_state ?? "нет"}; итог: {detail.final ? `${detail.final.status}${detail.final.score == null ? "" : ` · ${detail.final.score.toFixed(1)}`}` : "ещё нет"}</p>
+	{isIntake ? <>
+		<h2>Автоматическая оценка</h2>
+		<IntakeCriteriaTable criteria={autoCriteria} rubricCriteria={rubricByID} />
+		<IntakeReviewPanel item={item.data as unknown as IntakeReviewItem} evidence={evidence as unknown as IntakeReviewEvidence} />
+	</> : <>
 		<h2>Карточка и эталон</h2>
 		<p>{(item.data.card as { applicant?: { name?: string }; address?: { text?: string } })?.applicant?.name ?? "Заявитель"} · {(item.data.card as { address?: { text?: string } })?.address?.text ?? "адрес не указан"}</p>
 		<details><summary>Эталон сценария</summary><pre>{JSON.stringify(item.data.reference ?? {}, null, 2)}</pre></details>
 		<h2>Автоматическая проверка</h2>
-		<CriteriaTable criteria={detail.final?.kind === "auto" ? detail.final.criteria : detail.revisions.find((r) => r.kind === "auto")?.criteria ?? []} />
+		<CriteriaTable criteria={autoCriteria} />
 	</>}
     <h2>Журнал и звонки</h2>
     <ul>{evidence.actions?.map((action) => <li key={action.action_id}>{formatDateTime(action.server_at)} · {action.type} · {action.accepted ? "принято" : "отклонено"}</li>)}</ul>
@@ -62,8 +87,24 @@ export function ItemReviewRoute() {
     <ol>{detail.revisions.map((revision) => <li key={revision.id}>rev {revision.revision} · {revision.kind} · {revision.status} · {formatDateTime(revision.created_at)}{revision.reason ? ` — ${revision.reason}` : ""}</li>)}</ol>
     <form className="lesson-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
       <h2>Экспертная оценка</h2>
-      <p>«Не проверено» нужно разрешить вручную, прежде чем сохранить итог.</p>
-      <table><thead><tr><th>Критерий</th><th>Статус</th></tr></thead><tbody>{sourceCriteria.map((criterion) => <tr key={criterion.id}><td>{criterion.id}</td><td><select value={changes[criterion.id] ?? (criterion.status === "unavailable" ? "not_met" : criterion.status)} onChange={(event) => setChanges({ ...changes, [criterion.id]: event.target.value as CriterionStatus })}>{manualStatuses.map((status) => <option key={status} value={status}>{labels[status]}</option>)}</select></td></tr>)}</tbody></table>
+      {isIntake ? <>
+        <p>Для блоков укажите набранные баллы (из максимума блока), для штрафов — начисленные штрафные баллы.</p>
+        <table><thead><tr><th>Критерий</th><th>Баллы</th></tr></thead><tbody>{sourceCriteria.map((criterion) => {
+          const rc = rubricByID[criterion.id];
+          const penalty = isPenaltyCriterion(rubricByID, criterion.id);
+          const weight = rc?.weight ?? criterion.weight;
+          const defaultPoints = penalty ? criterion.penalty_points ?? 0 : criterion.score != null ? round2(criterion.score * weight) : 0;
+          const value = pointsChanges[criterion.id] ?? defaultPoints;
+          return <tr key={criterion.id}><td>{rc?.title ?? criterion.id}{criterion.critical ? " · критичный" : ""}</td>
+            <td><input type="number" step="0.01" min={0} max={penalty ? undefined : weight} value={value}
+              onChange={(event) => setPointsChanges({ ...pointsChanges, [criterion.id]: Number(event.target.value) })} />
+              {penalty ? " баллов штрафа" : ` из ${weight}`}</td>
+          </tr>;
+        })}</tbody></table>
+      </> : <>
+        <p>«Не проверено» нужно разрешить вручную, прежде чем сохранить итог.</p>
+        <table><thead><tr><th>Критерий</th><th>Статус</th></tr></thead><tbody>{sourceCriteria.map((criterion) => <tr key={criterion.id}><td>{criterion.id}</td><td><select value={changes[criterion.id] ?? (criterion.status === "unavailable" ? "not_met" : criterion.status)} onChange={(event) => setChanges({ ...changes, [criterion.id]: event.target.value as CriterionStatus })}>{manualStatuses.map((status) => <option key={status} value={status}>{labels[status]}</option>)}</select></td></tr>)}</tbody></table>
+      </>}
       <label>Причина<textarea required minLength={3} maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
       <label>Итоговый балл (необязательно)<input type="number" min="0" max="100" step="0.01" value={override} onChange={(event) => setOverride(event.target.value)} /></label>
       {stale && <p role="alert" className="error">Оценка изменилась, обновите страницу.</p>}
@@ -76,6 +117,75 @@ export function ItemReviewRoute() {
 function useItem(itemId: string) { return useQuery({ queryKey: ["training", "item", itemId], queryFn: () => api.get<Item>(`/items/${encodeURIComponent(itemId)}`), enabled: itemId !== "" }); }
 
 function CriteriaTable({ criteria }: { criteria: CriterionResult[] }) { if (criteria.length === 0) return <p>Автооценка ещё не готова.</p>; return <table><thead><tr><th>Критерий</th><th>Статус</th><th>Основание</th></tr></thead><tbody>{criteria.map((criterion) => <tr key={criterion.id}><td>{criterion.id}{criterion.critical ? " · критичный" : ""}</td><td>{labels[criterion.status]}</td><td>{criterion.explanation || "—"}{criterion.evidence_refs?.length ? ` (${criterion.evidence_refs.join(", ")})` : ""}</td></tr>)}</tbody></table>; }
+
+function round2(value: number): number { return Math.round(value * 100) / 100; }
+
+// buildIntakeRevisionCriteria turns the revision form's own per-criterion
+// point inputs (pointsChanges, defaulting to the auto's own numbers) into
+// the CriterionResult[] the API expects: a block's points become a 0..1
+// score fraction of its own weight (clamped, since the input is free
+// text); a penalty's points become penalty_points directly (112-6/
+// ADR-026 — Score.Compute reads penalty_points, never a fractional score,
+// for a kind=penalty criterion).
+function buildIntakeRevisionCriteria(sourceCriteria: CriterionResult[], rubricCriteria: Record<string, RubricEffectiveCriterion>, pointsChanges: Record<string, number>): CriterionResult[] {
+  return sourceCriteria.map((criterion) => {
+    const rc = rubricCriteria[criterion.id];
+    const weight = rc?.weight ?? criterion.weight;
+    if (isPenaltyCriterion(rubricCriteria, criterion.id)) {
+      const points = Math.max(0, pointsChanges[criterion.id] ?? criterion.penalty_points ?? 0);
+      return { id: criterion.id, status: points > 0 ? "not_met" : "met", weight, critical: criterion.critical, penalty_points: points };
+    }
+    const defaultPoints = criterion.score != null ? criterion.score * weight : 0;
+    const points = pointsChanges[criterion.id] ?? defaultPoints;
+    const fraction = weight > 0 ? Math.min(1, Math.max(0, points / weight)) : 0;
+    const status: CriterionStatus = fraction >= 1 ? "met" : fraction <= 0 ? "not_met" : "partial";
+    return { id: criterion.id, status, weight, critical: criterion.critical, score: fraction };
+  });
+}
+
+// IntakeCriteriaTable is operator112/rubric-v2's own read-only auto-
+// assessment display (112-6/ADR-026): blocks (their own points out of
+// weight, plus an expandable per-field/per-card Details breakdown) and
+// penalties (points charged, plus which field/service/card triggered
+// them) shown as two separate tables, since they are scored — and
+// charged — by entirely different rules.
+function IntakeCriteriaTable({ criteria, rubricCriteria }: { criteria: CriterionResult[]; rubricCriteria: Record<string, RubricEffectiveCriterion> }) {
+  if (criteria.length === 0) return <p>Автооценка ещё не готова.</p>;
+  const blocks = criteria.filter((c) => !isPenaltyCriterion(rubricCriteria, c.id));
+  const penalties = criteria.filter((c) => isPenaltyCriterion(rubricCriteria, c.id));
+  const detailText = (d: CriterionDetail) => {
+    const parts = [d.actual ? `заполнено: ${d.actual}` : null, d.expected ? `ожидалось: ${d.expected}` : null];
+    const suffix = parts.filter(Boolean).join(", ");
+    return `${d.label ?? d.key}: ${labels[d.status] ?? d.status}${suffix ? ` (${suffix})` : ""} — ${d.points ?? 0}/${d.max_points ?? 0}`;
+  };
+  return <>
+    <h3>Блоки</h3>
+    <table><thead><tr><th>Блок</th><th>Баллы</th><th>Статус</th><th>Основание</th></tr></thead><tbody>
+      {blocks.map((c) => {
+        const weight = rubricCriteria[c.id]?.weight ?? c.weight;
+        const points = c.score != null ? round2(c.score * weight) : null;
+        return <tr key={c.id}>
+          <td>{rubricCriteria[c.id]?.title ?? c.id}{c.critical ? " · критичный" : ""}</td>
+          <td>{points == null ? "—" : `${points} из ${weight}`}</td>
+          <td>{labels[c.status] ?? c.status}</td>
+          <td>{c.explanation || "—"}
+            {c.details?.length ? <details><summary>Подробности ({c.details.length})</summary><ul>{c.details.map((d) => <li key={d.key}>{detailText(d)}</li>)}</ul></details> : null}
+          </td>
+        </tr>;
+      })}
+    </tbody></table>
+    <h3>Штрафы</h3>
+    <table><thead><tr><th>Штраф</th><th>Баллы</th><th>Основание</th></tr></thead><tbody>
+      {penalties.map((c) => <tr key={c.id}>
+        <td>{rubricCriteria[c.id]?.title ?? c.id}</td>
+        <td>{c.status === "not_applicable" ? "—" : `−${c.penalty_points ?? 0}`}</td>
+        <td>{c.explanation || "—"}
+          {c.details?.length ? <details><summary>Подробности ({c.details.length})</summary><ul>{c.details.map((d) => <li key={d.key}>{d.label ?? d.key}</li>)}</ul></details> : null}
+        </td>
+      </tr>)}
+    </tbody></table>
+  </>;
+}
 
 function IntakeReviewPanel({ item, evidence }: { item: IntakeReviewItem; evidence: IntakeReviewEvidence }) {
   const mode = item.intake_state?.mode ?? evidence.intake_state?.mode;
