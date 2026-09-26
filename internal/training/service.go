@@ -69,12 +69,23 @@ type Service struct {
 	services      ServiceReader
 	tasks         TaskEnqueuer
 	exerciseTypes map[content.ExerciseType]Exercise
+	// operator112JudgeEnabled (ADR-028) is api's own ASSESSMENT_JUDGE
+	// reduced to a bool — CreateLesson/StartPreview's only use of it is
+	// picking content.Operator112RubricVersion's argument, so a lesson
+	// created while this process is configured with a working judge
+	// actually gets a rubric (v3) that judge can score, and one created
+	// without stays on the safe v2 default. It never wires an LLM client
+	// itself — that lives in assessment.Service's own JudgeConfig
+	// (worker-only), a deliberately separate setting so the two
+	// processes' configuration cannot accidentally collapse into one.
+	operator112JudgeEnabled bool
 }
 
-func NewService(store Store, users UserDirectory, workstations WorkstationDirectory, scenarios ScenarioReader, services ServiceReader, taskEnqueuer TaskEnqueuer, exerciseTypes map[content.ExerciseType]Exercise) *Service {
+func NewService(store Store, users UserDirectory, workstations WorkstationDirectory, scenarios ScenarioReader, services ServiceReader, taskEnqueuer TaskEnqueuer, exerciseTypes map[content.ExerciseType]Exercise, operator112JudgeEnabled bool) *Service {
 	return &Service{
 		store: store, users: users, workstations: workstations,
 		scenarios: scenarios, services: services, tasks: taskEnqueuer, exerciseTypes: exerciseTypes,
+		operator112JudgeEnabled: operator112JudgeEnabled,
 	}
 }
 
@@ -102,6 +113,19 @@ func (s *Service) exerciseFor(et content.ExerciseType) (Exercise, error) {
 		return nil, fmt.Errorf("training: no Exercise registered for exercise_type %q", et)
 	}
 	return ex, nil
+}
+
+// rubricVersionForNewLesson is CreateLesson's and StartPreview's shared
+// "current rubric version" lookup (ADR-028): DDS always uses
+// content.RubricVersionFor unchanged; operator112_intake uses
+// content.Operator112RubricVersion(judgeEnabled) instead, so its own
+// version depends on whether this process was actually configured with
+// a working judge, not on which rubric file happens to be newest.
+func rubricVersionForNewLesson(exerciseType content.ExerciseType, judgeEnabled bool) (string, error) {
+	if exerciseType == content.ExerciseTypeOperator112Intake {
+		return content.Operator112RubricVersion(judgeEnabled)
+	}
+	return content.RubricVersionFor(exerciseType)
 }
 
 // defaultTiming is RFC-001 §7.2's "Единая timing policy ДДС".
@@ -155,12 +179,17 @@ func (s *Service) CreateLesson(ctx context.Context, actor auth.Principal, in Les
 	}
 
 	// 112-6/ADR-026: a new 112 lesson freezes the current
-	// operator112_intake rubric version (today operator112/rubric-v2)
-	// the same way DDS already freezes its own current version — never
-	// hardcoded to v1. An in-progress lesson created before this change
-	// keeps whatever version its own row already has; RubricVersionFor is
-	// only ever consulted here, at creation.
-	rubricVersion, err := content.RubricVersionFor(in.ExerciseType)
+	// operator112_intake rubric version the same way DDS already freezes
+	// its own current version — never hardcoded to v1. An in-progress
+	// lesson created before this change keeps whatever version its own
+	// row already has; this is only ever consulted here, at creation.
+	// ADR-028: which current version depends on s.operator112JudgeEnabled
+	// (rubric-v3, adding DESCRIPTION_CONTENT, only when this process is
+	// actually configured with a judge — content.Operator112RubricVersion
+	// falls back to RubricVersionFor's own rubric-v2 otherwise, same as
+	// before this ADR). DDS is unaffected: RubricVersionFor still decides
+	// its own version alone.
+	rubricVersion, err := rubricVersionForNewLesson(in.ExerciseType, s.operator112JudgeEnabled)
 	if err != nil {
 		return Lesson{}, fmt.Errorf("training: read rubric version: %w", err)
 	}

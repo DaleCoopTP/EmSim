@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"emsim/internal/assessment"
+	"emsim/internal/assessment/operator112/descjudge"
 	"emsim/internal/platform/config"
 	"emsim/internal/platform/llm"
 	"emsim/internal/platform/observability"
@@ -325,6 +326,28 @@ func callerStubDelay() (time.Duration, error) {
 	return delay, nil
 }
 
+// judgeConfigFor is ADR-028's own worker-side wiring: nil when
+// ASSESSMENT_JUDGE is off (the default — no judge at all, matching
+// 112-6's pre-ADR-028 behavior exactly), otherwise a JudgeConfig whose
+// Registry has exactly one entry, descjudge.Handler under its own
+// PromptVersion — the same "one prompt version, one handler" convention
+// this ADR's own doc comment describes. Model/Parameters are sealed
+// into assessment_inputs.judge verbatim by sealInputForItem, so a later
+// config change is visible in old evidence without diffing deployed
+// code against a timestamp, the same reasoning aicaller.PromptVersion's
+// own doc comment gives for caller.reply.
+func judgeConfigFor(processConfig config.Worker) *assessment.JudgeConfig {
+	if processConfig.AssessmentJudge != config.AssessmentJudgeLLM {
+		return nil
+	}
+	return &assessment.JudgeConfig{
+		Model:      processConfig.JudgeLLMModel,
+		Parameters: map[string]any{"temperature": 0, "max_tokens": processConfig.JudgeMaxTokens},
+		Registry:   assessment.SemanticJudgeRegistry{descjudge.PromptVersion: descjudge.Handler{Chat: llm.NewClient(processConfig.JudgeLLMURL)}},
+		Timeout:    processConfig.JudgeTimeout,
+	}
+}
+
 func compose(processConfig config.Worker, pool *pgxpool.Pool, metrics *observability.Metrics, logger observability.Logger) (tasks.Components, error) {
 	policy := tasks.DefaultPolicy()
 	if processConfig.LocalTestPolicy == "e2e-fast-v1" {
@@ -344,7 +367,7 @@ func compose(processConfig config.Worker, pool *pgxpool.Pool, metrics *observabi
 		return tasks.Components{}, errors.New("recovery configuration is invalid")
 	}
 
-	assessmentService := newAssessmentService(pool, store, nil)
+	assessmentService := newAssessmentService(pool, store, judgeConfigFor(processConfig))
 	if err := recoveryStore.RegisterFinalizer(training.KindAssessmentEvaluate, assessmentService); err != nil {
 		return tasks.Components{}, errors.New("finalizer registration is invalid")
 	}
@@ -353,7 +376,7 @@ func compose(processConfig config.Worker, pool *pgxpool.Pool, metrics *observabi
 	// which every role including a worker-less "maintenance" process
 	// runs — needs training.KindCallerReply's Finalizer registered
 	// regardless of whether this same process also claims its pool.
-	trainingService := newTrainingService(pool, store)
+	trainingService := newTrainingService(pool, store, processConfig.AssessmentJudge == config.AssessmentJudgeLLM)
 	if err := recoveryStore.RegisterFinalizer(training.KindCallerReply, callerReplyFinalizer{pool: pool, store: store, trainingService: trainingService}); err != nil {
 		return tasks.Components{}, errors.New("finalizer registration is invalid")
 	}

@@ -76,7 +76,12 @@ func (s *Service) StartPreview(ctx context.Context, actorID, scenarioID, version
 			return validationErr("version_id", "preview_requires_operator112_intake")
 		}
 
-		rubricVersion, err := content.RubricVersionFor(content.ExerciseTypeOperator112Intake)
+		// ADR-028: a preview run picks its rubric version the same way
+		// CreateLesson does (rubricVersionForNewLesson) — an author
+		// previewing their own scenario while this process has a judge
+		// configured sees the same rubric-v3 auto-assessment a real
+		// judge-enabled lesson would produce, not a permanently-frozen v2.
+		rubricVersion, err := rubricVersionForNewLesson(content.ExerciseTypeOperator112Intake, s.operator112JudgeEnabled)
 		if err != nil {
 			return err
 		}

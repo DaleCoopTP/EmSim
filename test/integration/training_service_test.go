@@ -86,6 +86,16 @@ func mustTaskEnqueuer(pool *pgxpool.Pool) *tasks.Store {
 }
 
 func newTrainingService(pool *pgxpool.Pool) *training.Service {
+	return newTrainingServiceWithJudge(pool, false)
+}
+
+// newTrainingServiceWithJudge is newTrainingService's own ADR-028
+// variant — judgeEnabled=true is exercised by the operator112
+// description-judge integration tests (content.Operator112RubricVersion
+// picking rubric-v3 at CreateLesson/StartPreview), everything else keeps
+// calling the plain newTrainingService (judgeEnabled=false, unchanged
+// pre-ADR-028 behavior).
+func newTrainingServiceWithJudge(pool *pgxpool.Pool, judgeEnabled bool) *training.Service {
 	authStore := authpg.NewStore(pool)
 	contentStore := contentpg.NewStore(pool)
 	return training.NewService(
@@ -95,6 +105,7 @@ func newTrainingService(pool *pgxpool.Pool) *training.Service {
 		mustTaskEnqueuer(pool),
 		map[content.ExerciseType]training.Exercise{content.ExerciseTypeDDSProcessing: dds.Exercise,
 			content.ExerciseTypeOperator112Intake: operator112.New()},
+		judgeEnabled,
 	)
 }
 
@@ -1027,6 +1038,7 @@ func TestTrainingCloseRollsBackOnEvidenceFailure(t *testing.T) {
 		map[content.ExerciseType]training.Exercise{
 			content.ExerciseTypeDDSProcessing: failingEvidenceExercise{Exercise: dds.Exercise},
 		},
+		false,
 	)
 
 	_, trainee, workstationID, lesson := setupPilotLesson(t, ctx, pool, service, "ЮАО")

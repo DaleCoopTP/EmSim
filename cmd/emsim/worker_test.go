@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"emsim/internal/assessment/operator112/descjudge"
+	"emsim/internal/platform/config"
 	"emsim/internal/platform/tasks"
 	"emsim/internal/reporting"
 	"emsim/internal/training"
@@ -138,5 +140,42 @@ func TestCallerReplyFallbackOutcomeAppliesOnlyOnLastAttempt(t *testing.T) {
 	called = false
 	if _, ok := callerReplyFallbackOutcome(nil, req, 2, 2); ok || called {
 		t.Fatalf("a nil fallback (CALLER_REPLIER=stub) must never apply, even on the last attempt: ok=%v called=%v", ok, called)
+	}
+}
+
+// TestJudgeConfigForOff is ADR-028's own compatibility requirement,
+// mirroring the caller wiring above: a stock deployment with
+// ASSESSMENT_JUDGE unset (config.AssessmentJudgeOff's own default) must
+// get a nil JudgeConfig — Service.judge==nil skips every new code path
+// sealInputForItem/Handle added, exactly 112-6's pre-ADR-028 behavior.
+func TestJudgeConfigForOff(t *testing.T) {
+	if got := judgeConfigFor(config.Worker{AssessmentJudge: config.AssessmentJudgeOff}); got != nil {
+		t.Fatalf("judgeConfigFor(off) = %+v, want nil", got)
+	}
+}
+
+// TestJudgeConfigForLLMWiresOneHandler exercises the other side: an
+// enabled judge gets a Registry with exactly one entry, keyed by
+// descjudge.PromptVersion (the only prompt version this ADR's own
+// evaluator knows how to dispatch), and Model/Timeout carried straight
+// from config.Worker's own fields (sealed into assessment_inputs.judge
+// verbatim by sealInputForItem).
+func TestJudgeConfigForLLMWiresOneHandler(t *testing.T) {
+	cfg := config.Worker{
+		AssessmentJudge: config.AssessmentJudgeLLM, JudgeLLMURL: "http://host.docker.internal:11434/v1",
+		JudgeLLMModel: "t-tech/T-lite-it-2.1:q5_K_M", JudgeTimeout: 45 * time.Second, JudgeMaxTokens: 777,
+	}
+	got := judgeConfigFor(cfg)
+	if got == nil {
+		t.Fatal("judgeConfigFor(llm) = nil, want a JudgeConfig")
+	}
+	if got.Model != cfg.JudgeLLMModel || got.Timeout != cfg.JudgeTimeout {
+		t.Fatalf("unexpected JudgeConfig: %+v", got)
+	}
+	if _, ok := got.Registry[descjudge.PromptVersion]; !ok || len(got.Registry) != 1 {
+		t.Fatalf("Registry = %+v, want exactly one entry for %q", got.Registry, descjudge.PromptVersion)
+	}
+	if maxTokens, _ := got.Parameters["max_tokens"].(int); maxTokens != cfg.JudgeMaxTokens {
+		t.Fatalf("Parameters[max_tokens] = %v, want %d", got.Parameters["max_tokens"], cfg.JudgeMaxTokens)
 	}
 }

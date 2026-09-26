@@ -197,7 +197,7 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.
 	// never imports training, only content/http does, the same way
 	// assessment/reporting's own http packages already take
 	// *training.Service.
-	trainingService := newTrainingService(pool, mustTaskEnqueuer(pool))
+	trainingService := newTrainingService(pool, mustTaskEnqueuer(pool), cfg.AssessmentJudge == config.AssessmentJudgeLLM)
 	contenthttp.NewHandlers(contentService, trainingService, authService, cfg.CookieSecure).Register(apiMux)
 	traininghttp.NewHandlers(trainingService, authService, cfg.CookieSecure, hub).Register(apiMux)
 	assessmentService := newAssessmentService(pool, mustTaskEnqueuer(pool), nil)
