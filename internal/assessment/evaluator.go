@@ -1,8 +1,10 @@
 package assessment
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"emsim/internal/content"
 	"emsim/internal/platform/tasks"
@@ -41,8 +43,105 @@ import (
 // (112-6/ADR-026's operator112_legacy_route — an item whose evidence has
 // no ADR-023 notify-services snapshot to score at all); any other error
 // is treated as an unexpected bug and simply propagated.
+//
+// semantic (ADR-028) carries a llm-kind criterion's own judge answer,
+// keyed by criterion id, when one has already been obtained — nil at
+// seal time (sealInputForItem calls Evaluate before any judge ever
+// runs, purely to build assessment_inputs.rule_results' informational
+// snapshot) and again whenever no judge is configured at all; non-nil
+// only inside the same worker attempt that just called the judge
+// (Service.Handle), immediately before computeAndInsertAuto's own call.
+// An evaluator with no llm criteria (dds.Evaluator) simply ignores it.
+// Unlike evidence/body/effective, Evaluate is not required to be
+// deterministic with respect to semantic across separate calls — a
+// judge's own answer may differ call to call the way any model call
+// can; ADR-006's reproducibility guarantee is about the rule-based
+// three other parameters, not about replaying a past model response.
 type RuleEvaluator interface {
-	Evaluate(evidence json.RawMessage, body content.Body, effective Rubric) ([]CriterionResult, error)
+	Evaluate(evidence json.RawMessage, body content.Body, effective Rubric, semantic SemanticAnswers) ([]CriterionResult, error)
+}
+
+// SemanticAnswers is one llm-kind criterion's raw judge answer, keyed by
+// criterion id — see RuleEvaluator.Evaluate's own doc comment. The value
+// shape is whatever that criterion's own SemanticJudge implementation
+// returns; only the criterion's own RuleEvaluator ever decodes it.
+type SemanticAnswers map[string]json.RawMessage
+
+// SemanticRequest is one llm-kind criterion's own prepared model call —
+// SemanticPreparer.PrepareSemantic's return value for that criterion id.
+// PromptVersion is sealed into assessment_inputs.judge.prompt_versions
+// (openapi.yaml/assessment-inputs.schema.json's existing field, ADR-006)
+// and doubles as the key Service.judge.Registry dispatches Handle's own
+// judge call by; Payload is sealed verbatim into assessment_inputs.
+// semantic_input[id] and handed back to that same SemanticJudge as its
+// own payload.
+type SemanticRequest struct {
+	PromptVersion string
+	Payload       any
+}
+
+// SemanticPreparer is an optional RuleEvaluator extension (ADR-028):
+// implemented by an exercise_type that has at least one llm-kind
+// criterion needing a model call prepared once, at seal time, before any
+// transaction that could block on it — internal/assessment/operator112
+// is the only implementation so far (DESCRIPTION_CONTENT). Called only
+// when a judge is actually configured (Service.judge != nil); its own
+// returned map is empty, not nil, for a criterion with nothing to ask
+// (no reference questions, or an empty description) — Evaluate's own
+// ordinary "no reference"/"empty description" rule still produces that
+// criterion's CriterionResult without the judge ever being called for
+// it. sealInputForItem is the only caller.
+type SemanticPreparer interface {
+	PrepareSemantic(evidence json.RawMessage, body content.Body, effective Rubric) (map[string]SemanticRequest, error)
+}
+
+// SemanticJudge answers one sealed SemanticRequest.Payload outside any
+// transaction (Service.Handle's own job, ADR-003/025/028) — dispatched
+// by PromptVersion, never by exercise_type: assessment itself stays
+// exercise-agnostic, and the actual prompt/schema/parsing logic lives in
+// the exercise's own package (internal/assessment/operator112/descjudge
+// for "description-questions-v1"). model/parameters come from the same
+// JudgeConfig Service.Handle already holds, not from the sealed input
+// (ADR-006 seals the request, not the deployment's own current model
+// choice — a retried attempt after a config change would otherwise be
+// unable to tell which model actually answered).
+type SemanticJudge interface {
+	Answer(ctx context.Context, model string, parameters map[string]any, payload json.RawMessage) (json.RawMessage, error)
+}
+
+// SemanticJudgeRegistry maps a SemanticRequest.PromptVersion to the
+// SemanticJudge that can answer it — cmd/emsim's own composition
+// registers internal/assessment/operator112/descjudge.Handler under
+// "description-questions-v1", mirroring Registry's own exercise_type ->
+// RuleEvaluator convention one level down (prompt version, not exercise
+// type, since one exercise_type's rubric can eventually grow more than
+// one llm criterion with different prompts).
+type SemanticJudgeRegistry map[string]SemanticJudge
+
+// JudgeConfig is Service's own judge wiring (ADR-028) — nil in the api
+// process (which never calls Handle/sealInputForItem's judge branch,
+// only the worker's Coordinator/Runner do) and, even in the worker,
+// nil whenever ASSESSMENT_JUDGE is off (config.Worker.AssessmentJudge),
+// so a stock deployment with no judge configured takes none of this
+// code's new paths at all — sealInputForItem's SemanticPreparer branch
+// and Handle's own judge call both short-circuit on Service.judge==nil.
+type JudgeConfig struct {
+	// Model is sealed into assessment_inputs.judge.model verbatim
+	// (openapi.yaml's existing field) — the deployment's own configured
+	// model name, not a value SemanticJudge returns.
+	Model string
+	// Parameters is sealed into assessment_inputs.judge.parameters and
+	// handed to SemanticJudge.Answer's own parameters argument — a
+	// generic map since each PromptVersion's own SemanticJudge
+	// interprets whichever keys it cares about (ADR-028's descjudge
+	// reads none yet beyond what its own defaults already fix, but the
+	// shape stays open for a future prompt version that does).
+	Parameters map[string]any
+	// Registry dispatches Handle's own judge call by PromptVersion.
+	Registry SemanticJudgeRegistry
+	// Timeout bounds one SemanticJudge.Answer call the same way
+	// CallerReplyTimeout bounds one CallerReplier.Reply call.
+	Timeout time.Duration
 }
 
 // TerminalEvaluationError lets a RuleEvaluator name the specific

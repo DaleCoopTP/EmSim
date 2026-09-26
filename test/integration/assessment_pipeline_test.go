@@ -41,7 +41,7 @@ func newAssessmentServiceForTest(pool *pgxpool.Pool, taskStore *tasks.Store) *as
 	contentStore := contentpg.NewStore(pool)
 	return assessment.NewService(
 		assessmentpg.NewStore(pool), trainingStore, trainingStore, trainingStore, contentStore, taskStore,
-		assessment.Registry{content.ExerciseTypeDDSProcessing: assessmentdds.Evaluator},
+		assessment.Registry{content.ExerciseTypeDDSProcessing: assessmentdds.Evaluator}, nil,
 	)
 }
 
@@ -621,7 +621,7 @@ func TestAssessmentInputPreparationFailureAllowsManualAssessment(t *testing.T) {
 	// evidence both reject UPDATE at the trigger level).
 	assessmentService := assessment.NewService(
 		assessmentpg.NewStore(pool), trainingpg.NewStore(pool), trainingpg.NewStore(pool), trainingpg.NewStore(pool), contentpg.NewStore(pool), taskStore,
-		assessment.Registry{},
+		assessment.Registry{}, nil,
 	)
 
 	itemID := closePilotItemForAssessment(t, ctx, pool, trainingService)

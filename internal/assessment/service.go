@@ -36,10 +36,15 @@ type Service struct {
 	scenarios  ScenarioReader
 	tasks      TaskStore
 	evaluators Registry
+	// judge (ADR-028) is nil in the api process (it never calls Handle
+	// or sealInputForItem's own judge branch) and, even in the worker,
+	// nil whenever ASSESSMENT_JUDGE is off — see JudgeConfig's own doc
+	// comment for the full "why nil is the safe default" reasoning.
+	judge *JudgeConfig
 }
 
-func NewService(store Store, items ItemReader, lessons LessonReader, evidence EvidenceReader, scenarios ScenarioReader, taskStore TaskStore, evaluators Registry) *Service {
-	return &Service{store: store, items: items, lessons: lessons, evidence: evidence, scenarios: scenarios, tasks: taskStore, evaluators: evaluators}
+func NewService(store Store, items ItemReader, lessons LessonReader, evidence EvidenceReader, scenarios ScenarioReader, taskStore TaskStore, evaluators Registry, judge *JudgeConfig) *Service {
+	return &Service{store: store, items: items, lessons: lessons, evidence: evidence, scenarios: scenarios, tasks: taskStore, evaluators: evaluators, judge: judge}
 }
 
 // evaluatePayload is assessment.evaluate's own task payload shape
@@ -154,7 +159,13 @@ func (s *Service) sealInputForItem(ctx context.Context, tx pgx.Tx, taskID, itemI
 	if err != nil {
 		return uuid.Nil, err
 	}
-	results, err := evaluator.Evaluate(evidenceDoc, version.Body, effective)
+	// semantic is nil here: no judge has run yet at seal time (ADR-028) —
+	// this Evaluate call is purely informational, building rule_results'
+	// own snapshot for the sealed input. Any llm criterion comes back
+	// unavailable, same as "no judge configured" would; that is corrected
+	// for real in computeAndInsertAuto's own Evaluate call, once (if) a
+	// judge has actually answered.
+	results, err := evaluator.Evaluate(evidenceDoc, version.Body, effective, nil)
 	if err != nil {
 		var term *TerminalEvaluationError
 		if errors.As(err, &term) {
@@ -166,12 +177,33 @@ func (s *Service) sealInputForItem(ctx context.Context, tx pgx.Tx, taskID, itemI
 	for _, r := range results {
 		ruleResults = append(ruleResults, RuleResult{ID: r.ID, Status: r.Status})
 	}
+	judge := Judge{Model: nil, PromptVersions: map[string]string{}, Parameters: map[string]any{}}
+	semanticInput := map[string]any{}
+	if s.judge != nil {
+		if preparer, ok := evaluator.(SemanticPreparer); ok {
+			prepared, err := preparer.PrepareSemantic(evidenceDoc, version.Body, effective)
+			if err != nil {
+				return uuid.Nil, fmt.Errorf("assessment: prepare semantic input for item %s: %w", itemID, err)
+			}
+			if len(prepared) > 0 {
+				model := s.judge.Model
+				judge = Judge{Model: &model, PromptVersions: make(map[string]string, len(prepared)), Parameters: s.judge.Parameters}
+				if judge.Parameters == nil {
+					judge.Parameters = map[string]any{}
+				}
+				for id, req := range prepared {
+					semanticInput[id] = req.Payload
+					judge.PromptVersions[id] = req.PromptVersion
+				}
+			}
+		}
+	}
 	inputBody := InputBody{
 		Schema: "emsim/assessment-inputs/v1", ItemID: itemID,
 		EvidenceDigest: payload.EvidenceDigest, RubricVersion: payload.RubricVersion, RubricEffective: effective,
 		Transcripts:   []Transcript{},
-		Judge:         Judge{Model: nil, PromptVersions: map[string]string{}, Parameters: map[string]any{}},
-		SemanticInput: map[string]any{}, ExerciseType: evidenceBody.ExerciseType, RuleResults: ruleResults,
+		Judge:         judge,
+		SemanticInput: semanticInput, ExerciseType: evidenceBody.ExerciseType, RuleResults: ruleResults,
 	}
 	canonical, digest, err := SealInput(inputBody)
 	if err != nil {
@@ -191,14 +223,84 @@ func failInput(ctx context.Context, tx pgx.Tx, store TaskStore, taskID uuid.UUID
 
 // Handle implements tasks.Handler — assessment.evaluate's own claimed-
 // task entry point (cmd/emsim registers *Service directly against the
-// "llm" pool's HandlerRegistry).
+// "llm" pool's HandlerRegistry). ADR-028 splits it in two: answerSemantic
+// calls a judge, if one is configured and there is anything sealed for
+// it to answer, entirely outside any transaction (ADR-003/025's own
+// convention — never hold the item's lock, or any lock, across a model
+// call); recordAutoTx then does everything Handle always did, plus
+// folding answers into the same attempt's Evaluate call.
 func (s *Service) Handle(ctx context.Context, lease tasks.Lease) error {
+	var payload evaluatePayload
+	if err := json.Unmarshal(lease.Payload, &payload); err != nil {
+		return fmt.Errorf("assessment: decode assessment.evaluate payload: %w", err)
+	}
+	answers, err := s.answerSemantic(ctx, payload)
+	if err != nil {
+		return err
+	}
 	return s.store.WithTx(ctx, func(tx pgx.Tx) error {
-		return s.recordAutoTx(ctx, tx, lease)
+		return s.recordAutoTx(ctx, tx, lease, answers)
 	})
 }
 
-func (s *Service) recordAutoTx(ctx context.Context, tx pgx.Tx, lease tasks.Lease) error {
+// answerSemantic is Handle's own outside-transaction half (ADR-028).
+// nil, nil (no answers, no error) covers every case that existed before
+// this ADR — no judge configured (s.judge == nil), the payload has no
+// input_id yet, or the sealed input's own semantic_input is empty
+// (every exercise_type/lesson that never prepared one) — so a stock
+// deployment with ASSESSMENT_JUDGE unset takes none of the new code
+// below at all. The one read here (the sealed input itself) uses its
+// own short transaction, never the item's lock recordAutoTx's ItemByID
+// (LockUpdate) takes right after this returns.
+func (s *Service) answerSemantic(ctx context.Context, payload evaluatePayload) (SemanticAnswers, error) {
+	if s.judge == nil || payload.InputID == nil {
+		return nil, nil
+	}
+	var inputBody InputBody
+	if err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		inputBody, err = s.store.InputByID(ctx, tx, *payload.InputID)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	if len(inputBody.SemanticInput) == 0 {
+		return nil, nil
+	}
+	answers := make(SemanticAnswers, len(inputBody.SemanticInput))
+	for id, raw := range inputBody.SemanticInput {
+		promptVersion := inputBody.Judge.PromptVersions[id]
+		judge, ok := s.judge.Registry[promptVersion]
+		if !ok {
+			return nil, fmt.Errorf("assessment: no SemanticJudge registered for prompt version %q (criterion %s)", promptVersion, id)
+		}
+		requestPayload, err := json.Marshal(raw)
+		if err != nil {
+			return nil, fmt.Errorf("assessment: encode semantic_input[%s]: %w", id, err)
+		}
+		callCtx, cancel := context.WithTimeout(ctx, s.judge.Timeout)
+		answer, err := judge.Answer(callCtx, s.judge.Model, s.judge.Parameters, requestPayload)
+		cancel()
+		if err != nil {
+			// A judge failure is the one expected, routine failure this
+			// method can hit — same reasoning as callerReplyHandler's own
+			// doc comment (cmd/emsim/worker_composition.go): it must come
+			// back as a *tasks.HandlerFailure so the queue's existing
+			// retry/finalizer machinery handles it (MaxAttempts=3, already
+			// registered for assessment.evaluate), not as a plain error
+			// the Runner would treat as an operational bug and stop on.
+			failure, ferr := tasks.NewHandlerFailure(tasks.Retryable, "judge_unavailable")
+			if ferr != nil {
+				return nil, ferr
+			}
+			return nil, failure
+		}
+		answers[id] = answer
+	}
+	return answers, nil
+}
+
+func (s *Service) recordAutoTx(ctx context.Context, tx pgx.Tx, lease tasks.Lease, answers SemanticAnswers) error {
 	var payload evaluatePayload
 	if err := json.Unmarshal(lease.Payload, &payload); err != nil {
 		return fmt.Errorf("assessment: decode assessment.evaluate payload: %w", err)
@@ -220,7 +322,7 @@ func (s *Service) recordAutoTx(ctx context.Context, tx pgx.Tx, lease tasks.Lease
 			if payload.InputID == nil {
 				return fmt.Errorf("assessment: evaluate task %s has no input_id", lease.TaskID)
 			}
-			if err := s.computeAndInsertAuto(ctx, tx, payload.ItemID, *payload.InputID, lease.TaskID); err != nil {
+			if err := s.computeAndInsertAuto(ctx, tx, payload.ItemID, *payload.InputID, lease.TaskID, answers); err != nil {
 				return err
 			}
 		}
@@ -236,12 +338,14 @@ func (s *Service) recordAutoTx(ctx context.Context, tx pgx.Tx, lease tasks.Lease
 
 // computeAndInsertAuto runs the registered RuleEvaluator over the item's
 // immutable evidence+reference+rubric_effective (all already fixed in
-// the sealed input) and records the single auto rev=1 the pipeline ever
-// produces (RFC-001 §7.4). Shared by the normal handler path
-// (recordAutoTx) and the exhaustion Finalizer (FinalizeExpired) — the
-// same computation either way, only the caller's transaction and
-// terminal write differ.
-func (s *Service) computeAndInsertAuto(ctx context.Context, tx pgx.Tx, itemID, inputID, sourceTaskID uuid.UUID) error {
+// the sealed input) plus whatever judge answers this same attempt just
+// obtained (answers, ADR-028 — nil for every pre-ADR-028 exercise_type/
+// lesson, and always nil from FinalizeExpired's own call) and records
+// the single auto rev=1 the pipeline ever produces (RFC-001 §7.4).
+// Shared by the normal handler path (recordAutoTx) and the exhaustion
+// Finalizer (FinalizeExpired) — the same computation either way, only
+// the caller's transaction and terminal write differ.
+func (s *Service) computeAndInsertAuto(ctx context.Context, tx pgx.Tx, itemID, inputID, sourceTaskID uuid.UUID, answers SemanticAnswers) error {
 	inputBody, err := s.store.InputByID(ctx, tx, inputID)
 	if err != nil {
 		return err
@@ -263,12 +367,16 @@ func (s *Service) computeAndInsertAuto(ctx context.Context, tx pgx.Tx, itemID, i
 		return err
 	}
 	// sealInputForItem already ran this same Evaluate once (over the same
-	// digest-verified evidence and rubric_effective) to build
-	// assessment_inputs.rule_results — a second error here would mean the
-	// evaluator is non-deterministic, which ADR-006 forbids, so this is
-	// treated as an unexpected error rather than a second
-	// failInput/TerminalEvaluationError path.
-	results, err := evaluator.Evaluate(evidenceDoc, version.Body, inputBody.RubricEffective)
+	// digest-verified evidence and rubric_effective, semantic=nil) to
+	// build assessment_inputs.rule_results — a second error here (or a
+	// differing deterministic-criterion result) would mean the evaluator
+	// is non-deterministic, which ADR-006 forbids, so this is treated as
+	// an unexpected error rather than a second failInput/
+	// TerminalEvaluationError path. answers itself is NOT required to be
+	// the same across separate calls (RuleEvaluator.Evaluate's own doc
+	// comment) — there is only ever one such call per llm criterion per
+	// item in practice, since a successful commit ends the task.
+	results, err := evaluator.Evaluate(evidenceDoc, version.Body, inputBody.RubricEffective, answers)
 	if err != nil {
 		return fmt.Errorf("assessment: re-evaluate item %s for auto record: %w", itemID, err)
 	}
@@ -278,6 +386,7 @@ func (s *Service) computeAndInsertAuto(ctx context.Context, tx pgx.Tx, itemID, i
 		EvidenceDigest: evidenceDigest, InputID: &inputID, SourceTaskID: &sourceTaskID,
 		RubricVersion: inputBody.RubricVersion, RubricEffective: inputBody.RubricEffective,
 		Score: scoreResult.Score, Passed: scoreResult.Passed, Criteria: results, CriticalErrors: scoreResult.CriticalErrors,
+		Model: inputBody.Judge.Model,
 	}
 	if _, err := s.store.InsertAssessment(ctx, tx, a); err != nil {
 		return err
@@ -326,7 +435,13 @@ func (s *Service) FinalizeExpired(ctx context.Context, taskID uuid.UUID, workerI
 				if _, found, err := s.store.AutoByItem(ctx, tx, itemID); err != nil {
 					return err
 				} else if !found {
-					if err := s.computeAndInsertAuto(ctx, tx, itemID, *payload.InputID, taskID); err != nil {
+					// answers=nil (ADR-028): the task's own attempt budget
+					// is exhausted, so no judge answer was ever obtained for
+					// this item — any llm criterion scores unavailable, the
+					// whole assessment needs_review, exactly RFC-001 §7.4's
+					// existing exhaustion rule ("failed → needs_review без
+					// нуля"), never a zero.
+					if err := s.computeAndInsertAuto(ctx, tx, itemID, *payload.InputID, taskID, nil); err != nil {
 						return err
 					}
 				}

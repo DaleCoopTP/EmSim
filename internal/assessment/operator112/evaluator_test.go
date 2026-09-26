@@ -150,7 +150,7 @@ func mustEvaluate(t *testing.T, ev trainingintake.EvidenceBody, body content.Bod
 	if err != nil {
 		t.Fatalf("marshal evidence: %v", err)
 	}
-	results, err := Evaluator.Evaluate(raw, body, rubric)
+	results, err := Evaluator.Evaluate(raw, body, rubric, nil)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestEvaluateLegacyRouteFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = Evaluator.Evaluate(raw, body, testRubric())
+	_, err = Evaluator.Evaluate(raw, body, testRubric(), nil)
 	if err == nil {
 		t.Fatal("Evaluate on a legacy-route item must error")
 	}
@@ -355,11 +355,11 @@ func TestEvaluateDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := Evaluator.Evaluate(raw, body, testRubric())
+	first, err := Evaluator.Evaluate(raw, body, testRubric(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Evaluator.Evaluate(raw, body, testRubric())
+	second, err := Evaluator.Evaluate(raw, body, testRubric(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

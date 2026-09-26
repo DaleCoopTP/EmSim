@@ -80,6 +80,12 @@ var loadedDefault = sync.OnceValues(func() (Rubric, error) { return loadEmbedded
 var loaded112v1 = sync.OnceValues(func() (Rubric, error) { return loadEmbeddedRubric("rubric.operator112.v1.json") })
 var loaded112v2 = sync.OnceValues(func() (Rubric, error) { return loadEmbeddedRubric("rubric.operator112.json") })
 
+// loaded112v3 is operator112/rubric-v3 (ADR-028) — rubric-v2 plus the
+// LLM DESCRIPTION_CONTENT criterion, only ever frozen into a lesson when
+// its own process is configured with a working judge (content.
+// Operator112RubricVersion(true), training.Service).
+var loaded112v3 = sync.OnceValues(func() (Rubric, error) { return loadEmbeddedRubric("rubric.operator112.v3.json") })
+
 // LoadRubric returns exerciseType's own rubric at exactly version —
 // never "whatever is current" — so a sealed assessment_inputs snapshot
 // or an expert revision on an old item scores against the same rubric
@@ -101,6 +107,8 @@ func LoadRubric(exerciseType content.ExerciseType, version string) (Rubric, erro
 			return loaded112v1()
 		case "operator112/rubric-v2":
 			return loaded112v2()
+		case "operator112/rubric-v3":
+			return loaded112v3()
 		}
 	}
 	return Rubric{}, fmt.Errorf("assessment: no rubric for exercise_type %q version %q", exerciseType, version)

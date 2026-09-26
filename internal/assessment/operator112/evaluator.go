@@ -34,7 +34,7 @@ type evaluator struct{}
 // rather than scoring individual criteria unavailable: rubric-v2's
 // blocks are built around the ADR-023 notify snapshot, and there is
 // nothing meaningful to compare for an item that never had one.
-func (evaluator) Evaluate(raw json.RawMessage, body content.Body, effective assessment.Rubric) ([]assessment.CriterionResult, error) {
+func (evaluator) Evaluate(raw json.RawMessage, body content.Body, effective assessment.Rubric, semantic assessment.SemanticAnswers) ([]assessment.CriterionResult, error) {
 	var ev trainingintake.EvidenceBody
 	if err := json.Unmarshal(raw, &ev); err != nil {
 		return nil, fmt.Errorf("assessment/operator112: decode evidence: %w", err)
@@ -49,7 +49,7 @@ func (evaluator) Evaluate(raw json.RawMessage, body content.Body, effective asse
 
 	results := make([]assessment.CriterionResult, 0, len(effective.Criteria))
 	for _, c := range effective.Criteria {
-		results = append(results, evaluateCriterion(ev, body.Intake112, snapshot, c))
+		results = append(results, evaluateCriterion(ev, body.Intake112, snapshot, c, semantic))
 	}
 	return results, nil
 }
@@ -66,6 +66,35 @@ func scoredCard(ev trainingintake.EvidenceBody) training.IntakeCard {
 		return ev.Notification.CardSnapshot
 	}
 	return ev.FinalCard
+}
+
+// descriptionContentPromptVersion is DESCRIPTION_CONTENT's own rubric.
+// operator112.v3.json "prompt" value (ADR-028) — the same string
+// descjudge.PromptVersion carries and Service.sealInputForItem seals
+// into assessment_inputs.judge.prompt_versions, so this evaluator's own
+// dispatch and the actual model-calling handler agree on which prompt
+// version a given SemanticRequest/SemanticAnswers entry means.
+const descriptionContentPromptVersion = "description-questions-v1"
+
+// llmCriterionResult dispatches a kind=llm criterion by its own Prompt
+// (rubric.schema.json requires prompt+sources, forbids rule, for this
+// kind) — the operator112 evaluator's own counterpart to the rule-string
+// switch above, one level down (ADR-028's c6 adds the one case that
+// exists so far, "description-questions-v1" -> descriptionContentRule).
+// An unrecognized prompt version (a rubric file this evaluator does not
+// yet know how to score) is unavailable, same as an unrecognized rule.
+func llmCriterionResult(ev trainingintake.EvidenceBody, intake *content.Intake112, snapshot training.IntakeCard, c assessment.RubricCriterion, semantic assessment.SemanticAnswers) assessment.CriterionResult {
+	switch c.Prompt {
+	// descriptionContentPromptVersion's own case is added by description.go
+	// (ADR-028's c6) — this switch is written open-ended from the start
+	// so that addition is a pure Go-level extension, not a rewrite of
+	// this dispatcher.
+	default:
+		return assessment.CriterionResult{
+			ID: c.ID, Status: assessment.CriterionUnavailable, Weight: c.Weight, Critical: c.Critical,
+			Explanation: fmt.Sprintf("неизвестный промпт %q", c.Prompt),
+		}
+	}
 }
 
 // dialogueFactsOf returns the scenario's dialogue facts regardless of
@@ -91,8 +120,11 @@ func evidenceRefs(ev trainingintake.EvidenceBody) []string {
 	return nil
 }
 
-func evaluateCriterion(ev trainingintake.EvidenceBody, intake *content.Intake112, snapshot training.IntakeCard, c assessment.RubricCriterion) assessment.CriterionResult {
+func evaluateCriterion(ev trainingintake.EvidenceBody, intake *content.Intake112, snapshot training.IntakeCard, c assessment.RubricCriterion, semantic assessment.SemanticAnswers) assessment.CriterionResult {
 	ref := intake.Reference
+	if c.Kind == "llm" {
+		return llmCriterionResult(ev, intake, snapshot, c, semantic)
+	}
 	switch c.Rule {
 	case "operator112_address_fields":
 		return addressFieldsRule(ev, intake, snapshot, c)

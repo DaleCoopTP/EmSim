@@ -200,7 +200,7 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.
 	trainingService := newTrainingService(pool, mustTaskEnqueuer(pool))
 	contenthttp.NewHandlers(contentService, trainingService, authService, cfg.CookieSecure).Register(apiMux)
 	traininghttp.NewHandlers(trainingService, authService, cfg.CookieSecure, hub).Register(apiMux)
-	assessmentService := newAssessmentService(pool, mustTaskEnqueuer(pool))
+	assessmentService := newAssessmentService(pool, mustTaskEnqueuer(pool), nil)
 	assessmenthttp.NewHandlers(assessmentService, trainingService, authService, cfg.CookieSecure).Register(apiMux)
 	reportingService := reporting.NewService(reportingpg.NewStore(pool), mustTaskEnqueuer(pool))
 	reportinghttp.NewHandlers(reportingService, trainingService, authService, cfg.CookieSecure).Register(apiMux)

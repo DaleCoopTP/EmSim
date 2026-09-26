@@ -47,9 +47,12 @@ type Transcript struct {
 	Parameters       map[string]any `json:"parameters,omitempty"`
 }
 
-// Judge is assessment-inputs.schema.json's judge object — model=nil
-// through slice 6 (JUDGE=off, ADR-013): every llm-kind criterion in
-// RuleResults is unavailable, so nothing here is ever actually used yet.
+// Judge is assessment-inputs.schema.json's judge object — model=nil for
+// dds_processing (JUDGE=off, ADR-013) and for any operator112_intake
+// lesson with no judge configured (ASSESSMENT_JUDGE=off) or nothing for
+// the judge to answer. ADR-028 fills Model/PromptVersions/Parameters
+// from Service.judge (JudgeConfig) whenever a SemanticPreparer actually
+// prepared something to seal into InputBody.SemanticInput.
 type Judge struct {
 	Model          *string           `json:"model"`
 	PromptVersions map[string]string `json:"prompt_versions"`

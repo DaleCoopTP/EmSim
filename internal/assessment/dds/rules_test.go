@@ -48,7 +48,7 @@ func evaluate(t *testing.T, ev training.EvidenceBody, ref content.Reference, eff
 	if err != nil {
 		t.Fatalf("marshal evidence fixture: %v", err)
 	}
-	results, err := Evaluator.Evaluate(raw, content.Body{Reference: ref}, effective)
+	results, err := Evaluator.Evaluate(raw, content.Body{Reference: ref}, effective, nil)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}

@@ -2,9 +2,15 @@
 // pipeline (slice 6, ADR-006/013/016/019): rubric merging and scoring,
 // sealing evidence + rules into an immutable assessment_inputs snapshot,
 // the single auto rev=1 a worker produces from it, the shared finalizer
-// for exhausted retries, and instructor expert revisions. STT and the LLM
-// judge (rubric criteria of kind=llm) are slice 9 — every llm-kind
-// criterion here always resolves to CriterionUnavailable.
+// for exhausted retries, and instructor expert revisions. STT is slice 9
+// and every llm-kind criterion still resolves to CriterionUnavailable
+// for dds_processing (JUDGE=off, ADR-013). ADR-028 (operator112_intake's
+// DESCRIPTION_CONTENT) is the first llm-kind criterion this package
+// actually scores: SemanticPreparer/SemanticJudge/SemanticJudgeRegistry
+// (evaluator.go) let Service call one model, outside any transaction,
+// between sealing assessment_inputs and recording the auto assessment —
+// nothing here changes for an exercise_type/criterion that does not use
+// them.
 //
 // Like internal/training, assessment keeps its domain rules
 // (rubric.go/input.go/revision.go, and the DDS rule set in

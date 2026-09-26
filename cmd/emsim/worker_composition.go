@@ -344,7 +344,7 @@ func compose(processConfig config.Worker, pool *pgxpool.Pool, metrics *observabi
 		return tasks.Components{}, errors.New("recovery configuration is invalid")
 	}
 
-	assessmentService := newAssessmentService(pool, store)
+	assessmentService := newAssessmentService(pool, store, nil)
 	if err := recoveryStore.RegisterFinalizer(training.KindAssessmentEvaluate, assessmentService); err != nil {
 		return tasks.Components{}, errors.New("finalizer registration is invalid")
 	}

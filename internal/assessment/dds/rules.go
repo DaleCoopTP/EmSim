@@ -36,7 +36,7 @@ type evaluator struct{}
 // dds_processing document, sealed by training/dds.Exercise.Evidence and
 // digest-checked by the caller (assessment.Service.sealInputForItem)
 // before Evaluate ever runs.
-func (evaluator) Evaluate(raw json.RawMessage, body content.Body, effective assessment.Rubric) ([]assessment.CriterionResult, error) {
+func (evaluator) Evaluate(raw json.RawMessage, body content.Body, effective assessment.Rubric, _ assessment.SemanticAnswers) ([]assessment.CriterionResult, error) {
 	var ev training.EvidenceBody
 	if err := json.Unmarshal(raw, &ev); err != nil {
 		return nil, fmt.Errorf("assessment/dds: decode evidence: %w", err)

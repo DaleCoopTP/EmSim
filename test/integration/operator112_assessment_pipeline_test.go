@@ -45,7 +45,7 @@ func newIntake112AssessmentServiceForTest(pool *pgxpool.Pool, taskStore *tasks.S
 	contentStore := contentpg.NewStore(pool)
 	return assessment.NewService(
 		assessmentpg.NewStore(pool), trainingStore, trainingStore, trainingStore, contentStore, taskStore,
-		assessment.Registry{content.ExerciseTypeOperator112Intake: assessmentintake.Evaluator},
+		assessment.Registry{content.ExerciseTypeOperator112Intake: assessmentintake.Evaluator}, nil,
 	)
 }
 

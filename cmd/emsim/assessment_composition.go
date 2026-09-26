@@ -21,7 +21,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func newAssessmentService(pool *pgxpool.Pool, taskStore *tasks.Store) *assessment.Service {
+// judge is nil in the api process (which never calls Handle or
+// sealInputForItem's own judge branch) and, in the worker, nil unless
+// ASSESSMENT_JUDGE=llm (ADR-028; composePools builds the real one —
+// see cmd/emsim/worker_composition.go).
+func newAssessmentService(pool *pgxpool.Pool, taskStore *tasks.Store, judge *assessment.JudgeConfig) *assessment.Service {
 	trainingStore := trainingpg.NewStore(pool)
 	contentStore := contentpg.NewStore(pool)
 	return assessment.NewService(
@@ -30,5 +34,6 @@ func newAssessmentService(pool *pgxpool.Pool, taskStore *tasks.Store) *assessmen
 			content.ExerciseTypeDDSProcessing:     assessmentdds.Evaluator,
 			content.ExerciseTypeOperator112Intake: assessmentintake.Evaluator,
 		},
+		judge,
 	)
 }
