@@ -1,10 +1,12 @@
 // Package operator112 implements assessment.RuleEvaluator for
 // exercise_type "operator112_intake" against operator112/rubric-v2
-// (112-6/ADR-026) — the deterministic half of the same RFC-001 §7.4
-// pipeline internal/assessment/dds already implements for dds_processing.
-// It has the same name as internal/training/operator112 (a different
-// package, a different import path) for the same reason dds/dds does:
-// each is "the operator112 rules" for its own module.
+// (112-6/ADR-026) and, for a judge-enabled lesson, rubric-v3 (ADR-028's
+// DESCRIPTION_CONTENT) — the deterministic half (plus one llm criterion)
+// of the same RFC-001 §7.4 pipeline internal/assessment/dds already
+// implements for dds_processing. It has the same name as
+// internal/training/operator112 (a different package, a different
+// import path) for the same reason dds/dds does: each is "the
+// operator112 rules" for its own module.
 package operator112
 
 import (
@@ -12,6 +14,7 @@ import (
 	"fmt"
 
 	"emsim/internal/assessment"
+	"emsim/internal/assessment/operator112/descjudge"
 	"emsim/internal/content"
 	"emsim/internal/training"
 	trainingintake "emsim/internal/training/operator112"
@@ -19,8 +22,13 @@ import (
 
 // Evaluator is the assessment.RuleEvaluator value for
 // "operator112_intake". Like dds.Evaluator, it has no fields — every
-// rule is a pure function of (evidence, reference, criterion).
+// rule is a pure function of (evidence, reference, criterion). It also
+// implements assessment.SemanticPreparer (description.go's
+// PrepareSemantic, ADR-028) — the assertion below keeps that true at
+// compile time.
 var Evaluator assessment.RuleEvaluator = evaluator{}
+
+var _ assessment.SemanticPreparer = evaluator{}
 
 type evaluator struct{}
 
@@ -68,27 +76,21 @@ func scoredCard(ev trainingintake.EvidenceBody) training.IntakeCard {
 	return ev.FinalCard
 }
 
-// descriptionContentPromptVersion is DESCRIPTION_CONTENT's own rubric.
-// operator112.v3.json "prompt" value (ADR-028) — the same string
-// descjudge.PromptVersion carries and Service.sealInputForItem seals
-// into assessment_inputs.judge.prompt_versions, so this evaluator's own
-// dispatch and the actual model-calling handler agree on which prompt
-// version a given SemanticRequest/SemanticAnswers entry means.
-const descriptionContentPromptVersion = "description-questions-v1"
-
 // llmCriterionResult dispatches a kind=llm criterion by its own Prompt
 // (rubric.schema.json requires prompt+sources, forbids rule, for this
 // kind) — the operator112 evaluator's own counterpart to the rule-string
-// switch above, one level down (ADR-028's c6 adds the one case that
-// exists so far, "description-questions-v1" -> descriptionContentRule).
-// An unrecognized prompt version (a rubric file this evaluator does not
-// yet know how to score) is unavailable, same as an unrecognized rule.
+// switch above, one level down. descjudge.PromptVersion
+// ("description-questions-v1") is the same string
+// Service.sealInputForItem seals into assessment_inputs.judge.
+// prompt_versions (via PrepareSemantic's own SemanticRequest), so this
+// dispatch and the actual model-calling Handler always agree on which
+// prompt version a given SemanticAnswers entry means. An unrecognized
+// prompt version (a rubric file this evaluator does not yet know how to
+// score) is unavailable, same as an unrecognized rule.
 func llmCriterionResult(ev trainingintake.EvidenceBody, intake *content.Intake112, snapshot training.IntakeCard, c assessment.RubricCriterion, semantic assessment.SemanticAnswers) assessment.CriterionResult {
 	switch c.Prompt {
-	// descriptionContentPromptVersion's own case is added by description.go
-	// (ADR-028's c6) — this switch is written open-ended from the start
-	// so that addition is a pure Go-level extension, not a rewrite of
-	// this dispatcher.
+	case descjudge.PromptVersion:
+		return descriptionContentRule(ev, intake, snapshot, c, semantic)
 	default:
 		return assessment.CriterionResult{
 			ID: c.ID, Status: assessment.CriterionUnavailable, Weight: c.Weight, Critical: c.Critical,
