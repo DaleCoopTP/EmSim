@@ -367,6 +367,10 @@ func TestFreeTextCallerChatFlow(t *testing.T) {
 	if d := run(training.CommandSendCallerMessage, map[string]string{"text": strings.Repeat("a", 501)}); d.Accepted {
 		t.Fatal("over-length message accepted")
 	}
+	// The limit is 500 characters, not bytes (review 2026-09-26, item 9).
+	if d := run(training.CommandSendCallerMessage, map[string]string{"text": strings.Repeat("я", 501)}); d.Accepted {
+		t.Fatal("501-character Russian message accepted")
+	}
 	d := run(training.CommandSendCallerMessage, map[string]string{"text": "  Здравствуйте  "})
 	if !d.Accepted || d.CallerTurnRequested == nil || *d.CallerTurnRequested != 1 {
 		t.Fatalf("send: %+v", d)
@@ -390,7 +394,8 @@ func TestFreeTextCallerChatFlow(t *testing.T) {
 	if d := run(training.CommandResumeIncoming, map[string]any{}); !d.Accepted {
 		t.Fatalf("resume: %+v", d)
 	}
-	d = run(training.CommandSendCallerMessage, map[string]string{"text": "second message"})
+	// Exactly 500 Russian characters (1000 bytes) is within the limit.
+	d = run(training.CommandSendCallerMessage, map[string]string{"text": strings.Repeat("я", 500)})
 	if !d.Accepted || d.CallerTurnRequested == nil || *d.CallerTurnRequested != 2 {
 		t.Fatalf("second send: %+v", d)
 	}

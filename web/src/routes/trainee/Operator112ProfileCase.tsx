@@ -78,6 +78,9 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
   const [storage] = useState(() => availableLocalStorage());
   const [pending, setPending] = useState<PendingCommand | null>(() => storage ? loadPending(storage, me.user.id, item.id) : null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  // The rejected send_caller_message's own error label, for CallerChat to
+  // show next to the still-typed text; cleared by the next chat send.
+  const [chatRejection, setChatRejection] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [draft, setDraft] = useState<IntakeCard>(item.card);
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
@@ -143,6 +146,9 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
     try {
       const response = await executeCommand(value.item_id, value.command);
       setReceipt(response);
+      if (value.command.type === "send_caller_message") {
+        setChatRejection(response.outcome === "rejected" ? errorLabels[response.error_code ?? ""] ?? response.error_code ?? "отклонено" : null);
+      }
       await refresh();
       if (storage) clearPending(storage, me.user.id, value.item_id, value.command.command_id);
       setPending(null);
@@ -402,7 +408,7 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
         <button type="button" className="arm-primary-action" disabled={!!pending} onClick={() => { send(outcomeIntent === "no_contact" ? "mark_no_contact" : "mark_call_dropped", {}); setOutcomeIntent(null); }}>Закрыть карточку</button></div>
     </div></div>}
 
-    {isCall && state.caller_mode === "free_text" && bodyReady && <CallerChat item={item} open={chatOpen} onToggle={toggleChat} pending={!!pending}
+    {isCall && state.caller_mode === "free_text" && bodyReady && <CallerChat item={item} open={chatOpen} onToggle={toggleChat} pending={!!pending} rejected={chatRejection}
       onSend={(text) => send("send_caller_message", { text })} />}
   </section>;
 }

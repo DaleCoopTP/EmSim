@@ -9,8 +9,13 @@ const maxLength = 500;
 // so it can be collapsed while filling in the rest of the card without
 // losing the conversation. open/onToggle are lifted to the parent so the
 // arm112-line button and this window's own controls drive the same state.
-export function CallerChat({ item, open, onToggle, pending, onSend }: {
-  item: IntakeItem; open: boolean; onToggle: () => void; pending: boolean; onSend: (text: string) => void;
+// Characters are counted as Unicode code points, the same way the
+// server (utf8.RuneCountInString) and OpenAPI's maxLength do — not
+// String.length's UTF-16 units, which count an emoji as two.
+const charCount = (value: string) => [...value].length;
+
+export function CallerChat({ item, open, onToggle, pending, rejected, onSend }: {
+  item: IntakeItem; open: boolean; onToggle: () => void; pending: boolean; rejected: string | null; onSend: (text: string) => void;
 }) {
   const state = item.intake_state;
   const terminal = item.state === "closed" || item.state === "interrupted";
@@ -22,7 +27,18 @@ export function CallerChat({ item, open, onToggle, pending, onSend }: {
   const connected = state.call_status === "connected";
   const canType = connected && !terminal && !waiting && !pending;
   const callerLines = state.transcript.filter((line) => line.speaker === "caller").length;
+  const operatorLines = state.transcript.filter((line) => line.speaker === "operator").length;
   const [text, setText] = useState("");
+  // The typed text is cleared only once the message actually lands in
+  // the transcript (a new operator line), not at submit time — a
+  // rejected send_caller_message leaves it in place to fix and resend
+  // (review 2026-09-26, item 9). Same adjust-during-render pattern as
+  // readCount below.
+  const [sentAt, setSentAt] = useState<number | null>(null);
+  if (sentAt !== null && operatorLines > sentAt) {
+    setSentAt(null);
+    setText("");
+  }
   // Adjusting state during render (react.dev's own pattern for "keep a
   // value in sync with a prop"), not an effect: readCount tracks
   // callerLines continuously while open — not just at the moment it
@@ -32,10 +48,11 @@ export function CallerChat({ item, open, onToggle, pending, onSend }: {
   if (open && readCount !== callerLines) setReadCount(callerLines);
   const unread = open ? 0 : Math.max(0, callerLines - readCount);
   const trimmed = text.trim();
+  const tooLong = charCount(trimmed) > maxLength;
   const submit = () => {
-    if (!canType || !trimmed || trimmed.length > maxLength) return;
+    if (!canType || !trimmed || tooLong) return;
+    setSentAt(operatorLines);
     onSend(trimmed);
-    setText("");
   };
 
   if (!open) return <button type="button" className="caller-chat-launcher" aria-label="Открыть чат с заявителем" onClick={onToggle}>
@@ -57,16 +74,17 @@ export function CallerChat({ item, open, onToggle, pending, onSend }: {
       {waiting && <p className="caller-chat-typing">Заявитель печатает…</p>}
       {failed && <p className="caller-chat-line caller-chat-system">Заявитель не ответил (техническая причина) — повторите сообщение.</p>}
     </div>
+    {rejected && !pending && <p className="caller-chat-line caller-chat-system" role="alert">Сообщение не отправлено: {rejected}. Текст сохранён — исправьте его и отправьте снова.</p>}
     {held && <p className="caller-chat-hint">Вызов на удержании. Вернитесь к разговору, чтобы написать заявителю.</p>}
     {!held && !connected && <p className="caller-chat-hint">Разговор завершён. История сохранена.</p>}
     {(connected || held) && <div className="caller-chat-input">
-      <textarea aria-label="Сообщение заявителю" value={text} maxLength={maxLength} disabled={!canType}
+      <textarea aria-label="Сообщение заявителю" value={text} disabled={!canType}
         placeholder={waiting ? "Ожидание ответа…" : "Напишите сообщение…"}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} />
       <div className="caller-chat-input-row">
-        <span className="caller-chat-counter">{text.length} / {maxLength}</span>
-        <button type="button" disabled={!canType || !trimmed} onClick={submit}>Отправить</button>
+        <span className={tooLong ? "caller-chat-counter error" : "caller-chat-counter"}>{charCount(text)} / {maxLength}</span>
+        <button type="button" disabled={!canType || !trimmed || tooLong} onClick={submit}>Отправить</button>
       </div>
     </div>}
   </div>;

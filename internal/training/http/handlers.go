@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"emsim/internal/auth"
 	authhttp "emsim/internal/auth/http"
@@ -424,7 +425,7 @@ func (h *Handlers) stopLesson(w http.ResponseWriter, r *http.Request) {
 	}
 	var reason *string
 	if trimmed := strings.TrimSpace(body.Reason); trimmed != "" {
-		if len(trimmed) > 500 {
+		if utf8.RuneCountInString(trimmed) > 500 {
 			httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "reason too long", map[string]any{"field": "reason"})
 			return
 		}

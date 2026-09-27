@@ -2,6 +2,7 @@ package assessment
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -21,6 +22,19 @@ func TestValidateRevisionRequiresReasonLength(t *testing.T) {
 	}}, twoCriterionRubric(), nil)
 	if !errors.Is(err, ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation for a 2-character reason", err)
+	}
+}
+
+// TestValidateRevisionReasonLimitIsCharacters: 2000 is a character limit
+// (review 2026-09-26, item 9) — a 2000-letter Russian reason is 4000
+// bytes and must still be accepted; 2001 letters must not.
+func TestValidateRevisionReasonLimitIsCharacters(t *testing.T) {
+	criteria := []CriterionResult{{ID: "A", Status: CriterionMet}, {ID: "B", Status: CriterionMet}}
+	if _, err := ValidateRevision(RevisionInput{Reason: strings.Repeat("я", 2000), Criteria: criteria}, twoCriterionRubric(), nil); err != nil {
+		t.Fatalf("2000-character Russian reason: %v", err)
+	}
+	if _, err := ValidateRevision(RevisionInput{Reason: strings.Repeat("я", 2001), Criteria: criteria}, twoCriterionRubric(), nil); !errors.Is(err, ErrValidation) {
+		t.Fatalf("2001-character reason: err = %v, want ErrValidation", err)
 	}
 }
 

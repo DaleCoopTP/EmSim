@@ -458,9 +458,13 @@ test("operator 112: free-text caller chat — async stub replies, draft survives
   const chatInput = page.getByLabel("Сообщение заявителю");
   const send = page.getByRole("button", { name: "Отправить" });
 
-  await chatInput.fill("Что случилось? Где вы находитесь?");
+  // Over 250 Cyrillic letters (more than 500 UTF-8 bytes) but within the
+  // 500-character limit: the server counts characters, not bytes (review
+  // 2026-09-26, item 9), and the input clears only once the message lands.
+  await chatInput.fill(`Что случилось? Где вы находитесь? ${"я".repeat(300)}`);
   await send.click();
   await expect(page.getByText("Заявитель печатает…")).toBeVisible();
+  await expect(chatInput).toHaveValue("");
   await expect(page.getByText(/Я упал\.\.\. Глаз очень болит/)).toBeVisible({ timeout: 10_000 });
 
   // Monitor.tsx's last-action label for send_caller_message, checked via a

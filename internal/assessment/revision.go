@@ -3,6 +3,7 @@ package assessment
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // RevisionInput is the caller-supplied half of a new expert revision —
@@ -26,7 +27,7 @@ type RevisionInput struct {
 // before it accepts a revision at all.
 func ValidateRevision(in RevisionInput, effective Rubric, current []CriterionResult) ([]CriterionResult, error) {
 	reason := strings.TrimSpace(in.Reason)
-	if len(reason) < 3 || len(reason) > 2000 {
+	if n := utf8.RuneCountInString(reason); n < 3 || n > 2000 {
 		return nil, validationErr("reason", "must be 3..2000 characters")
 	}
 	if in.BaseRevision < 0 {

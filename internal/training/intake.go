@@ -5,6 +5,7 @@ import (
 	"github.com/google/uuid"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // IntakeField keeps absence of an answer distinct from an explicit unknown
@@ -129,7 +130,7 @@ func validOptionalChoice(field IntakeField, choice string) bool {
 }
 
 func validIntakeField(field IntakeField, maxLength int, legacyOptional bool) bool {
-	if len(field.Value) > maxLength || strings.TrimSpace(field.Value) != field.Value {
+	if utf8.RuneCountInString(field.Value) > maxLength || strings.TrimSpace(field.Value) != field.Value {
 		return false
 	}
 	switch field.State {

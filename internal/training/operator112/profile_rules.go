@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"emsim/internal/content"
 	"emsim/internal/training"
@@ -66,7 +67,7 @@ func validProfileAnswer(answer training.IntakeProfileAnswer, field content.Intak
 		return false
 	}
 	if field.Kind == "text" {
-		return len(answer.Value) > 0 && len(answer.Value) <= 1999 && strings.TrimSpace(answer.Value) == answer.Value && len(answer.Values) == 0
+		return answer.Value != "" && utf8.RuneCountInString(answer.Value) <= 1999 && strings.TrimSpace(answer.Value) == answer.Value && len(answer.Values) == 0
 	}
 	if field.Kind == "single" {
 		if len(answer.Values) != 0 {
@@ -481,7 +482,7 @@ func (e exercise) decideProfileFlow(item training.Item, cmd training.Command, no
 			return reject(item, training.RejectInvalidPayload), nil
 		}
 		text := strings.TrimSpace(p.Text)
-		if text == "" || len(text) > 500 {
+		if text == "" || utf8.RuneCountInString(text) > 500 {
 			return reject(item, training.RejectInvalidPayload), nil
 		}
 		// appendLine computes this same id from len(state.Transcript) —
@@ -555,7 +556,7 @@ func validServiceSelection(catalog *content.IntakeCatalog, suggested []training.
 	if changed && strings.TrimSpace(reason) == "" {
 		return false
 	}
-	return len(reason) <= 1000 && strings.TrimSpace(reason) == reason
+	return utf8.RuneCountInString(reason) <= 1000 && strings.TrimSpace(reason) == reason
 }
 
 // hasPendingCallerTurn reports whether a free-text caller chat has a
