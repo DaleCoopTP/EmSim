@@ -52,6 +52,13 @@ func DecodeServiceDefs(r io.Reader) ([]ServiceRecord, error) {
 		if e.Active != nil {
 			active = *e.Active
 		}
+		if err := e.Workflow.Validate(); err != nil {
+			var ve *ValidationError
+			if errors.As(err, &ve) {
+				return nil, invalid(fmt.Sprintf("[%d].%s", i, ve.Field), ve.Reason)
+			}
+			return nil, err
+		}
 		records[i] = ServiceRecord{Code: e.Code, Name: e.Name, Workflow: e.Workflow, Active: active}
 	}
 	return records, nil
