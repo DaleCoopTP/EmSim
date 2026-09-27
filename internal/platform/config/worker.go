@@ -101,12 +101,16 @@ type Worker struct {
 	CallerTopP          float64
 	CallerRepeatPenalty float64
 	CallerMaxTokens     int
-	// CallerWarmup (ADR-029) enqueues a caller.warmup task right after a
-	// dialogue's no-model opening so the model processes the system
-	// prompt and opening before the first model-answered question
-	// arrives. Only meaningful with CallerReplierLLM; CALLER_WARMUP unset
-	// means true.
+	// CallerWarmup (ADR-029) lets caller.warmup tasks reach the model:
+	// the api enqueues them at answer_incoming and at the first operator
+	// message (API.CallerWarmup, the same CALLER_WARMUP), and with this
+	// off the worker finishes them without a model call. Only meaningful
+	// with CallerReplierLLM; CALLER_WARMUP unset means true.
 	CallerWarmup bool
+	// CallerOpeningDelay is API.CallerOpeningDelay read here too, only so
+	// bench-llm reproduces the class's own timing; the worker itself
+	// never delays anything.
+	CallerOpeningDelay time.Duration
 	// AssessmentJudge (ADR-028) selects whether assessment.evaluate's
 	// worker-side Handle actually calls a model for operator112_intake's
 	// DESCRIPTION_CONTENT criterion (operator112/rubric-v3):
@@ -197,8 +201,8 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 	if err != nil {
 		return Worker{}, ErrInvalidWorkerConfiguration
 	}
-	callerWarmup, err := parseBoolOrDefault(lookup("CALLER_WARMUP"), true)
-	if err != nil {
+	callerWarmup, callerOpeningDelay, ok := callerTimingFromEnvironment(lookup)
+	if !ok {
 		return Worker{}, ErrInvalidWorkerConfiguration
 	}
 	assessmentJudge := strings.TrimSpace(lookup("ASSESSMENT_JUDGE"))
@@ -223,7 +227,8 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 		CallerLLMModel:    strings.TrimSpace(lookup("CALLER_LLM_MODEL")),
 		CallerTemperature: callerTemperature, CallerTopP: callerTopP,
 		CallerRepeatPenalty: callerRepeatPenalty, CallerMaxTokens: callerMaxTokens, CallerWarmup: callerWarmup,
-		AssessmentJudge: assessmentJudge, JudgeLLMURL: strings.TrimSpace(lookup("JUDGE_LLM_URL")),
+		CallerOpeningDelay: callerOpeningDelay,
+		AssessmentJudge:    assessmentJudge, JudgeLLMURL: strings.TrimSpace(lookup("JUDGE_LLM_URL")),
 		JudgeLLMModel: strings.TrimSpace(lookup("JUDGE_LLM_MODEL")),
 		JudgeTimeout:  judgeTimeout, JudgeMaxTokens: judgeMaxTokens,
 		LocalTestPolicy: strings.TrimSpace(lookup("WORKER_LOCAL_TEST_POLICY")),

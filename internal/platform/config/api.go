@@ -33,6 +33,13 @@ type API struct {
 	// lessons freeze rubric-v3); ASSESSMENT_JUDGE=off keeps freezing
 	// rubric-v2 and must be set on the worker the same way.
 	AssessmentJudge string
+	// CallerWarmup and CallerOpeningDelay are ADR-029's api-side AI
+	// caller settings (training.CallerTiming): CALLER_WARMUP (default
+	// true) enqueues caller.warmup at answer_incoming and at the first
+	// operator message; CALLER_OPENING_DELAY (default 0, at most 10s)
+	// holds back the first reply, the scenario's no-model opening.
+	CallerWarmup       bool
+	CallerOpeningDelay time.Duration
 }
 
 func APIFromEnvironment(lookup func(string) string) (API, error) {
@@ -42,6 +49,7 @@ func APIFromEnvironment(lookup func(string) string) (API, error) {
 	if assessmentJudge == "" {
 		assessmentJudge = AssessmentJudgeLLM
 	}
+	callerWarmup, callerOpeningDelay, callerOK := callerTimingFromEnvironment(lookup)
 	config := API{
 		DatabaseURL:     strings.TrimSpace(lookup("DATABASE_URL")),
 		PublicAddr:      strings.TrimSpace(lookup("API_LISTEN_ADDR")),
@@ -49,8 +57,9 @@ func APIFromEnvironment(lookup func(string) string) (API, error) {
 		SessionTTL:      sessionTTL,
 		CookieSecure:    cookieSecure,
 		AssessmentJudge: assessmentJudge,
+		CallerWarmup:    callerWarmup, CallerOpeningDelay: callerOpeningDelay,
 	}
-	if ttlErr != nil || secureErr != nil {
+	if ttlErr != nil || secureErr != nil || !callerOK {
 		return API{}, ErrInvalidAPIConfiguration
 	}
 	if err := config.Validate(); err != nil {

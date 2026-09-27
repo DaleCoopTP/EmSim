@@ -100,6 +100,33 @@ func TestAPIFromEnvironmentAssessmentJudgeDefaultsToLLM(t *testing.T) {
 	}
 }
 
+// TestAPIFromEnvironmentCallerTiming covers ADR-029's api-side caller
+// settings: warm-ups on and no opening delay by default, an explicit
+// delay parsed, and an unparseable, negative or oversized one rejected.
+func TestAPIFromEnvironmentCallerTiming(t *testing.T) {
+	values := map[string]string{
+		"DATABASE_URL":      "postgres://example.invalid/emsim",
+		"API_LISTEN_ADDR":   "127.0.0.1:8080",
+		"ADMIN_LISTEN_ADDR": "127.0.0.1:8081",
+	}
+	lookup := func(name string) string { return values[name] }
+	config, err := APIFromEnvironment(lookup)
+	if err != nil || !config.CallerWarmup || config.CallerOpeningDelay != 0 {
+		t.Fatalf("defaults = %+v, %v; want warm-up on, no opening delay", config, err)
+	}
+	values["CALLER_WARMUP"] = "false"
+	values["CALLER_OPENING_DELAY"] = "2500ms"
+	if config, err := APIFromEnvironment(lookup); err != nil || config.CallerWarmup || config.CallerOpeningDelay != 2500*time.Millisecond {
+		t.Fatalf("explicit caller timing = %+v, %v", config, err)
+	}
+	for _, bad := range []string{"soon", "-1s", "11s"} {
+		values["CALLER_OPENING_DELAY"] = bad
+		if _, err := APIFromEnvironment(lookup); !errors.Is(err, ErrInvalidAPIConfiguration) {
+			t.Fatalf("CALLER_OPENING_DELAY=%q error = %v", bad, err)
+		}
+	}
+}
+
 func TestAPIFromEnvironmentRejectsNonPositiveSessionTTL(t *testing.T) {
 	values := map[string]string{
 		"DATABASE_URL":      "postgres://example.invalid/emsim",

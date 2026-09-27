@@ -197,7 +197,10 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.
 	// never imports training, only content/http does, the same way
 	// assessment/reporting's own http packages already take
 	// *training.Service.
-	trainingService := newTrainingService(pool, mustTaskEnqueuer(pool), cfg.AssessmentJudge == config.AssessmentJudgeLLM)
+	// ADR-029: the api enqueues the AI caller's prompt-cache warm-ups and
+	// holds back the opening; the worker runs the warm-ups.
+	trainingService := newTrainingService(pool, mustTaskEnqueuer(pool), cfg.AssessmentJudge == config.AssessmentJudgeLLM).
+		WithCallerTiming(training.CallerTiming{Warmup: cfg.CallerWarmup, OpeningDelay: cfg.CallerOpeningDelay})
 	contenthttp.NewHandlers(contentService, trainingService, authService, cfg.CookieSecure).Register(apiMux)
 	traininghttp.NewHandlers(trainingService, authService, cfg.CookieSecure, hub).Register(apiMux)
 	assessmentService := newAssessmentService(pool, mustTaskEnqueuer(pool), nil)

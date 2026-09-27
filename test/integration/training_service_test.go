@@ -82,6 +82,14 @@ func mustTaskEnqueuer(pool *pgxpool.Pool) *tasks.Store {
 	}); err != nil {
 		panic("mustTaskEnqueuer: " + err.Error())
 	}
+	// caller.warmup (ADR-029): enqueued at answer_incoming and at the
+	// first operator message when CallerTiming.Warmup is set.
+	if err := registry.Register(tasks.Spec{
+		Name: training.KindCallerWarmup, Pool: "caller", MaxAttempts: 1,
+		Lease: 2 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 50,
+	}); err != nil {
+		panic("mustTaskEnqueuer: " + err.Error())
+	}
 	return tasks.NewStore(pool, registry)
 }
 

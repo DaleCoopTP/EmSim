@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"emsim/internal/content"
 	"errors"
 	"net/http"
 	"testing"
@@ -180,20 +181,42 @@ func TestJudgeConfigForLLMWiresOneHandler(t *testing.T) {
 	}
 }
 
-// TestCallerWarmupShouldRunOnlyWhileCallerSpokeLast: a warm-up is worth a
-// model call only until the operator sends the next message — after that
-// the real reply is already queued and the warm-up would just compete
-// with it for the model (ADR-029).
-func TestCallerWarmupShouldRunOnlyWhileCallerSpokeLast(t *testing.T) {
-	afterOpening := []training.IntakeLine{{Speaker: "operator", Text: "112"}, {Speaker: "caller", Text: "Помогите!"}}
-	if !callerWarmupShouldRun(afterOpening) {
-		t.Fatal("warm-up must run right after the opening")
+// TestCallerWarmupPrefixByStage: each warm-up stage warms exactly the
+// prefix of the next model call and is skipped once the dialogue has
+// moved past it — the real reply is then already queued and the warm-up
+// would just compete with it for the model (ADR-029).
+func TestCallerWarmupPrefixByStage(t *testing.T) {
+	caller := &content.Intake112CallerProfile{Persona: "Жилец", Opening: content.Intake112Utterance{Text: "Помогите!"}}
+	op1 := training.IntakeLine{Speaker: "operator", Text: "112"}
+	opening := training.IntakeLine{Speaker: "caller", Text: "Помогите!"}
+	op2 := training.IntakeLine{Speaker: "operator", Text: "Адрес?"}
+	cases := []struct {
+		name       string
+		stage      string
+		transcript []training.IntakeLine
+		want       []training.IntakeLine
+		reason     string
+	}{
+		{"system before the first line", training.CallerWarmupStageSystem, nil, nil, ""},
+		{"system after the first line", training.CallerWarmupStageSystem, []training.IntakeLine{op1}, nil, "stale"},
+		{"opening before it is applied", training.CallerWarmupStageOpening, []training.IntakeLine{op1}, []training.IntakeLine{op1, opening}, ""},
+		{"opening after it is applied", training.CallerWarmupStageOpening, []training.IntakeLine{op1, opening}, []training.IntakeLine{op1, opening}, ""},
+		{"opening after the next question", training.CallerWarmupStageOpening, []training.IntakeLine{op1, opening, op2}, nil, "stale"},
+		{"legacy after the opening", "", []training.IntakeLine{op1, opening}, []training.IntakeLine{op1, opening}, ""},
+		{"legacy after the next question", "", []training.IntakeLine{op1, opening, op2}, nil, "stale"},
 	}
-	questionSent := append(afterOpening, training.IntakeLine{Speaker: "operator", Text: "Адрес?"})
-	if callerWarmupShouldRun(questionSent) {
-		t.Fatal("warm-up must be skipped once the next operator message is in")
+	for _, tc := range cases {
+		got, reason := callerWarmupPrefix(tc.stage, caller, tc.transcript)
+		if reason != tc.reason || len(got) != len(tc.want) {
+			t.Fatalf("%s: got %+v/%q, want %+v/%q", tc.name, got, reason, tc.want, tc.reason)
+		}
+		for i := range got {
+			if got[i].Speaker != tc.want[i].Speaker || got[i].Text != tc.want[i].Text {
+				t.Fatalf("%s: line %d = %+v, want %+v", tc.name, i, got[i], tc.want[i])
+			}
+		}
 	}
-	if callerWarmupShouldRun(nil) {
-		t.Fatal("warm-up must be skipped for an empty transcript")
+	if _, reason := callerWarmupPrefix(training.CallerWarmupStageSystem, nil, nil); reason != "no_caller" {
+		t.Fatalf("no caller profile reason = %q, want no_caller", reason)
 	}
 }

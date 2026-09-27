@@ -500,16 +500,19 @@ type recordedChatRequest struct {
 	} `json:"messages"`
 }
 
-// TestCallerWarmupPrimesModelAfterOpening drives a real worker on the
-// model path (ADR-029): the no-model opening must enqueue one
-// caller.warmup, which sends the model the dialogue prefix with a
-// single-token budget, and the next real reply must start with exactly
-// the same messages, so a prefix-caching server reuses the warm-up's work.
-func TestCallerWarmupPrimesModelAfterOpening(t *testing.T) {
+// TestCallerWarmupPrimesModelAtAnswerAndFirstLine drives a real worker
+// on the model path (ADR-029): answering the call enqueues a warm-up of
+// the system prompt alone, the first operator line a warm-up of that
+// line plus the scenario's opening, both with a single-token budget; the
+// opening itself is held back by CALLER_OPENING_DELAY; and the first
+// real model reply starts with exactly the warmed messages, so a
+// prefix-caching server reuses the warm-ups' work.
+func TestCallerWarmupPrimesModelAtAnswerAndFirstLine(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	databaseURL := openTestDatabase(t, ctx)
 	fixture := setupChatItemFromScenario(t, ctx, databaseURL, aiCallerChatScenarioJSON, "test-112-ai-caller-warmup")
+	fixture.service.WithCallerTiming(training.CallerTiming{Warmup: true, OpeningDelay: time.Second})
 
 	var mu sync.Mutex
 	var requests []recordedChatRequest
@@ -525,6 +528,16 @@ func TestCallerWarmupPrimesModelAfterOpening(t *testing.T) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Мы в Москве."},"finish_reason":"stop"}]}`))
 	}))
 	defer model.Close()
+	recorded := func() []recordedChatRequest {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]recordedChatRequest(nil), requests...)
+	}
+	warmedStage := func(stage string) {
+		waitForCondition(t, ctx, fixture.pool, "warm-up "+stage+" done",
+			`SELECT EXISTS(SELECT 1 FROM tasks WHERE kind='caller.warmup' AND status='done' AND scope_id=$1 AND payload->>'stage'=$2 AND result->>'warmed'='true')`,
+			fixture.itemID, stage)
+	}
 
 	binary := buildEmsimBinary(t, ctx)
 	worker := startCallerWorkerProcess(t, binary, databaseURL, "caller-warmup-worker", "10s", "1ms",
@@ -535,47 +548,65 @@ func TestCallerWarmupPrimesModelAfterOpening(t *testing.T) {
 	if r := fixture.send(t, ctx, training.CommandAnswerIncoming, map[string]any{}); r.Outcome != training.OutcomeApplied {
 		t.Fatalf("answer_incoming: %+v", r)
 	}
-	fixture.send(t, ctx, training.CommandSendCallerMessage, map[string]any{"text": "112, что у вас случилось?"})
-	waitForCondition(t, ctx, fixture.pool, "warm-up done",
-		`SELECT EXISTS(SELECT 1 FROM tasks WHERE kind='caller.warmup' AND status='done' AND scope_id=$1 AND result->>'warmed'='true')`,
-		fixture.itemID)
-
-	mu.Lock()
-	if len(requests) != 1 {
-		mu.Unlock()
-		t.Fatalf("model requests after the opening = %d, want exactly the warm-up", len(requests))
+	warmedStage(training.CallerWarmupStageSystem)
+	got := recorded()
+	if len(got) != 1 {
+		t.Fatalf("model requests after answering = %d, want exactly the system warm-up", len(got))
 	}
-	warm := requests[0]
-	mu.Unlock()
-	if warm.MaxTokens != 1 || len(warm.Messages) != 4 ||
-		warm.Messages[1].Content != "112, что у вас случилось?" || warm.Messages[2].Content != "Помогите, пахнет газом!" ||
-		warm.Messages[3].Role != "user" || warm.Messages[3].Content != "" {
-		t.Fatalf("unexpected warm-up request: %+v", warm)
+	system := got[0]
+	if system.MaxTokens != 1 || len(system.Messages) != 2 || system.Messages[0].Role != "system" ||
+		system.Messages[1].Role != "user" || system.Messages[1].Content != "" {
+		t.Fatalf("unexpected system warm-up request: %+v", system)
+	}
+
+	fixture.send(t, ctx, training.CommandSendCallerMessage, map[string]any{"text": "112, что у вас случилось?"})
+	warmedStage(training.CallerWarmupStageOpening)
+	waitForCondition(t, ctx, fixture.pool, "opening applied",
+		`SELECT EXISTS(SELECT 1 FROM tasks WHERE kind='caller.reply' AND status='done' AND (payload->>'item_id')::uuid=$1 AND (payload->>'turn')::int=1)`,
+		fixture.itemID)
+	var delayed float64
+	if err := fixture.pool.QueryRow(ctx,
+		`SELECT extract(epoch FROM (t->>'resolved_at')::timestamptz - (t->>'requested_at')::timestamptz)::float8
+		   FROM items, jsonb_array_elements(intake_state->'caller_turns') t WHERE items.id=$1 AND (t->>'turn')::int=1`,
+		fixture.itemID).Scan(&delayed); err != nil {
+		t.Fatal(err)
+	}
+	if delayed < 0.9 {
+		t.Fatalf("opening answered %.3fs after the first line, want CALLER_OPENING_DELAY (1s)", delayed)
+	}
+	got = recorded()
+	if len(got) != 2 {
+		t.Fatalf("model requests after the opening = %d, want the two warm-ups only", len(got))
+	}
+	opening := got[1]
+	if opening.MaxTokens != 1 || len(opening.Messages) != 4 || opening.Messages[0] != system.Messages[0] ||
+		opening.Messages[1].Content != "112, что у вас случилось?" || opening.Messages[2].Content != "Помогите, пахнет газом!" ||
+		opening.Messages[3].Role != "user" || opening.Messages[3].Content != "" {
+		t.Fatalf("unexpected opening warm-up request: %+v", opening)
 	}
 
 	fixture.send(t, ctx, training.CommandSendCallerMessage, map[string]any{"text": "Назовите город, пожалуйста"})
 	waitForCondition(t, ctx, fixture.pool, "model reply done",
 		`SELECT EXISTS(SELECT 1 FROM tasks WHERE kind='caller.reply' AND status='done' AND (payload->>'item_id')::uuid=$1 AND (payload->>'turn')::int=2)`,
 		fixture.itemID)
-	mu.Lock()
-	defer mu.Unlock()
-	if len(requests) != 2 {
-		t.Fatalf("model requests = %d, want warm-up + one reply", len(requests))
+	got = recorded()
+	if len(got) != 3 {
+		t.Fatalf("model requests = %d, want two warm-ups + one reply", len(got))
 	}
-	reply := requests[1]
+	reply := got[2]
 	if reply.MaxTokens == 1 || len(reply.Messages) < 4 {
 		t.Fatalf("unexpected reply request: %+v", reply)
 	}
 	for i := 0; i < 3; i++ {
-		if reply.Messages[i] != warm.Messages[i] {
-			t.Fatalf("reply message %d differs from the warm-up prefix:\n%+v\n%+v", i, reply.Messages[i], warm.Messages[i])
+		if reply.Messages[i] != opening.Messages[i] {
+			t.Fatalf("reply message %d differs from the warm-up prefix:\n%+v\n%+v", i, reply.Messages[i], opening.Messages[i])
 		}
 	}
 	var warmups int
 	if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM tasks WHERE kind='caller.warmup' AND scope_id=$1`, fixture.itemID).Scan(&warmups); err != nil {
 		t.Fatal(err)
 	}
-	if warmups != 1 {
-		t.Fatalf("caller.warmup tasks = %d, want one per dialogue", warmups)
+	if warmups != 2 {
+		t.Fatalf("caller.warmup tasks = %d, want two per dialogue", warmups)
 	}
 }

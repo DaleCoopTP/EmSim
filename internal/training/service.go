@@ -79,6 +79,28 @@ type Service struct {
 	// (worker-only), a deliberately separate setting so the two
 	// processes' configuration cannot accidentally collapse into one.
 	operator112JudgeEnabled bool
+	// callerTiming is ADR-029's api-side caller settings: which prompt-
+	// cache warm-ups recordDecision enqueues and how long the first
+	// reply (the no-model opening) is held back. Zero value: no warm-ups,
+	// no delay — what every test composition gets unless it opts in.
+	callerTiming CallerTiming
+}
+
+// CallerTiming is the api process's share of the AI caller's settings
+// (ADR-029): Warmup enqueues KindCallerWarmup at answer_incoming (stage
+// system) and at the dialogue's first operator message (stage opening);
+// OpeningDelay postpones that first message's caller.reply — the
+// scenario's opening, which needs no model — so the warm-ups get a head
+// start before the first model-answered question.
+type CallerTiming struct {
+	Warmup       bool
+	OpeningDelay time.Duration
+}
+
+// WithCallerTiming sets s's CallerTiming and returns s, for composition.
+func (s *Service) WithCallerTiming(timing CallerTiming) *Service {
+	s.callerTiming = timing
+	return s
 }
 
 func NewService(store Store, users UserDirectory, workstations WorkstationDirectory, scenarios ScenarioReader, services ServiceReader, taskEnqueuer TaskEnqueuer, exerciseTypes map[content.ExerciseType]Exercise, operator112JudgeEnabled bool) *Service {
@@ -785,11 +807,65 @@ func (s *Service) enqueueCallerReply(ctx context.Context, tx pgx.Tx, itemID uuid
 	if err != nil {
 		return fmt.Errorf("training: marshal caller.reply payload: %w", err)
 	}
+	// ADR-029: the first turn is answered by the scenario's opening; it
+	// becomes claimable only after CallerTiming.OpeningDelay, so the
+	// operator reads it later and the model has that long to warm up.
+	notBefore := now
+	if turn == 1 {
+		notBefore = now.Add(s.callerTiming.OpeningDelay)
+	}
 	_, _, err = s.tasks.EnqueueTx(ctx, tx, tasks.EnqueueRequest{
 		TaskID: uuid.New(), Kind: KindCallerReply, ScopeType: "item", ScopeID: &itemID,
-		DedupKey: CallerReplyDedupKey(itemID, turn), Payload: payload, NextAttemptAt: now,
+		DedupKey: CallerReplyDedupKey(itemID, turn), Payload: payload, NextAttemptAt: notBefore,
 	})
 	return err
+}
+
+// KindCallerWarmup is ADR-029's prompt-cache warm-up for the AI caller:
+// a technical task that sends the model the part of the next reply's
+// prompt already known, with a single generated token, so the first
+// model-answered question does not process it from scratch. It never
+// changes the item, its evidence or its journal. training only enqueues
+// it (CallerTiming.Warmup); cmd/emsim's worker registers the Spec and
+// the handler, which decides whether the warm-up still helps.
+const KindCallerWarmup tasks.Kind = "caller.warmup"
+
+// Caller warm-up stages (KindCallerWarmup's payload "stage"):
+// CallerWarmupStageSystem is enqueued at answer_incoming, when only the
+// system prompt (rules and persona) is known; CallerWarmupStageOpening
+// at the first operator message, when that message and the scenario's
+// fixed opening complete the prefix of the first model-answered reply.
+const (
+	CallerWarmupStageSystem  = "system"
+	CallerWarmupStageOpening = "opening"
+)
+
+func (s *Service) enqueueCallerWarmup(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, stage string, now time.Time) error {
+	payload, err := json.Marshal(map[string]any{"item_id": itemID, "stage": stage})
+	if err != nil {
+		return fmt.Errorf("training: marshal caller.warmup payload: %w", err)
+	}
+	_, _, err = s.tasks.EnqueueTx(ctx, tx, tasks.EnqueueRequest{
+		TaskID: uuid.New(), Kind: KindCallerWarmup, ScopeType: "item", ScopeID: &itemID,
+		DedupKey: "caller.warmup:" + itemID.String() + ":" + stage, Payload: payload, NextAttemptAt: now,
+	})
+	return err
+}
+
+// callerWarmupStage is the warm-up an accepted decision calls for, if
+// any: stage system on answering a free-text call, stage opening on its
+// first operator message.
+func callerWarmupStage(cmdType CommandType, decision Decision) string {
+	if decision.IntakeState == nil || decision.IntakeState.CallerMode != content.CallerModeFreeText {
+		return ""
+	}
+	switch {
+	case cmdType == CommandAnswerIncoming:
+		return CallerWarmupStageSystem
+	case decision.CallerTurnRequested != nil && *decision.CallerTurnRequested == 1:
+		return CallerWarmupStageOpening
+	}
+	return ""
 }
 
 // CallerReplyContext is the read-only projection a worker's caller.reply
@@ -1513,6 +1589,13 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 	if decision.Accepted && decision.CallerTurnRequested != nil {
 		if err := s.enqueueCallerReply(ctx, tx, item.ID, *decision.CallerTurnRequested, now); err != nil {
 			return Receipt{}, err
+		}
+	}
+	if decision.Accepted && s.callerTiming.Warmup {
+		if stage := callerWarmupStage(cmd.Type, decision); stage != "" {
+			if err := s.enqueueCallerWarmup(ctx, tx, item.ID, stage, now); err != nil {
+				return Receipt{}, err
+			}
 		}
 	}
 	if decision.Accepted && lesson.ExerciseType == content.ExerciseTypeDDSProcessing {

@@ -99,6 +99,12 @@ services:
       # ASSESSMENT_JUDGE below, so a new lesson only ever freezes
       # rubric-v3 when this deployment can actually answer it.
       ASSESSMENT_JUDGE: ${ASSESSMENT_JUDGE:-llm}
+      # ADR-029: the api enqueues the AI caller's prompt-cache warm-ups
+      # (on answering the call and on the operator's first line) and can
+      # hold back the caller's opening so the warm-ups get a head start.
+      # Keep both equal to the worker's own values below.
+      CALLER_WARMUP: ${CALLER_WARMUP:-true}
+      CALLER_OPENING_DELAY: ${CALLER_OPENING_DELAY:-0s}
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
       - "127.0.0.1:${API_ADMIN_PORT:-8081}:8081"
@@ -135,10 +141,12 @@ services:
       REPORT_CONCURRENCY: 1
       CALLER_CONCURRENCY: ${CALLER_CONCURRENCY:-3}
       CALLER_REPLY_TIMEOUT: ${CALLER_REPLY_TIMEOUT:-30s}
-      # ADR-029: right after a dialogue's opening, send the model the
-      # dialogue prefix so the first model-answered question does not
-      # process the whole system prompt from scratch.
+      # ADR-029: run the api's caller.warmup tasks — send the model the
+      # known part of the next prompt so the first model-answered question
+      # does not process the system prompt and opening from scratch.
+      # CALLER_OPENING_DELAY is read here only by bench-llm.
       CALLER_WARMUP: ${CALLER_WARMUP:-true}
+      CALLER_OPENING_DELAY: ${CALLER_OPENING_DELAY:-0s}
       CALLER_STUB_DELAY: ${CALLER_STUB_DELAY:-1s}
       # 112-5b/ADR-025/029: "llm" (default) answers caller.reply through
       # aicaller.Replier over the llm service; "stub" is 112-5a's six fixed

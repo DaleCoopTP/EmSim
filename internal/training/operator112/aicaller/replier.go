@@ -100,14 +100,15 @@ func (r Replier) Reply(ctx context.Context, req operator112.CallerReplyRequest) 
 
 // Warm asks the model to process req's dialogue prefix ahead of the next
 // reply (ADR-029's prompt-cache warm-up): WarmupMessages with a single
-// generated token, the output discarded. It is called right after the
-// no-model opening, while the trainee reads it and types, so the first
-// model-answered turn does not have to process the whole system prompt
-// and opening from scratch. A scenario with no caller profile never
-// reaches the model and is not warmed. The call has no effect on the
-// dialogue; an error only means the next reply starts cold.
+// generated token, the output discarded. req.Transcript is the prefix
+// to warm — empty for the system prompt alone (at answer_incoming), or
+// the first operator line and the scenario's opening (at that first
+// line) — so the first model-answered turn does not have to process it
+// from scratch. A scenario with no caller profile never reaches the
+// model and is not warmed. The call has no effect on the dialogue; an
+// error only means the next reply starts cold.
 func (r Replier) Warm(ctx context.Context, req operator112.CallerReplyRequest) error {
-	if req.Caller == nil || len(req.Transcript) == 0 {
+	if req.Caller == nil {
 		return nil
 	}
 	_, err := r.Chat.Complete(ctx, llm.Request{
