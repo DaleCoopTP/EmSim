@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { CardPreview } from "../api/content";
 import type { CardView } from "../api/workplace";
 import { formatDateTime, formatOffset } from "../format";
@@ -9,7 +10,10 @@ import { applicantStatusLabel, reactionLabel } from "../labels";
 // read-only everywhere it is used so far (the instructor catalogue's
 // scenario detail, C6); slice 3 reuses it as-is for the live card and
 // only adds action controls around it, not inside it.
-export function IncidentCard({ card }: { card: CardPreview | CardView }) {
+// mineSlot, when given, replaces the static status of the trainee's own
+// service in the service list with the live status block and its pencil
+// (ADR-030); every other service stays read-only.
+export function IncidentCard({ card, mineSlot }: { card: CardPreview | CardView; mineSlot?: ReactNode }) {
   const applicantStatus = applicantStatusLabel(card.applicant?.status);
   return (
     <article className="incident-card dds-card">
@@ -66,7 +70,7 @@ export function IncidentCard({ card }: { card: CardPreview | CardView }) {
           {card.notification_list.map((n, i) => (
             <div key={i} className={`dds-service${n.mine ? " dds-service-mine" : ""}`}>
               <strong>{n.service ?? "Служба"}</strong>
-              <span>{reactionLabel(n.status)}</span>
+              {n.mine && mineSlot ? mineSlot : <span>{reactionLabel(n.status)}</span>}
             </div>
           ))}
           {card.notification_list.length === 0 && <p className="dds-card-subvalue">Службы не назначены.</p>}

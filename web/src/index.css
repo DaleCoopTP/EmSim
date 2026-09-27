@@ -353,6 +353,21 @@ dd { margin: 0; }
 .dds-service span { display: block; }
 .dds-service span { margin-top: 3px; color: #607078; font-size: 11px; }
 .dds-service-mine { border-left-color: var(--arm-accent); box-shadow: inset 0 -2px var(--arm-accent); }
+/* ADR-030: the trainee's own service block — live status, history, pencil. */
+.dds-service-mine:has(.dds-service-block) { flex: 1 1 320px; }
+.dds-service-block-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 3px; }
+.dds-service-block-head > span { flex: 1; color: #283740; font-weight: 600; }
+.dds-service-history-toggle { padding: 1px 6px; color: var(--arm-link); background: transparent; border: 0; font-size: 11px; cursor: pointer; }
+.dds-service-pencil { padding: 1px 8px; color: #fff; background: var(--arm-accent); border: 0; border-radius: 2px; font-size: 13px; cursor: pointer; }
+.dds-service-pencil:hover { background: var(--arm-accent-dark); }
+.dds-service-history { margin: 6px 0 0; padding-left: 18px; color: #3a4a53; font-size: 11px; }
+.dds-service-history li { margin: 2px 0; }
+.dds-status-form { display: grid; gap: 6px; margin-top: 6px; padding: 6px; background: #fff; border: 1px solid var(--arm-line); }
+.dds-status-form label { display: grid; gap: 3px; font-size: 11px; }
+.dds-status-form textarea { min-height: 56px; }
+.dds-status-form-actions { display: flex; gap: 6px; }
+.card-status-badge { display: inline-block; padding: 1px 6px; color: #fff; background: var(--arm-ok); border-radius: 2px; font-size: 11px; }
+.card-status-alarm { background: var(--arm-danger); }
 .dds-item-status { display: flex; flex-wrap: wrap; gap: 1px; margin-bottom: 7px; background: #aeb8bd; }
 .dds-item-status > div { flex: 1 1 160px; min-height: 48px; padding: 6px 10px; background: #edf0f1; }
 .dds-item-status span { display: block; color: #647279; font-size: 10px; text-transform: uppercase; }
