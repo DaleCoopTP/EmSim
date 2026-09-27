@@ -85,35 +85,44 @@ export function ScenarioEditorRoute() {
   const [probeText, setProbeText] = useState("");
   const [probeResult, setProbeResult] = useState<ProbeMatch[] | null>(null);
 
-  // The form is loaded from the server once per scenarioId. A later
-  // background refetch (window focus, reconnect, a mutation's own
-  // invalidation) must never overwrite what the author is typing
-  // (review 2026-09-26, item 11): if the server's latest version differs
-  // from the one this form is based on, the author is told and decides
-  // (serverChanged below); saving meanwhile still gets 409 stale_draft.
-  // Adjusted during render (react.dev's "storing information from
-  // previous renders"), not in an effect, so it is never a render behind.
+  // The form follows the server's scenario only while it holds no
+  // unsaved edits. A background refetch (window focus, reconnect, a
+  // mutation's own invalidation) must never overwrite what the author is
+  // typing (review 2026-09-26, item 11): with unsaved edits, a server
+  // version this form neither loaded nor saved (e.g. another tab saved)
+  // only raises a notice and the author decides; saving meanwhile gets
+  // 409 stale_draft. Without edits — including a first load from a stale
+  // cache followed by the mount refetch — the newer version is simply
+  // taken. All of this is adjusted during render (react.dev's "storing
+  // information from previous renders"), not in an effect.
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   // Every digest this form itself loaded or saved: the query cache still
   // holds the pre-save digest until the post-save refetch lands, and
   // that is not someone else's change.
   const [ownDigests, setOwnDigests] = useState<string[]>([]);
+  // The title/body last loaded from or saved to the server; the form is
+  // dirty when it differs.
+  const [baseline, setBaseline] = useState("");
+  const snapshot = (t: string, b: unknown) => JSON.stringify([t, b]);
+  const dirty = baseline !== "" && snapshot(title, body) !== baseline;
   const loadFromServer = () => {
     if (!existing.data) return;
     setTitle(existing.data.title);
     setBody(existing.data.body as unknown as Intake112EditorBody);
+    setBaseline(snapshot(existing.data.title, existing.data.body));
     setSavedVersionId(existing.data.version_id ?? "");
     setSavedDigest(existing.data.digest ?? "");
     setOwnDigests((current) => [...current, existing.data?.digest ?? ""]);
     setIssues(existing.data.issues ?? []);
   };
-  if (scenarioId && existing.data && loadedFor !== scenarioId &&
-    existing.data.body.exercise_type === "operator112_intake" && "intake112" in existing.data.body) {
+  const editable = !!existing.data && existing.data.body.exercise_type === "operator112_intake" && "intake112" in existing.data.body;
+  const unseenServerVersion = !!scenarioId && loadedFor === scenarioId && !!existing.data?.digest &&
+    !ownDigests.includes(existing.data.digest);
+  if (scenarioId && editable && (loadedFor !== scenarioId || (unseenServerVersion && !dirty))) {
     setLoadedFor(scenarioId);
     loadFromServer();
   }
-  const serverChanged = !!scenarioId && loadedFor === scenarioId && !!existing.data?.digest &&
-    !ownDigests.includes(existing.data.digest);
+  const serverChanged = unseenServerVersion && dirty;
 
   if (!isNew && existing.isPending) return <p>Загрузка…</p>;
   if (!isNew && existing.isError) return <p className="error">{errorMessage(existing.error)}</p>;
@@ -161,6 +170,7 @@ export function ScenarioEditorRoute() {
           setSavedVersionId(result.version_id);
           setSavedDigest(result.digest);
           setOwnDigests((current) => [...current, result.digest]);
+          setBaseline(snapshot(title, body));
           setIssues(result.issues ?? []);
         },
       },
