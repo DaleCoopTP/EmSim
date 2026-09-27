@@ -10,5 +10,15 @@
     },
     "notify": ["dds_district", "pilot_yuao_prefecture", "pilot_nature_department"],
     "source_row": 74
+  },
+  {
+    "code": "22020000",
+    "name": "Без сознания",
+    "features": {
+      "признак_1": "Без сознания",
+      "группа": "Оказание медицинской скорой и неотложной помощи"
+    },
+    "notify": ["dds_ambulance_03"],
+    "source_row": 1231
   }
 ]
