@@ -220,6 +220,24 @@ func TestReplyRejectsEmptyReplyAfterCleanup(t *testing.T) {
 	}
 }
 
+// TestReplyRejectsUnclosedThinkBlock is ADR-029's own case: generation
+// cut off by max_tokens in the middle of reasoning leaves an unclosed
+// <think>, which must never reach the trainee as a caller line.
+func TestReplyRejectsUnclosedThinkBlock(t *testing.T) {
+	chat := &stubChat{result: llm.Result{Text: "<think>начинаю рассуждать. Думаю, что адрес", FinishReason: "length"}}
+	r := Replier{Chat: chat, Model: "m"}
+	req := operator112.CallerReplyRequest{
+		Facts: testFacts(), Caller: testCaller(), Turn: 2,
+		Transcript: []training.IntakeLine{
+			line("operator", "Алло"), line("caller", "Помогите!", "address_city"),
+			line("operator", "Расскажите подробнее, что случилось"),
+		},
+	}
+	if reply, err := r.Reply(context.Background(), req); err == nil {
+		t.Fatalf("expected an error for a reply that is only unclosed reasoning, got %q", reply.Text)
+	}
+}
+
 func TestSystemMessageStaysByteIdenticalAcrossTurns(t *testing.T) {
 	chat := &stubChat{result: llm.Result{Text: "ответ", FinishReason: "stop"}}
 	r := Replier{Chat: chat, Model: "m"}

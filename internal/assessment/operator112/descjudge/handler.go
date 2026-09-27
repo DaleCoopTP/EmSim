@@ -19,8 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
-	"strings"
 
 	"emsim/internal/assessment"
 	"emsim/internal/platform/llm"
@@ -171,17 +169,16 @@ func (h Handler) Answer(ctx context.Context, model string, parameters map[string
 	return json.Marshal(answers)
 }
 
-var thinkBlock = regexp.MustCompile(`(?s)<think>.*?</think>`)
-
-// parseAnswers strips a leaked <think>...</think> block (the same
-// defensive strip aicaller.CleanReply applies, since disabling model
-// reasoning output is a server-side setting this client cannot enforce)
+// parseAnswers strips leaked model reasoning through llm.StripThinking
+// (the same defensive strip aicaller.CleanReply applies, since disabling
+// model reasoning output is a server-side setting this client cannot
+// enforce — ADR-029)
 // and requires the decoded object to have exactly ids' own keys, each a
 // valid Answer value — any other shape (missing key, extra key, unknown
 // value, non-object) is a schema violation this Handler raises as an
 // error rather than guessing.
 func parseAnswers(text string, ids []string) (map[string]Answer, error) {
-	cleaned := strings.TrimSpace(thinkBlock.ReplaceAllString(text, ""))
+	cleaned := llm.StripThinking(text)
 	var answers map[string]Answer
 	if err := json.Unmarshal([]byte(cleaned), &answers); err != nil {
 		return nil, fmt.Errorf("descjudge: decode answers: %w", err)

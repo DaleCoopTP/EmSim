@@ -128,3 +128,29 @@ func TestClientCompleteRejectsEmptyChoices(t *testing.T) {
 		t.Fatal("expected an error for a response with no choices")
 	}
 }
+
+// TestClientCompleteSendsZeroTemperature is ADR-029's own regression: a
+// judge configured with temperature 0 must put an explicit 0 on the wire,
+// otherwise the server substitutes its own sampling default and the
+// sealed judge parameters no longer describe what actually ran.
+func TestClientCompleteSendsZeroTemperature(t *testing.T) {
+	var rawBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&rawBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{}"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	if _, err := NewClient(server.URL).Complete(context.Background(), Request{Model: "m", Messages: []Message{{Role: "user", Content: "x"}}, Temperature: 0}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	temperature, ok := rawBody["temperature"]
+	if !ok {
+		t.Fatalf("temperature missing from request body: %+v", rawBody)
+	}
+	if temperature != float64(0) {
+		t.Fatalf("temperature = %v, want 0", temperature)
+	}
+}

@@ -85,6 +85,23 @@ func TestHandlerAnswerStripsThinkBlock(t *testing.T) {
 	}
 }
 
+// TestHandlerAnswerStripsTemplateOpenedThinkBlock covers a chat template
+// that opens <think> in the prompt itself: the completion then carries
+// only the closing tag (ADR-029).
+func TestHandlerAnswerStripsTemplateOpenedThinkBlock(t *testing.T) {
+	chat := &fakeChat{result: llm.Result{Text: "рассуждение\n</think>\n" + `{"q":"no"}`, FinishReason: "stop"}}
+	h := Handler{Chat: chat}
+	payload := requestPayload(t, "x", Question{ID: "q", Question: "y?"})
+	answer, err := h.Answer(context.Background(), "m", nil, payload)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	var decoded map[string]Answer
+	if err := json.Unmarshal(answer, &decoded); err != nil || decoded["q"] != AnswerNo {
+		t.Fatalf("unexpected answer: %s (err=%v)", answer, err)
+	}
+}
+
 func TestHandlerAnswerRejectsTruncatedResponse(t *testing.T) {
 	chat := &fakeChat{result: llm.Result{Text: `{"q":"ye`, FinishReason: "length"}}
 	h := Handler{Chat: chat}

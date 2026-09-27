@@ -31,11 +31,17 @@ type Message struct {
 // than special-cased per server, since sending an extra field an
 // OpenAI-compatible server does not recognize is harmless. Stream is
 // always false: this client only ever wants the complete text.
+//
+// Temperature is always sent, zero included (ADR-029): with omitempty a
+// judge's temperature 0 vanished from the wire and the server
+// substituted its own default (0.8 for both llama-server and Ollama),
+// while assessment_inputs.judge still recorded 0. Every caller sets it
+// explicitly.
 type Request struct {
 	Model         string    `json:"model"`
 	Messages      []Message `json:"messages"`
 	Stream        bool      `json:"stream"`
-	Temperature   float64   `json:"temperature,omitempty"`
+	Temperature   float64   `json:"temperature"`
 	TopP          float64   `json:"top_p,omitempty"`
 	MaxTokens     int       `json:"max_tokens,omitempty"`
 	RepeatPenalty float64   `json:"repeat_penalty,omitempty"`

@@ -3,7 +3,6 @@ package aicaller
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -141,18 +140,18 @@ func scriptedAnswer(facts []content.Intake112Fact, askedThisTurn []string, messa
 	return "", false
 }
 
-var thinkBlock = regexp.MustCompile(`(?s)<think>.*?</think>`)
-
-// CleanReply strips a leaked <think>...</think> block (the model's
-// reasoning is reported disabled, per the user, but this stays a
+// CleanReply strips leaked model reasoning through llm.StripThinking
+// (a closed <think>...</think> block, an unclosed one cut off by
+// max_tokens, or a template-opened one ending in a lone </think> —
+// reasoning is disabled server-side, ADR-029, but this stays a
 // defensive strip rather than a trust assumption), trims whitespace,
 // and — when finishReason is "length" (the server cut the reply off
 // mid-generation) — trims to the last full sentence so a trainee never
 // sees a reply cut off mid-word. A reply that is empty after cleanup
-// (including one that was only a <think> block) returns "" — Reply
+// (including one that was only reasoning) returns "" — Reply
 // treats that as an error, same as any other model failure.
 func CleanReply(text, finishReason string) string {
-	cleaned := strings.TrimSpace(thinkBlock.ReplaceAllString(text, ""))
+	cleaned := llm.StripThinking(text)
 	if finishReason == "length" {
 		cleaned = trimToLastSentence(cleaned)
 	}
