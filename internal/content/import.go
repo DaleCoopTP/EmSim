@@ -210,6 +210,9 @@ type ScenarioImportCount struct {
 	NewScenarios int
 	NewVersions  int // includes NewScenarios' first version
 	Unchanged    int
+	// StatusChanged counts scenarios moved between approved and
+	// archived by their files' archived flag (ADR-030).
+	StatusChanged int
 }
 
 // ImportScenarios validates and imports a batch of scenario files
@@ -306,11 +309,32 @@ func (s *Service) ImportScenarios(ctx context.Context, files map[string]io.Reade
 				result.Unchanged++
 			}
 		}
+		// items is sorted by key then version, so the last file seen per
+		// key is its newest version — the one whose archived flag counts.
+		archived := make(map[string]bool, len(items))
+		for _, it := range items {
+			archived[it.file.Key] = it.file.Archived
+		}
+		keys := make([]string, 0, len(archived))
+		for key := range archived {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			changed, err := s.applyCatalogueStatus(ctx, tx, key, archived[key])
+			if err != nil {
+				return fmt.Errorf("%s: %w", key, err)
+			}
+			if changed {
+				result.StatusChanged++
+			}
+		}
 		return s.store.AuditRecord(ctx, tx, audit.Entry{
 			ActorID: &actorID, ActorRole: actorRole, Action: "content.import.scenarios",
 			ResourceType: "scenario", Outcome: audit.OutcomeOK, RequestID: requestID,
 			Details: map[string]any{
 				"new_scenarios": result.NewScenarios, "new_versions": result.NewVersions, "unchanged": result.Unchanged,
+				"status_changed": result.StatusChanged,
 			},
 		})
 	})
@@ -318,6 +342,28 @@ func (s *Service) ImportScenarios(ctx context.Context, files map[string]io.Reade
 		return ScenarioImportCount{}, err
 	}
 	return result, nil
+}
+
+// applyCatalogueStatus moves an imported scenario between approved and
+// archived (ADR-030). Only those two statuses are touched: a file-backed
+// scenario is never a draft, and neither body nor versions change, so a
+// past run or report reading this scenario is unaffected.
+func (s *Service) applyCatalogueStatus(ctx context.Context, tx pgx.Tx, key string, archived bool) (bool, error) {
+	scenario, err := s.store.ScenarioByKey(ctx, tx, key)
+	if err != nil {
+		return false, err
+	}
+	want := "approved"
+	if archived {
+		want = "archived"
+	}
+	if scenario.Status == want || (scenario.Status != "approved" && scenario.Status != "archived") {
+		return false, nil
+	}
+	if err := s.store.UpdateScenarioStatus(ctx, tx, scenario.ID, want); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 type scenarioChange int

@@ -4,6 +4,7 @@
   "version": 1,
   "title": "Дерево во дворе — 01",
   "origin": "manual",
+  "archived": true,
   "body": {
     "schema": "emsim/scenario/v1",
     "target_service": "dds_district",

@@ -173,7 +173,7 @@ paths:
       parameters:
         - { name: service, in: query, schema: { type: string } }
         - { name: exercise_type, in: query, schema: { $ref: '#/components/schemas/ExerciseType' } }
-        - { name: status, in: query, schema: { type: string, enum: [draft, approved, archived] } }
+        - { name: status, in: query, description: 'Без параметра архивные сценарии не возвращаются (ADR-030); status=archived показывает только их.', schema: { type: string, enum: [draft, approved, archived] } }
         - { name: difficulty_min, in: query, schema: { type: integer, minimum: 1, maximum: 10 } }
         - { name: difficulty_max, in: query, schema: { type: integer, minimum: 1, maximum: 10 } }
         - { $ref: '#/components/parameters/Page' }
