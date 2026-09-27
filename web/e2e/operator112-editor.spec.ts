@@ -78,6 +78,20 @@ test("112-7 editor: create, validate, pass it yourself, approve, and assign", as
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
   const scenarioDetailURL = page.url().replace(/\/edit$/, "");
 
+  // An unsaved local edit survives a background refetch of the scenario
+  // (window focus → TanStack Query refetchOnWindowFocus) — review
+  // 2026-09-26, item 11: the form used to be reset to the saved version.
+  await page.getByRole("button", { name: "Общее" }).click();
+  const unsavedTitle = `${title} (несохранённая правка)`;
+  await page.getByLabel("Название").fill(unsavedTitle);
+  const refetch = page.waitForResponse((response) =>
+    /\/api\/v1\/scenarios\/[0-9a-f-]+$/.test(new URL(response.url()).pathname) && response.request().method() === "GET");
+  await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+  await refetch;
+  await expect(page.getByLabel("Название")).toHaveValue(unsavedTitle);
+  await expect(page.getByText(/На сервере сохранена другая версия/)).toHaveCount(0);
+  await page.getByLabel("Название").fill(title);
+
   // Проверка: the constructed draft must have no blocking errors — the
   // tab's own label grows a "(N)" suffix (ScenarioEditorRoute's errorCount)
   // the moment any error-severity issue exists, so an exact match on the

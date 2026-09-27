@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   emptyIntake112Body,
@@ -85,18 +85,35 @@ export function ScenarioEditorRoute() {
   const [probeText, setProbeText] = useState("");
   const [probeResult, setProbeResult] = useState<ProbeMatch[] | null>(null);
 
-  useEffect(() => {
+  // The form is loaded from the server once per scenarioId. A later
+  // background refetch (window focus, reconnect, a mutation's own
+  // invalidation) must never overwrite what the author is typing
+  // (review 2026-09-26, item 11): if the server's latest version differs
+  // from the one this form is based on, the author is told and decides
+  // (serverChanged below); saving meanwhile still gets 409 stale_draft.
+  // Adjusted during render (react.dev's "storing information from
+  // previous renders"), not in an effect, so it is never a render behind.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  // Every digest this form itself loaded or saved: the query cache still
+  // holds the pre-save digest until the post-save refetch lands, and
+  // that is not someone else's change.
+  const [ownDigests, setOwnDigests] = useState<string[]>([]);
+  const loadFromServer = () => {
     if (!existing.data) return;
-    if (existing.data.body.exercise_type !== "operator112_intake" || !("intake112" in existing.data.body)) return;
     setTitle(existing.data.title);
     setBody(existing.data.body as unknown as Intake112EditorBody);
     setSavedVersionId(existing.data.version_id ?? "");
     setSavedDigest(existing.data.digest ?? "");
+    setOwnDigests((current) => [...current, existing.data?.digest ?? ""]);
     setIssues(existing.data.issues ?? []);
-    // Loaded once per scenarioId: further local edits must not be
-    // clobbered by a background refetch of the same query.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scenarioId, existing.dataUpdatedAt]);
+  };
+  if (scenarioId && existing.data && loadedFor !== scenarioId &&
+    existing.data.body.exercise_type === "operator112_intake" && "intake112" in existing.data.body) {
+    setLoadedFor(scenarioId);
+    loadFromServer();
+  }
+  const serverChanged = !!scenarioId && loadedFor === scenarioId && !!existing.data?.digest &&
+    !ownDigests.includes(existing.data.digest);
 
   if (!isNew && existing.isPending) return <p>Загрузка…</p>;
   if (!isNew && existing.isError) return <p className="error">{errorMessage(existing.error)}</p>;
@@ -143,6 +160,7 @@ export function ScenarioEditorRoute() {
         onSuccess: (result) => {
           setSavedVersionId(result.version_id);
           setSavedDigest(result.digest);
+          setOwnDigests((current) => [...current, result.digest]);
           setIssues(result.issues ?? []);
         },
       },
@@ -368,6 +386,12 @@ export function ScenarioEditorRoute() {
         <button type="button" disabled={!hasSavedVersion || errorCount > 0 || startPreview.isPending} onClick={preview}>Пройти самому (предпросмотр)</button>
         <button type="button" disabled={!hasSavedVersion || errorCount > 0 || approveMutation.isPending} onClick={approve}>Утвердить</button>
         {saveError && <p className="error">{errorMessage(saveError)}</p>}
+        {serverChanged && (
+          <p className="notice" role="alert">
+            На сервере сохранена другая версия этого сценария (например, из другой вкладки). Ваши изменения в форме не тронуты; при сохранении будет конфликт.{" "}
+            <button type="button" onClick={loadFromServer}>Загрузить сохранённую версию (изменения в форме будут потеряны)</button>
+          </p>
+        )}
         {startPreview.isError && <p className="error">{errorMessage(startPreview.error)}</p>}
         {approveMutation.isError && <p className="error">{errorMessage(approveMutation.error)}</p>}
         {approveMutation.isSuccess && <p>Сценарий утверждён.</p>}
