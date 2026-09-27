@@ -61,8 +61,8 @@ func answerTimingRule(ev trainingintake.EvidenceBody, c assessment.RubricCriteri
 // fillTimingRule is T_FILL (ADR-026 §2.4): answered_at -> the
 // notification's own notified_at (the "оповестить и сохранить" moment —
 // ADR-026's own "что проверяется" anchor, consistent with scoredCard),
-// minus the trainee's total wait for the AI caller's own replies
-// (Σ IntakeCallerTurn resolved-turn duration, 112-5b — a trainee should
+// minus the trainee's wait for the AI caller's own replies *inside that
+// interval* (callerTurnsWait, 112-5b — a trainee should
 // never be penalized for model latency, RFC-001's own "техническая
 // задержка не считается ошибкой обучаемого" applied here). Not reaching
 // notify_services at all (stop, or notify never happened) makes this
@@ -79,23 +79,35 @@ func fillTimingRule(ev trainingintake.EvidenceBody, c assessment.RubricCriterion
 	if ev.Notification == nil {
 		return timingResult(c, nil, normS, nil, "карточка не была отправлена службам")
 	}
-	elapsed := ev.Notification.NotifiedAt.Sub(*ev.IntakeState.AnsweredAt) - callerTurnsWait(ev)
+	elapsed := ev.Notification.NotifiedAt.Sub(*ev.IntakeState.AnsweredAt) - callerTurnsWait(ev, *ev.IntakeState.AnsweredAt, ev.Notification.NotifiedAt)
 	if elapsed < 0 {
 		elapsed = 0
 	}
 	return timingResult(c, &elapsed, normS, evidenceRefs(ev), "")
 }
 
-// callerTurnsWait sums every IntakeCallerTurn's own resolved duration
+// callerTurnsWait sums how long a caller reply was outstanding within
+// [from, to] — each IntakeCallerTurn's own requested_at..resolved_at
 // (answered, cancelled, or failed all set resolved_at — see
 // internal/training.Service.ApplyCallerReply/FailCallerTurn/
-// cancelPendingCallerTurn) — the trainee could not have been filling the
-// card any faster while a chat message's reply was still outstanding.
-func callerTurnsWait(ev trainingintake.EvidenceBody) time.Duration {
+// cancelPendingCallerTurn) clipped to that window; a turn still pending
+// at the evidence snapshot counts up to the window's end. The trainee
+// could not have been filling the card any faster while a reply was
+// outstanding, but chatting on after "оповестить и сохранить" is not
+// fill time and must not shrink it. At most one turn is pending at a
+// time, so the clipped intervals never overlap.
+func callerTurnsWait(ev trainingintake.EvidenceBody, from, to time.Time) time.Duration {
 	var total time.Duration
 	for _, turn := range ev.IntakeState.CallerTurns {
-		if turn.ResolvedAt != nil {
-			total += turn.ResolvedAt.Sub(turn.RequestedAt)
+		start, end := turn.RequestedAt, to
+		if turn.ResolvedAt != nil && turn.ResolvedAt.Before(to) {
+			end = *turn.ResolvedAt
+		}
+		if start.Before(from) {
+			start = from
+		}
+		if end.After(start) {
+			total += end.Sub(start)
 		}
 	}
 	return total

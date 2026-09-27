@@ -502,6 +502,56 @@ func TestEvaluateFillTimingSubtractsCallerTurnWait(t *testing.T) {
 	}
 }
 
+// TestEvaluateFillTimingCountsOnlyWaitInsideFillWindow: only the part of
+// a caller turn's wait that falls between answered_at and notified_at is
+// subtracted — chatting on after "оповестить и сохранить" must not
+// improve T_FILL (review 2026-09-26, item 3).
+func TestEvaluateFillTimingCountsOnlyWaitInsideFillWindow(t *testing.T) {
+	cases := []struct {
+		name         string
+		turns        func(answered, notified time.Time) []training.IntakeCallerTurn
+		wantElapsedS float64
+	}{
+		{"no turns", func(answered, notified time.Time) []training.IntakeCallerTurn { return nil }, 150},
+		{"wait entirely after notify is ignored", func(answered, notified time.Time) []training.IntakeCallerTurn {
+			return []training.IntakeCallerTurn{
+				resolvedTurn(1, notified.Add(5*time.Second), 55*time.Second),
+				resolvedTurn(2, notified.Add(70*time.Second), 55*time.Second),
+			}
+		}, 150},
+		{"wait entirely inside is subtracted", func(answered, notified time.Time) []training.IntakeCallerTurn {
+			return []training.IntakeCallerTurn{resolvedTurn(1, answered.Add(10*time.Second), 30*time.Second)}
+		}, 120},
+		{"turn straddling notify counts up to notify", func(answered, notified time.Time) []training.IntakeCallerTurn {
+			return []training.IntakeCallerTurn{resolvedTurn(1, notified.Add(-20*time.Second), 60*time.Second)}
+		}, 130},
+		{"turn still pending at snapshot counts up to notify", func(answered, notified time.Time) []training.IntakeCallerTurn {
+			return []training.IntakeCallerTurn{{Turn: 1, Status: training.CallerTurnPending, RequestedAt: notified.Add(-25 * time.Second)}}
+		}, 125},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ref := fullReference()
+			body := baseBody(ref)
+			ev := baseEvidence(testCatalog(), correctCard(), true, true)
+			answered := *ev.IntakeState.AnsweredAt
+			notified := answered.Add(150 * time.Second)
+			ev.Notification.NotifiedAt = notified
+			ev.IntakeState.CallerTurns = tc.turns(answered, notified)
+			fill := findResult(t, mustEvaluate(t, ev, body, testRubric()), "T_FILL")
+			want := linearTimingScore(tc.wantElapsedS, 90)
+			if fill.Score == nil || *fill.Score != want {
+				t.Fatalf("T_FILL = %+v, want score %.3f for %.0fs effective", fill, want, tc.wantElapsedS)
+			}
+		})
+	}
+}
+
+func resolvedTurn(n int, requested time.Time, wait time.Duration) training.IntakeCallerTurn {
+	resolved := requested.Add(wait)
+	return training.IntakeCallerTurn{Turn: n, Status: training.CallerTurnAnswered, RequestedAt: requested, ResolvedAt: &resolved}
+}
+
 func TestEvaluateDescriptionAbsent(t *testing.T) {
 	ref := fullReference()
 	body := baseBody(ref)
