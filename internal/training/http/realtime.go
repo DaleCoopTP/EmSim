@@ -90,7 +90,7 @@ func (h *Handlers) toMonitorJSON(result training.MonitorResult, now time.Time) m
 	for i, row := range result.Rows {
 		items := make([]itemSummaryJSON, len(row.ActiveItems))
 		for j, it := range row.ActiveItems {
-			items[j] = toItemSummaryJSON(it)
+			items[j] = toItemSummaryJSON(it, now)
 		}
 		rowJSON := monitorRowJSON{
 			WorkstationNo: row.WorkstationNo,
