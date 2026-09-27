@@ -314,7 +314,10 @@ func (e exercise) decideProfileFlow(item training.Item, cmd training.Command, no
 		reason := training.CloseCallDropped
 		d.Close, d.State = &reason, training.ItemClosed
 	case training.CommandAddIncidentType:
-		if (item.State != training.ItemOpened && item.State != training.ItemInProgress) || state.Notified {
+		// Like save_intake_draft: nothing is edited while the call is still
+		// ringing — the first such edit moves the item to in_progress, after
+		// which answer_incoming (opened-only) could never succeed.
+		if (item.State != training.ItemOpened && item.State != training.ItemInProgress) || state.Notified || state.CallStatus == "ringing" {
 			return reject(item, training.RejectTransitionNotAllowed), nil
 		}
 		var p struct {
@@ -350,7 +353,7 @@ func (e exercise) decideProfileFlow(item training.Item, cmd training.Command, no
 		d.Effect = map[string]any{"type_id": p.TypeID, "active_profiles": activeProfileIDs(state.Catalog, card.IncidentTypes)}
 		d.State = training.ItemInProgress
 	case training.CommandRemoveIncidentType:
-		if (item.State != training.ItemOpened && item.State != training.ItemInProgress) || state.Notified {
+		if (item.State != training.ItemOpened && item.State != training.ItemInProgress) || state.Notified || state.CallStatus == "ringing" {
 			return reject(item, training.RejectTransitionNotAllowed), nil
 		}
 		var p struct {

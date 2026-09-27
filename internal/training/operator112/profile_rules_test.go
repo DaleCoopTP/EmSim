@@ -218,6 +218,15 @@ func TestFullCaseFlow(t *testing.T) {
 	if d := run(training.CommandSaveIntakeDraft, map[string]any{"draft": item.IntakeCard}); d.Accepted {
 		t.Fatal("save before answering the call")
 	}
+	// A direct add/remove_incident_type while ringing is rejected too:
+	// accepting it would move the item to in_progress, where
+	// answer_incoming can no longer succeed (review 2026-09-26, item 5).
+	if d := run(training.CommandAddIncidentType, map[string]string{"type_id": "gas_explosion"}); d.Accepted {
+		t.Fatal("add_incident_type before answering the call")
+	}
+	if d := run(training.CommandRemoveIncidentType, map[string]string{"type_id": "gas_explosion"}); d.Accepted {
+		t.Fatal("remove_incident_type before answering the call")
+	}
 	if d := run(training.CommandAnswerIncoming, map[string]any{}); !d.Accepted || len(d.IntakeState.Transcript) != 1 {
 		t.Fatalf("answer: %+v", d)
 	}
