@@ -3192,3 +3192,17 @@ Validation: `make verify` — ok; `make compose-config` — ok; `make test-integ
 Risks: выборка первых ответов мала — по одному на холодный прогон. Узкое место профиля Mac — разбор промпта (~16 ток/с при `LLM_REPACK=false` в 8-ГБ VM), а не прогрев. На целевом x86-64 с repack скорость другая.
 
 Next: W0 `bench-llm` на сервере заказчика; там сравнивать прогрев тоже на холодном `llm`.
+
+## 2026-09-27 — прогрев заявителя в двух точках, задержка вступления, `bench-llm` с темпом класса
+
+Решение пользователя: прогрев начинать раньше, чем после вступления. Кэш `llama-server` совпадает по токенам, поэтому прогревается только известное начало промпта: api ставит `caller.warmup` в транзакции команды на `answer_incoming` (стадия `system`: правила роли и персонаж) и на первой фразе оператора (стадия `opening`: эта фраза и фиксированное вступление сценария). Прогрев после применённого вступления убран; уже поставленные им задачи (без `stage`) выполняются по-старому. Стадия пропускается, если разговор ушёл дальше. `CALLER_OPENING_DELAY` (api, по умолчанию 0, не больше 10 с) делает `caller.reply` первого хода доступной только после задержки — фора прогреву без занятого слота worker. `CALLER_WARMUP` теперь читает и api.
+
+`bench-llm`: диалог начинается с ответа на вызов (прогрев `system`), первая фраза через `--first-line` (3 с) с прогревом `opening`, вступление через `--opening-delay` (по умолчанию `CALLER_OPENING_DELAY`). Новые колонки: `first new tok` (токены промпта первого ответа, обработанные заново, из `timings` `llama-server`; `llm.Result.Timings`), `warm sys/open p95 s`, `warm ready` (диалоги, где оба прогрева закончились до первого вопроса к модели).
+
+Changed: `internal/training/service.go` (`KindCallerWarmup`, стадии, `CallerTiming`/`WithCallerTiming`, задержка первого хода), `internal/platform/config/{caller_timing.go,api.go,worker.go}`, `cmd/emsim/{api.go,worker_composition.go,bench_llm.go}` (`callerWarmupPrefix`), `internal/training/operator112/aicaller/replier.go` (`Warm` прогревает и пустую историю), `internal/platform/llm/client.go`, `compose.yaml`, `.env.example`, тесты, ADR-029, README, `slice-112-5b-plan.md`, CLAUDE.md.
+
+Validation: `make verify` — ok; `make compose-config` — ok; `make test-integration` на локальном PostgreSQL 16 — ok (включая новый `TestCallerWarmupPrimesModelAtAnswerAndFirstLine`: два прогрева, задержка вступления ≥1 с, префикс первого ответа совпадает с прогревом); `go test -race` для `bench-llm` против fake-сервера — ok. С настоящей моделью в облачной сессии не проверялось (веса недоступны).
+
+Risks: при одном слоте (профиль Mac) прогрев `system` длится ~30 с и, если оператор пишет быстро, вопрос всё равно ждёт; второй прогрев мал (~40 токенов) и в основном попадает в кэш первого. Задержка вступления — только настройка, значение не выбрано.
+
+Next: на Mac и на сервере заказчика — `bench-llm` на холодном `llm` с `CALLER_WARMUP=true/false` и `--opening-delay 0s/2s`; по `warm ready` и `first p50/p95` выбрать `CALLER_OPENING_DELAY`.
