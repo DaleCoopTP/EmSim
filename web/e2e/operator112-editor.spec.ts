@@ -54,8 +54,10 @@ test("112-7 editor: create, validate, pass it yourself, approve, and assign", as
   await page.getByRole("link", { name: "+ Создать сценарий 112" }).click();
   await expect(page.getByRole("heading", { name: "Новый сценарий 112" })).toBeVisible();
 
-  // Tab 1: Общее.
+  // Tab 1: Общее. The AON starts as the bare "+7" prefix, which the
+  // server's structural check reports as an error until completed.
   await page.getByLabel("Название").fill(title);
+  await page.getByLabel("АОН (+7 и 10 цифр)").fill("+79161234567");
 
   // Tab 3: Факты — free_text requires at least one, and the one initial
   // fact this test adds must carry a value (internal/content/validate.go's

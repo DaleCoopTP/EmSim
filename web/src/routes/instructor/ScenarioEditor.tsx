@@ -226,7 +226,7 @@ export function ScenarioEditorRoute() {
           <label>Название<input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} /></label>
           <label>Сложность (1–10)<input type="number" min={1} max={10} value={body.difficulty}
             onChange={(e) => setBody((current) => ({ ...current, difficulty: Number(e.target.value) }))} /></label>
-          <label>АОН<input value={intake.call.aon} onChange={(e) => updateCall({ aon: e.target.value })} /></label>
+          <label>АОН (+7 и 10 цифр)<input value={intake.call.aon} placeholder="+79161234567" onChange={(e) => updateCall({ aon: e.target.value })} /></label>
           <label>Время вызова (ЧЧ:ММ)<input value={intake.call.local_time} onChange={(e) => updateCall({ local_time: e.target.value })} /></label>
           <p>Часовой пояс: Europe/Moscow (единственный поддерживаемый).</p>
         </div>

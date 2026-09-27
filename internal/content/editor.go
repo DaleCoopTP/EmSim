@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"emsim/internal/platform/audit"
 
@@ -136,7 +137,7 @@ func (s *Service) CreateOperator112Scenario(ctx context.Context, actorID uuid.UU
 		if err != nil {
 			return err
 		}
-		issues, err := ValidateDetailed(body, storeCatalog{ctx: ctx, tx: tx, store: s.store})
+		issues, err := s.editorIssues(body, storeCatalog{ctx: ctx, tx: tx, store: s.store})
 		if err != nil {
 			return err
 		}
@@ -232,7 +233,7 @@ func (s *Service) EditorScenarioDetail(ctx context.Context, actorID, scenarioID 
 		if err != nil {
 			return err
 		}
-		issues, err := ValidateDetailed(v.Body, storeCatalog{ctx: ctx, tx: tx, store: s.store})
+		issues, err := s.editorIssues(v.Body, storeCatalog{ctx: ctx, tx: tx, store: s.store})
 		if err != nil {
 			return err
 		}
@@ -316,7 +317,7 @@ func (s *Service) SaveOperator112Draft(ctx context.Context, actorID, scenarioID 
 				return err
 			}
 		}
-		issues, err := ValidateDetailed(body, storeCatalog{ctx: ctx, tx: tx, store: s.store})
+		issues, err := s.editorIssues(body, storeCatalog{ctx: ctx, tx: tx, store: s.store})
 		if err != nil {
 			return err
 		}
@@ -364,7 +365,7 @@ func (s *Service) CheckPreviewable(ctx context.Context, actorID, scenarioID, ver
 		if v.ScenarioID != scenarioID {
 			return ErrNotFound
 		}
-		issues, err := ValidateDetailed(v.Body, storeCatalog{ctx: ctx, tx: tx, store: s.store})
+		issues, err := s.editorIssues(v.Body, storeCatalog{ctx: ctx, tx: tx, store: s.store})
 		if err != nil {
 			return err
 		}
@@ -390,7 +391,7 @@ func (s *Service) ValidateOperator112Draft(ctx context.Context, actorID, scenari
 		if sc.CreatedBy != actorID {
 			return ErrNotFound
 		}
-		i, err := ValidateDetailed(body, storeCatalog{ctx: ctx, tx: tx, store: s.store})
+		i, err := s.editorIssues(body, storeCatalog{ctx: ctx, tx: tx, store: s.store})
 		issues = i
 		return err
 	})
@@ -482,7 +483,7 @@ func (s *Service) ApproveOperator112Scenario(ctx context.Context, actorID, scena
 		if !operator112EditorEligible(current.Body) {
 			return ErrUnsupportedForEditor
 		}
-		issues, err := ValidateDetailed(current.Body, storeCatalog{ctx: ctx, tx: tx, store: s.store})
+		issues, err := s.editorIssues(current.Body, storeCatalog{ctx: ctx, tx: tx, store: s.store})
 		if err != nil {
 			return err
 		}
@@ -539,6 +540,135 @@ func (s *Service) IntakeCatalogForInstructor(ctx context.Context) (IntakeCatalog
 	return catalog, nil
 }
 
+// editorIssues is every editor entry point's own issue list:
+// ValidateDetailed's semantic checks plus structuralIssues. Semantic
+// Validate was written assuming scenario.schema.json already passed (as
+// it has for every file import), so without the structural half the
+// editor accepted what the schema forbids — an AON of "invalid" or "+7",
+// local_time "99:99", a bad time zone, an empty fact label — and could
+// approve it (review 2026-09-26, item 4).
+func (s *Service) editorIssues(body Body, catalog storeCatalog) ([]ValidationIssue, error) {
+	issues, err := ValidateDetailed(body, catalog)
+	if err != nil {
+		return nil, err
+	}
+	structural, err := s.structuralIssues(body)
+	if err != nil {
+		return nil, err
+	}
+	return append(structural, issues...), nil
+}
+
+// operator112ForbiddenBodyKeys are scenario.schema.json's DDS-only body
+// properties, which its operator112_intake branch requires to be absent.
+// Go's Body always carries them (non-pointer, non-omitempty — see
+// canonicalizeOperator112Body), so they are dropped from the projection
+// validated here; the 112 exercise never reads them.
+var operator112ForbiddenBodyKeys = []string{"target_service", "card", "contacts", "events", "reference"}
+
+// structuralIssues runs the same scenario.schema.json a file import is
+// held to against an operator-112 editor body, as error issues (a draft
+// may still be saved with them; preview/approve are blocked). The body
+// is projected the way a 112 scenario file carries it — the canonical
+// JSON without the DDS-only keys, and without optional keys that are
+// null only because Body has no omitempty — and wrapped in a synthetic
+// file envelope, whose own fields are never reported.
+func (s *Service) structuralIssues(body Body) ([]ValidationIssue, error) {
+	if s.schemaValidator == nil {
+		return nil, nil
+	}
+	raw, _, _, err := s.canonicalizeOperator112Body(body)
+	if err != nil {
+		return nil, err
+	}
+	object, ok := raw.(map[string]any)
+	if !ok {
+		return nil, nil
+	}
+	projected := make(map[string]any, len(object))
+	for key, value := range object {
+		if value != nil {
+			projected[key] = value
+		}
+	}
+	for _, key := range operator112ForbiddenBodyKeys {
+		delete(projected, key)
+	}
+	if intake, ok := projected["intake112"].(map[string]any); ok {
+		projected["intake112"] = projectIntake112(intake)
+	}
+	// The body's own "schema" marker is server-side bookkeeping the web
+	// editor never sends (Body.Schema stays ""); a file always carries it.
+	if projected["schema"] == "" {
+		projected["schema"] = "emsim/scenario/v1"
+	}
+	envelope := map[string]any{
+		"schema": "emsim/scenario-file/v1", "key": "editor-draft", "version": json.Number("1"),
+		"title": "editor-draft", "origin": "manual", "body": projected,
+	}
+	var issues []ValidationIssue
+	for _, violation := range s.schemaValidator.FileViolations(envelope) {
+		path, ok := strings.CutPrefix(violation.Path, "body")
+		if !ok {
+			continue
+		}
+		issues = append(issues, ValidationIssue{
+			Path: strings.TrimPrefix(path, "."), Code: "schema_violation", Severity: SeverityError, Message: violation.Message,
+		})
+	}
+	return issues, nil
+}
+
+// projectIntake112 undoes, on a shallow copy, the nested places where
+// Body's Go types cannot express "absent" and marshal a zero value that a
+// real 112 file never carries: Dialogue.Initial and Dialogue.Questions
+// (non-omitempty, and the web editor sends them as an empty utterance and
+// []; a free_text dialogue has neither), Reference.
+// RecipientService ("" — only incoming_call has one), and a null
+// Utterance.Reveals (an empty list in a file). Anything the author
+// actually filled in is left as is, so the schema still judges it.
+func projectIntake112(intake map[string]any) map[string]any {
+	out := shallowCopy(intake)
+	if dialogue, ok := out["dialogue"].(map[string]any); ok {
+		dialogue = shallowCopy(dialogue)
+		if initial, ok := dialogue["initial"].(map[string]any); ok && isZeroUtterance(initial) {
+			delete(dialogue, "initial")
+		}
+		if questions, _ := dialogue["questions"].([]any); len(questions) == 0 {
+			delete(dialogue, "questions")
+		}
+		if caller, ok := dialogue["caller"].(map[string]any); ok {
+			caller = shallowCopy(caller)
+			if opening, ok := caller["opening"].(map[string]any); ok && opening["reveals"] == nil {
+				opening = shallowCopy(opening)
+				opening["reveals"] = []any{}
+				caller["opening"] = opening
+			}
+			dialogue["caller"] = caller
+		}
+		out["dialogue"] = dialogue
+	}
+	if reference, ok := out["reference"].(map[string]any); ok && reference["recipient_service"] == "" {
+		reference = shallowCopy(reference)
+		delete(reference, "recipient_service")
+		out["reference"] = reference
+	}
+	return out
+}
+
+func isZeroUtterance(u map[string]any) bool {
+	reveals, _ := u["reveals"].([]any)
+	return u["id"] == "" && u["text"] == "" && len(reveals) == 0
+}
+
+func shallowCopy(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
 // canonicalizeOperator112Body prepares an editor-authored Body for
 // storage: it fills in the DDS-only array fields (Hints/Contacts/Events)
 // with empty, non-nil slices when unset — Body's own json tags have no
@@ -549,16 +679,10 @@ func (s *Service) IntakeCatalogForInstructor(ctx context.Context) (IntakeCatalog
 // never a direct marshal of the typed struct (matching how a file
 // import's own digest is computed, digest.go's own doc comment).
 //
-// This does not run scenario.schema.json's own JSON-Schema validation
-// (schema.Validator.ValidateFile): that schema's card/reference branch
-// assumes a DDS body's Card/Reference are entirely *absent* for
-// operator112_intake, which Go's Body struct (Card/Reference are
-// non-pointer, non-omitempty — every DDS scenario needs them present)
-// cannot represent by construction; reshaping Body to make Card/
-// Reference optional is a larger, DDS-affecting change outside 112-7's
-// scope. The editor therefore relies on ValidateDetailed's semantic
-// checks alone, the same way it already carries every other
-// authoring-time problem as an Issue rather than a schema error.
+// It does not itself run scenario.schema.json: that schema expects a
+// 112 body's DDS-only keys (card/reference/...) to be entirely *absent*,
+// which Go's Body struct (non-pointer, non-omitempty) cannot represent.
+// structuralIssues validates a projection of this canonical JSON instead.
 func (s *Service) canonicalizeOperator112Body(body Body) (raw any, canonicalJSON []byte, digest [32]byte, err error) {
 	if body.Hints == nil {
 		body.Hints = []Hint{}
