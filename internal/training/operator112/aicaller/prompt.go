@@ -15,12 +15,17 @@ import (
 // staticRules or the instruction texts below is visible in old evidence
 // without having to diff the deployed code against the evidence's own
 // timestamp.
-const PromptVersion = "caller-prompt/v1"
+//
+// v2 (ADR-029, 2026-09-27) shortened only the per-turn block, which the
+// model has to process from scratch on every reply: already revealed
+// facts the current message does not ask about are left out (they are
+// in the history), and the task instructions are shorter. staticRules
+// is unchanged.
+const PromptVersion = "caller-prompt/v2"
 
-// staticRules and the three instructionAnswer*/instructionCalmDown/
-// instructionGeneric texts are carried over verbatim from the local
-// MVP's caller.py _system_prompt (slice-112-5b-plan.md's decision 4) —
-// only their position changed. caller.py placed the per-turn facts/task
+// staticRules is carried over verbatim from the local MVP's caller.py
+// _system_prompt (slice-112-5b-plan.md's decision 4), as were v1's task
+// instructions, which v2 shortened — only their position changed. caller.py placed the per-turn facts/task
 // block inside the system message, ahead of the conversation history;
 // llama.cpp's prefix/KV cache only reuses a system+history prefix that
 // stays byte-identical between calls, and a block that changes every
@@ -63,13 +68,13 @@ const staticRules = `Ты играешь заявителя в учебном т
 Выведи только слова заявителя, готовые к озвучиванию:
 без пояснений, заголовков, описания жестов и служебных обозначений.`
 
-const instructionAnswerFacts = `Ответь на заданный вопрос по существу, опираясь на факты. Сохрани их смысл и степень уверенности. Остальные сведения не перечисляй.`
+const instructionAnswerFacts = `Ответь на вопрос по фактам, сохраняя их смысл и уверенность. Другое не перечисляй.`
 
-const instructionCalmDown = `Коротко отреагируй на просьбу успокоиться или говорить спокойнее. Можно выразить эмоцию персонажа и сослаться на уже сообщённые обстоятельства. Новых сведений для сообщения нет.`
+const instructionCalmDown = `Коротко отреагируй на просьбу успокоиться. Новых сведений нет.`
 
-const instructionGeneric = `Коротко отреагируй на последнюю реплику оператора, оставаясь в роли заявителя. Новых сведений для сообщения нет. Если он спрашивает о сведениях, которых нет в фактах, скажи, что не знаешь; если вопрос непонятен, переспроси.`
+const instructionGeneric = `Коротко отреагируй в роли заявителя. Новых сведений нет, сказанное раньше можно повторить. Чего нет ни в фактах, ни в разговоре — не знаешь; непонятное переспроси.`
 
-// calmingPattern is caller-prompt/v1's own fixed trigger for
+// calmingPattern is the caller prompt's own fixed trigger for
 // instructionCalmDown — part of the prompt layout itself, not
 // scenario-authored data, so it stays a package constant rather than an
 // ask_patterns-style scenario field.
@@ -133,10 +138,24 @@ func systemAndHistory(persona string, history []training.IntakeLine) []llm.Messa
 	return messages
 }
 
+// dynamicBlock is the per-turn facts/task block. It lists the open facts
+// the applicant still has use for this turn: those asked about now, and
+// those not yet revealed. A fact already revealed or answered "не знаю"
+// and not asked again is left out — the applicant's own earlier line in
+// the history already carries it, and every listed fact costs prompt
+// processing on every reply (caller-prompt/v2).
 func dynamicBlock(facts []content.Intake112Fact, open, revealed map[string]bool, askedThisTurn []string, currentMessage string) string {
+	askedNow := make(map[string]bool, len(askedThisTurn))
+	for _, id := range askedThisTurn {
+		askedNow[id] = true
+	}
 	var lines []string
 	for _, fact := range facts {
 		if !open[fact.ID] {
+			continue
+		}
+		settled := revealed[fact.ID] || fact.Knowledge == "unknown"
+		if settled && !askedNow[fact.ID] {
 			continue
 		}
 		lines = append(lines, factLine(fact, revealed[fact.ID]))
@@ -145,7 +164,7 @@ func dynamicBlock(facts []content.Intake112Fact, open, revealed map[string]bool,
 	if len(lines) > 0 {
 		factsBlock = strings.Join(lines, "\n")
 	}
-	return "ФАКТЫ\n" + factsBlock + "\n\nЗАДАЧА ТЕКУЩЕЙ РЕПЛИКИ\n" + currentInstruction(askedThisTurn, currentMessage)
+	return "ФАКТЫ\n" + factsBlock + "\n\nЗАДАЧА\n" + currentInstruction(askedThisTurn, currentMessage)
 }
 
 func factLine(fact content.Intake112Fact, revealed bool) string {

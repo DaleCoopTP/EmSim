@@ -266,7 +266,7 @@ func TestSystemMessageStaysByteIdenticalAcrossTurns(t *testing.T) {
 		t.Fatal("expected at least a system and a final user message")
 	}
 	last := chat.gotReq.Messages[len(chat.gotReq.Messages)-1]
-	if last.Role != "user" || !strings.Contains(last.Content, "ФАКТЫ") || !strings.Contains(last.Content, "ЗАДАЧА ТЕКУЩЕЙ РЕПЛИКИ") {
+	if last.Role != "user" || !strings.Contains(last.Content, "ФАКТЫ") || !strings.Contains(last.Content, "ЗАДАЧА") {
 		t.Fatalf("expected the dynamic block appended to the final user message: %+v", last)
 	}
 }
@@ -285,13 +285,45 @@ func TestClosedFactsNeverAppearInThePrompt(t *testing.T) {
 		t.Fatalf("Reply: %v", err)
 	}
 	last := chat.gotReq.Messages[len(chat.gotReq.Messages)-1].Content
-	// age/phone/exact_location were never asked about — only address_city
-	// (open from the start) belongs in the facts block.
+	// age/phone/exact_location were never asked about — none of them may
+	// leak into the facts block.
 	if strings.Contains(last, "Мне сорок лет") || strings.Contains(last, "телефон") || strings.Contains(last, "Точное место") {
 		t.Fatalf("a never-asked fact leaked into the prompt: %q", last)
 	}
-	if !strings.Contains(last, "Мы в Москве") {
-		t.Fatalf("the open fact should be in the prompt: %q", last)
+}
+
+// TestFactsBlockKeepsOnlyFactsInUseThisTurn is caller-prompt/v2's rule:
+// an open fact is listed while not yet revealed or when asked again now;
+// one already revealed, or answered "не знаю", and not asked now is left
+// to the history.
+func TestFactsBlockKeepsOnlyFactsInUseThisTurn(t *testing.T) {
+	facts := testFacts()
+	opening := line("caller", "Помогите, у нас пахнет газом!")
+	block := func(transcript []training.IntakeLine) string {
+		chat := &stubChat{result: llm.Result{Text: "ответ", FinishReason: "stop"}}
+		r := Replier{Chat: chat, Model: "m"}
+		if _, err := r.Reply(context.Background(), operator112.CallerReplyRequest{Facts: facts, Caller: testCaller(), Turn: 3, Transcript: transcript}); err != nil {
+			t.Fatalf("Reply: %v", err)
+		}
+		return chat.gotReq.Messages[len(chat.gotReq.Messages)-1].Content
+	}
+
+	notYetSaid := block([]training.IntakeLine{line("operator", "Алло"), opening, line("operator", "Расскажите подробнее")})
+	if !strings.Contains(notYetSaid, "Мы в Москве (ещё не сообщил)") {
+		t.Fatalf("an open fact not yet revealed must be listed: %q", notYetSaid)
+	}
+
+	alreadySaid := []training.IntakeLine{
+		line("operator", "Алло"), line("caller", "Мы в Москве, помогите!", "address_city"),
+		line("operator", "Где именно вы находитесь?"), line("caller", "Не знаю точно."),
+	}
+	notAskedNow := block(append(append([]training.IntakeLine{}, alreadySaid...), line("operator", "Расскажите подробнее")))
+	if strings.Contains(notAskedNow, "Мы в Москве") || strings.Contains(notAskedNow, "Точное место") || !strings.Contains(notAskedNow, "- (нет)") {
+		t.Fatalf("revealed and unknown facts not asked now must be left to the history: %q", notAskedNow)
+	}
+	askedAgain := block(append(append([]training.IntakeLine{}, alreadySaid...), line("operator", "Какой город?")))
+	if !strings.Contains(askedAgain, "Мы в Москве (уже сообщил)") {
+		t.Fatalf("a revealed fact asked again must be listed as already said: %q", askedAgain)
 	}
 }
 
