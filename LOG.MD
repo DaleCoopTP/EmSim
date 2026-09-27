@@ -3103,3 +3103,25 @@ Validation: `make verify` — ok; `make verify-web`, lint — ok (4 прежни
 Risks: единичное падение полного интеграционного прогона не объяснено — возможно, ранее существовавший нестабильный тест. Черновики, сохранённые до этого изменения с АОН `"+7"` и т. п., теперь показывают блокирующую ошибку до исправления — это ожидаемо.
 
 Next: п. 7 (эталон профильных карт в редакторе) по решению пользователя; затем 112-5b этап 2 (W0).
+
+## 2026-09-27 — 112-5b этап 2 (разработка): модель в compose, ИИ по умолчанию, `bench-llm`
+
+Решение пользователя 27.09: выполнить этап 2 как задумано — модель отдельным контейнером, `llm` по умолчанию; движок — на выбор разработчика. Выбран `llama-server` ([ADR-029](design-docs/adr/029-operator112-local-inference-container.md)). Коммиты c1–c5 от имени пользователя.
+
+Changed:
+- c1: ADR-029; `slice-112-5b-plan.md` — раздел «Этап 2» (коммиты, параметры до замера, шаг на сервере заказчика).
+- c2: `llm.Request.Temperature` без `omitempty` — судья с температурой 0 раньше работал с серверной 0.8, а в `assessment_inputs.judge` записывался 0 (замечание ревью). Общая `llm.StripThinking`: закрытый, незакрытый (обрыв по `max_tokens`) и «висячий» `</think>`; её используют `aicaller.CleanReply` и `descjudge.parseAnswers`.
+- c3: сервис `llm` в `compose.yaml` (`ghcr.io/ggml-org/llama.cpp:server-b11206` по digest, `./models:ro`, сеть `inference` с `internal: true`, без порта, `--reasoning-budget 0`, `--parallel`/`--ctx-size`/`--threads` из env, `--metrics`, healthcheck `/health` с `start_period` 300 с); worker ждёт `service_healthy` (`required: false`). `CALLER_REPLIER`/`ASSESSMENT_JUDGE` по умолчанию `llm` в compose и в `config.Worker`/`config.API`; без URL/модели — ошибка старта с именем переменной. `CALLER_CONCURRENCY` 3 (+1 судья = 4 слота), `CALLER_REPLY_TIMEOUT` 30 с. `compose.no-llm.yaml` выключает `llm` и возвращает `stub`/`off` (адреса — Ollama хоста); `web/e2e/run.mjs` всегда использует его и явно `stub`/`off`; `make compose-config` проверяет оба варианта. Интеграционные тесты, запускающие процессы `api`/`worker`, явно задают `stub`/`off`. `make model` → `scripts/fetch-model.sh`: реестр Ollama (по умолчанию), `--from-ollama`, `--url`; проверка sha256; `models/` в `.gitignore`/`.dockerignore`.
+- c4: `emsim bench-llm` (`cmd/emsim/bench_llm.go`) — виртуальные операторы ведут диалоги по `pilot-112-ai-*` (новейшие версии) через настоящий `aicaller.Replier`, `--judge N` добавляет запросы `descjudge.Handler`; отчёт по уровням: ответы/мин, p50/p95/p99/max, доля дольше `CALLER_REPLY_TIMEOUT`, ошибки, ответы без модели, p95 судьи, токены/с и максимум очереди из `/metrics`; `--json`.
+- c5: README (раздел «Модель»), `.env.example`, CLAUDE.md, `slice-planning-112.md`, этот журнал.
+
+Validation: `make verify` — ok; `make compose-config` — ok (оба варианта); `go test -race` стенда — ok; `bench-llm` проверен в собранном образе (`--help`, прогон против недоступного сервера — ошибки в отчёте); `scripts/fetch-model.sh` проверен с поддельным `ollama` (установка, несовпадение pin, повторный запуск, `--url` без sha). `make test-integration` — ok, 443 с; `npm run test:e2e` (через `compose.no-llm.yaml`, образ собран с CA прокси песочницы) — 6/7: все сценарии 112 прошли, упал только скриншот страницы входа в `smoke.spec.ts` (~1% пикселей, сглаживание шрифтов: в песочнице Chromium 1194 вместо 1243, другие шрифты; страница входа не менялась); `npm run lint` — 4 прежних предупреждения.
+
+Not verified (ограничения песочницы): образ llama.cpp не скачан (хранилище GitHub Packages закрыто прокси) — флаги `--reasoning-budget`, `--jinja`, наличие `curl` для healthcheck взяты из Dockerfile/документации llama.cpp, не из запуска; реестр Ollama и Hugging Face закрыты — путь `make model` по умолчанию не запускался, `PINNED_SHA256` пуст. Живой прогон с моделью не выполнялся.
+
+Open issues / risks:
+- `PINNED_SHA256` нужно закрепить: `scripts/fetch-model.sh --from-ollama` на машине пользователя печатает sha256 уже проверенных весов.
+- Первый `docker compose up` на машине с моделью — проверить, что `llm` становится healthy и судья получает валидный JSON через `response_format` от `llama-server` (`go test -tags=llmlive ./internal/assessment/operator112/descjudge/...` с `JUDGE_LLM_URL` на `llm`).
+- Ёмкость класса неизвестна до замера; 20 одновременных генераций 8B на 6 CPU могут не уложиться в `CALLER_REPLY_TIMEOUT`.
+
+Next: на сервере заказчика — `make model`, `docker compose up`, `bench-llm` при `LLM_PARALLEL` 4/8/20, решение по ёмкости; записать в `slice-112-5b-plan.md` и сюда.

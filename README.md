@@ -1,7 +1,7 @@
 # EmSim
 
 Тренажёр диспетчера ДДС/112: одна Go-программа `emsim`
-(`migrate | api | worker | bootstrap-admin | import`), PostgreSQL как БД и очередь
+(`migrate | api | worker | bootstrap-admin | import | bench-llm`), PostgreSQL как БД и очередь
 задач, веб-фронтенд поверх (см. `design-docs/`). Архитектурные решения —
 [`design-docs/rfc-001-emsim.md`](design-docs/rfc-001-emsim.md) и
 [`design-docs/adr/`](design-docs/adr); что и почему перенесено из
@@ -11,8 +11,12 @@
 
 ```bash
 cp .env.example .env   # при желании поменять логин/пароль администратора
+make model             # один раз: веса локальной модели в ./models (раздел «Модель»)
 docker compose up --build
 ```
+
+Без модели (например, для быстрой проверки интерфейса):
+`docker compose -f compose.yaml -f compose.no-llm.yaml up --build`.
 
 Поднимает `postgres`, применяет миграции (`migrate`), затем одноразовым
 сервисом `bootstrap` создаёт начальную учётную запись администратора
@@ -26,8 +30,80 @@ API, `:8081` — `/healthz`/`/readyz`/`/metrics`) и один `worker --role=all
 `seed` идемпотентны: повторный `docker compose up` не создаёт второго
 администратора и не дублирует уже загруженный каталог (`make seed`
 перезапускает только сервис `seed`, без остального стека — например, после
-добавления файла в `seed/scenarios/`). LLM/STT/Caddy добавятся вместе с
-клиентами инференса.
+добавления файла в `seed/scenarios/`). Сервис `llm` — локальная модель
+для ИИ-заявителя и судьи описания 112 (раздел «Модель» ниже); `worker` ждёт,
+пока она загрузится. STT/Caddy добавятся вместе с их клиентами.
+
+### Модель (ADR-029)
+
+ИИ-заявитель 112 (`caller.reply`) и LLM-судья описания заявителя
+(`DESCRIPTION_CONTENT`) по умолчанию работают через сервис `llm` —
+`llama-server` из llama.cpp с моделью `T-lite-it-2.1` (Q5_K_M, GGUF),
+[ADR-029](design-docs/adr/029-operator112-local-inference-container.md).
+Контейнер без опубликованного порта и без выхода в сеть; веса читаются из
+`./models` и не хранятся ни в git, ни в образе `emsim`.
+
+Веса кладёт `make model` (`scripts/fetch-model.sh`) — один раз, на машине
+с интернетом, при подготовке офлайн-пакета; дальше каталог `models/`
+переносится вместе с поставкой. Источники:
+
+```bash
+make model                                # реестр Ollama (по умолчанию)
+scripts/fetch-model.sh --from-ollama      # копия из локального Ollama (без скачивания)
+scripts/fetch-model.sh --url <URL.gguf>   # любой прямой адрес, нужен LLM_MODEL_SHA256
+```
+
+Каждый источник проверяет sha256. Реестр и хранилище Ollama адресуют файлы
+по их sha256, поэтому совпадение подтверждает, что в классе те же веса, на
+которых качество проверялось через Ollama. Проверенное значение
+закрепляется в `PINNED_SHA256` в `scripts/fetch-model.sh`, после чего
+скрипт откажется устанавливать другой файл.
+
+Без файла модели `llm` не проходит проверку здоровья и `worker` не
+запускается: отсутствие модели видно при установке, а не на занятии.
+Режим без модели — `compose.no-llm.yaml`: сервис `llm` выключен, заявитель
+отвечает заглушкой из шести фраз (`stub/v1`), судьи нет, новые занятия 112
+получают `rubric-v2`. На нём же работают e2e и CI. Для разработки с Ollama
+на хосте (например, на Mac с GPU):
+
+```bash
+ollama serve
+ollama pull t-tech/T-lite-it-2.1:q5_K_M
+CALLER_REPLIER=llm ASSESSMENT_JUDGE=llm \
+  docker compose -f compose.yaml -f compose.no-llm.yaml up --build
+```
+
+Адреса по умолчанию в `compose.no-llm.yaml` уже указывают на Ollama хоста
+(`host.docker.internal:11434`).
+
+Параметры (все переопределяются в `.env`; значения — до замера на
+целевом сервере):
+
+| Переменная | По умолчанию | Смысл |
+|---|---|---|
+| `LLM_PARALLEL` | 4 | слоты `llama-server`: столько запросов обрабатываются одновременно |
+| `LLM_CTX_SIZE` | 16384 | контекст на все слоты вместе (по 4096 на диалог при 4 слотах) |
+| `LLM_THREADS` | 6 | потоки CPU |
+| `CALLER_CONCURRENCY` | 3 | одновременные ответы заявителя |
+| `LLM_CONCURRENCY` | 1 | одновременные запросы судьи; вместе с `CALLER_CONCURRENCY` не больше `LLM_PARALLEL` |
+| `CALLER_REPLY_TIMEOUT` | 30s | сколько ждать один ответ модели до повтора/нейтральной реплики |
+| `LLM_MODEL_FILE`, `LLM_MODEL_ALIAS` | `T-lite-it-2.1-Q5_K_M.gguf`, `t-tech/T-lite-it-2.1:q5_K_M` | файл в `models/` и имя модели в API и в evidence |
+
+Сколько одновременных диалогов выдержит сервер класса, заранее не
+известно. Это измеряет `bench-llm` (замер W0, [`slice-112-5b-plan.md`](slice-112-5b-plan.md),
+этап 2) — на поднятом стеке:
+
+```bash
+docker compose run --rm worker bench-llm --concurrency 1,4,8,20 --duration 2m --judge 1
+```
+
+Виртуальные операторы ведут многоходовые диалоги по ИИ-сидам через тот же
+код и те же настройки, что и `worker`. Для каждого уровня отчёт даёт
+ответы в минуту, p50/p95/p99 задержки ответа заявителя, долю ответов
+дольше `CALLER_REPLY_TIMEOUT`, ошибки, задержку судьи и, из метрик
+`llama-server`, скорость генерации и очередь сервера (`--json -` —
+то же в JSON). Меняя `LLM_PARALLEL`, перезапускайте `llm`
+(`docker compose up -d llm`).
 
 `blob-data` — общий Docker volume seed/API/worker для content-addressed
 голосовых файлов и записей докладов. Не удаляйте его при обновлении, если
@@ -154,27 +230,18 @@ API обучаемого выдаёт определения только уже
 продовое значение), очередь ответов — `CALLER_CONCURRENCY`/
 `CALLER_REPLY_TIMEOUT`.
 
-Срез 112-5b, этап 1 подключает модель к тому же окну чата, заменяя только
+Срез 112-5b подключает модель к тому же окну чата, заменяя только
 реализацию порта `CallerReplier` — асинхронный протокол ADR-024 не меняется
 (см. [ADR-025](design-docs/adr/025-operator112-ai-caller.md)). По умолчанию
-(`CALLER_REPLIER` не задан) поведение остаётся прежним — детерминированная
-заглушка `stub/v1`, без зависимости от модели. `CALLER_REPLIER=llm` включает
-`aicaller.Replier`: regex-классификатор решает, какие факты сценария уже
+(ADR-029) `CALLER_REPLIER=llm` — `aicaller.Replier` поверх сервиса `llm`;
+`CALLER_REPLIER=stub` (так в `compose.no-llm.yaml`) возвращает
+детерминированную заглушку `stub/v1` без зависимости от модели. В режиме
+`llm` regex-классификатор решает, какие факты сценария уже
 открыты и раскрыты ли они, модель формулирует ответ. Сценарий без профиля
 заявителя (`intake112.dialogue.caller`, например `pilot-112-free-text-chat-01`)
 под `CALLER_REPLIER=llm` всё равно отвечает заглушкой — видно по `adapter` хода.
 
-Чтобы попробовать с моделью локально на Mac через Ollama:
-
-```bash
-ollama serve
-ollama pull t-tech/T-lite-it-2.1:q5_K_M
-CALLER_REPLIER=llm docker compose up --build
-```
-
-По умолчанию `CALLER_LLM_URL` указывает на `http://host.docker.internal:11434/v1`
-(worker получает `extra_hosts: host.docker.internal:host-gateway`), а
-`CALLER_LLM_MODEL` — на ту же модель; оба переменные можно переопределить.
+Как запустить с моделью или с Ollama на хосте — раздел «Модель» выше.
 Три сида для проверки — `pilot-112-ai-toyota-fire-01`,
 `pilot-112-ai-car-in-water-01`, `pilot-112-ai-mobile-shop-01`
 ([`seed/README.md`](seed/README.md)). В «Разборе» преподавателя у каждого
@@ -182,9 +249,9 @@ CALLER_REPLIER=llm docker compose up --build
 нейтральная реплика при недоступности модели/заглушка) и, для модели и
 нейтральной реплики, использованная модель и версия промпта. Ответ на
 последней допустимой попытке при ошибке модели — нейтральная фраза, а не
-отказ хода; чат не останавливается. У заказчика вместо Ollama будет
-`llama-server` — это отдельный этап 112-5b (замер W0, контейнер с GGUF в
-compose, вопрос ёмкости класса), пока не реализован —
+отказ хода; чат не останавливается. Контейнер `llama-server` и стенд
+`bench-llm` готовы (этап 2 112-5b); сам замер на сервере заказчика и
+решение о ёмкости класса ещё не проведены —
 [`slice-112-5b-plan.md`](slice-112-5b-plan.md).
 
 Версия 1 пилота сохраняет линейные реплики для ранее назначенных занятий;
@@ -232,11 +299,9 @@ compose, вопрос ёмкости класса), пока не реализо
 двумя дополнительными колонками только для строк 112.
 
 **LLM-судья описания заявителя (`operator112/rubric-v3`, ADR-028).** По
-решению пользователя этот срез начат до этапа 2 112-5b (замер W0).
-`ASSESSMENT_JUDGE` не задан (`off`) — занятие продолжает замораживать
-`rubric-v2` и блок `DESCRIPTION_PRESENT` (поле непустое = 10 баллов) без
-изменений. `ASSESSMENT_JUDGE=llm` — **и в api, и в worker** — заменяет его
-блоком `DESCRIPTION_CONTENT`: контрольные вопросы из
+умолчанию (ADR-029) `ASSESSMENT_JUDGE=llm` — **и в api, и в worker** — и
+новое занятие замораживает `rubric-v3`, где вместо `DESCRIPTION_PRESENT`
+(поле непустое = 10 баллов) стоит блок `DESCRIPTION_CONTENT`: контрольные вопросы из
 `intake112.reference.description_questions` отправляются модели (только
 текст описания и вопросы, без транскрипта и без эталона других полей),
 модель отвечает по каждому `yes`/`no`/`needs_review`; баллы (10 поровну
@@ -252,16 +317,12 @@ compose, вопрос ёмкости класса), пока не реализо
 только трём существующим ИИ-сидам (`pilot-112-ai-{car-in-water,
 mobile-shop,toyota-fire}-01-v2.json`), подробности — [`seed/README.md`](seed/README.md).
 
-```bash
-ollama serve
-ollama pull t-tech/T-lite-it-2.1:q5_K_M
-ASSESSMENT_JUDGE=llm docker compose up --build
-```
-
-По умолчанию `JUDGE_LLM_URL`/`JUDGE_LLM_MODEL` указывают на тот же
-`host.docker.internal:11434`/модель, что и `CALLER_LLM_URL`/
-`CALLER_LLM_MODEL` выше — можно включать судью и ИИ-заявителя
-независимо друг от друга. Разбор преподавателя (`ItemReview.tsx`,
+`ASSESSMENT_JUDGE=off` (так в `compose.no-llm.yaml`) оставляет `rubric-v2`
+без изменений; значение должно совпадать в api и worker. Судья и
+ИИ-заявитель по умолчанию обращаются к одной модели в сервисе `llm`
+(`JUDGE_LLM_URL`/`JUDGE_LLM_MODEL` и `CALLER_LLM_URL`/`CALLER_LLM_MODEL`),
+но включаются и выключаются независимо друг от друга. Температура судьи —
+0: ответ на одно и то же описание повторяем. Разбор преподавателя (`ItemReview.tsx`,
 `IntakeAutoAssessment.tsx`) показывает ответ по каждому вопросу и модель
 судьи (`assessment.model`) без изменений остальной панели; редактор
 сценариев — вкладку «Эталон» → «Вопросы к описанию».
@@ -408,7 +469,8 @@ manifest/upload/replay, закрытие/evidence и доступ к запис�
 разрыва сети; незагруженные байты после перезагрузки вкладки восстановить
 нельзя, и после deadline состояние отображается как `missing`.
 Автоматический Chromium-e2e запускается через `cd web && npm run test:e2e`:
-он поднимает отдельный Docker Compose project на свободных localhost-портах,
+он поднимает отдельный Docker Compose project на свободных localhost-портах
+(с `compose.no-llm.yaml`: заглушка заявителя, без судьи и без модели),
 использует seed WAV как fake microphone и после завершения удаляет только свои
 контейнеры и volumes. В CI этому соответствует job `web-e2e`.
 
