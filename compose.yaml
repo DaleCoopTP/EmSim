@@ -5,12 +5,18 @@ name: emsim
 # (reaper + sampler) via --role=all — unlike orchestration-core's compose,
 # which ran a separate container per Kind/role, this port has one worker
 # process by design (ADR-001). stt/caddy are still added once those
-# inference clients exist. 112-5b/ADR-025 adds an OpenAI-compatible LLM
-# client (internal/platform/llm) for caller.reply, reachable through
-# CALLER_LLM_URL — by default Ollama running on the host during
-# development (extra_hosts below), never a container this compose starts
-# itself; a llama-server container with a chosen GGUF is
-# slice-112-5b-plan.md's own stage 2, not this file's job yet.
+# inference clients exist.
+#
+# ADR-029: the local model ships as the "llm" service (llama-server with a
+# GGUF from ./models, fetched once by `make model`), and the worker's AI
+# caller (caller.reply, ADR-025) and description judge (assessment.
+# evaluate's DESCRIPTION_CONTENT, ADR-028) use it by default. Without the
+# model file the llm service never becomes healthy and the worker does not
+# start — run with `-f compose.yaml -f compose.no-llm.yaml` instead (stub
+# caller and no judge by default, or Ollama on the host; see that file and
+# README.md). Capacity numbers below (LLM_PARALLEL, CALLER_CONCURRENCY,
+# CALLER_REPLY_TIMEOUT) are pre-measurement defaults; `emsim bench-llm` on
+# the target server decides them (slice-112-5b-plan.md, stage 2).
 
 x-database-url: &database-url postgres://emsim:${POSTGRES_PASSWORD:-local-only-postgres-password}@postgres:5432/emsim?sslmode=disable
 
@@ -88,12 +94,11 @@ services:
       # Secure cookie would never be sent back by the browser over plain
       # HTTP, so the session would appear to silently not persist.
       COOKIE_SECURE: "false"
-      # ADR-028: unset/"off" keeps every operator112 lesson on
-      # rubric-v2 (112-6's pre-ADR-028 behavior) — nothing below matters.
-      # Set the SAME value as worker's own ASSESSMENT_JUDGE below so a
-      # new lesson only ever freezes rubric-v3 when this deployment can
-      # actually answer it.
-      ASSESSMENT_JUDGE: ${ASSESSMENT_JUDGE:-off}
+      # ADR-028/029: "llm" (default) freezes operator112/rubric-v3 into new
+      # lessons; "off" keeps rubric-v2. Must match the worker's own
+      # ASSESSMENT_JUDGE below, so a new lesson only ever freezes
+      # rubric-v3 when this deployment can actually answer it.
+      ASSESSMENT_JUDGE: ${ASSESSMENT_JUDGE:-llm}
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
       - "127.0.0.1:${API_ADMIN_PORT:-8081}:8081"
@@ -121,41 +126,50 @@ services:
       WORKER_DRAIN_TIMEOUT: 10s
       WORKER_ADMIN_LISTEN_ADDR: 0.0.0.0:8081
       SHORT_CONCURRENCY: 4
-      LLM_CONCURRENCY: 1
+      # The judge (llm pool) and the caller (caller pool) share the llm
+      # service's LLM_PARALLEL slots: keep LLM_CONCURRENCY +
+      # CALLER_CONCURRENCY <= LLM_PARALLEL, or extra requests wait in the
+      # server's own queue (ADR-029).
+      LLM_CONCURRENCY: ${LLM_CONCURRENCY:-1}
       STT_CONCURRENCY: 1
       REPORT_CONCURRENCY: 1
-      CALLER_CONCURRENCY: 4
-      CALLER_REPLY_TIMEOUT: 15s
+      CALLER_CONCURRENCY: ${CALLER_CONCURRENCY:-3}
+      CALLER_REPLY_TIMEOUT: ${CALLER_REPLY_TIMEOUT:-30s}
       CALLER_STUB_DELAY: ${CALLER_STUB_DELAY:-1s}
-      # 112-5b/ADR-025: CALLER_REPLIER unset/"stub" keeps 112-5a's own
-      # behavior — no model dependency, nothing below matters. Set
-      # CALLER_REPLIER=llm (and, typically, run `ollama serve` +
-      # `ollama pull` on the host first — see README.md) to route
-      # caller.reply through aicaller.Replier instead.
-      CALLER_REPLIER: ${CALLER_REPLIER:-stub}
-      CALLER_LLM_URL: ${CALLER_LLM_URL:-http://host.docker.internal:11434/v1}
-      CALLER_LLM_MODEL: ${CALLER_LLM_MODEL:-t-tech/T-lite-it-2.1:q5_K_M}
-      # ADR-028 (112-6 LLM-stage): unset/"off" keeps DESCRIPTION_CONTENT
-      # unavailable/needs_review for every 112 lesson, exactly 112-6's
-      # pre-ADR-028 behavior — nothing below matters, and no model call
-      # ever happens. Set ASSESSMENT_JUDGE=llm (the same "run `ollama
-      # serve`+`ollama pull` on the host first" prerequisite as
-      # CALLER_REPLIER=llm above — README.md) to let assessment.evaluate
-      # actually call a model for it.
-      ASSESSMENT_JUDGE: ${ASSESSMENT_JUDGE:-off}
-      JUDGE_LLM_URL: ${JUDGE_LLM_URL:-http://host.docker.internal:11434/v1}
-      JUDGE_LLM_MODEL: ${JUDGE_LLM_MODEL:-t-tech/T-lite-it-2.1:q5_K_M}
+      # 112-5b/ADR-025/029: "llm" (default) answers caller.reply through
+      # aicaller.Replier over the llm service; "stub" is 112-5a's six fixed
+      # phrases, no model dependency.
+      CALLER_REPLIER: ${CALLER_REPLIER:-llm}
+      CALLER_LLM_URL: ${CALLER_LLM_URL:-http://llm:8080/v1}
+      CALLER_LLM_MODEL: ${CALLER_LLM_MODEL:-${LLM_MODEL_ALIAS:-t-tech/T-lite-it-2.1:q5_K_M}}
+      # ADR-028/029: "llm" (default) lets assessment.evaluate ask the
+      # model for DESCRIPTION_CONTENT; "off" wires no judge at all. Keep
+      # it equal to the api's own ASSESSMENT_JUDGE above.
+      ASSESSMENT_JUDGE: ${ASSESSMENT_JUDGE:-llm}
+      JUDGE_LLM_URL: ${JUDGE_LLM_URL:-http://llm:8080/v1}
+      JUDGE_LLM_MODEL: ${JUDGE_LLM_MODEL:-${LLM_MODEL_ALIAS:-t-tech/T-lite-it-2.1:q5_K_M}}
       JUDGE_TIMEOUT: ${JUDGE_TIMEOUT:-120s}
       JUDGE_MAX_TOKENS: ${JUDGE_MAX_TOKENS:-1024}
     ports:
       - "127.0.0.1:${WORKER_ADMIN_PORT:-8082}:8081"
     volumes:
       - blob-data:/app/blobs
+    # host.docker.internal stays for compose.no-llm.yaml's Ollama-on-the-
+    # host development mode.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - inference
     depends_on:
       migrate:
         condition: service_completed_successfully
+      # required: false lets compose.no-llm.yaml switch the llm service
+      # off; with the stock file the worker waits until the model is
+      # loaded.
+      llm:
+        condition: service_healthy
+        required: false
     restart: unless-stopped
     stop_grace_period: 25s
     healthcheck:
@@ -164,6 +178,58 @@ services:
       timeout: 1s
       retries: 30
       start_period: 2s
+
+  # ADR-029: the local model. llama-server keeps the GGUF loaded and
+  # serves the OpenAI-compatible /v1/chat/completions both the caller and
+  # the judge call. The image is pinned by build tag and digest; weights
+  # come from ./models (read-only, never in git or the emsim image — `make
+  # model`). No published port, and the only network is "inference",
+  # which has no route outside (RFC-001 §9); /metrics and /slots are
+  # reachable only from the worker's network, e.g. for bench-llm.
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server-b11206@sha256:00bd6c289c590e576948cb3639b8195e4d3e6dd6ba1d761f0e2b871fcd4df24f
+    command:
+      - --model
+      - /models/${LLM_MODEL_FILE:-T-lite-it-2.1-Q5_K_M.gguf}
+      - --alias
+      - ${LLM_MODEL_ALIAS:-t-tech/T-lite-it-2.1:q5_K_M}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --jinja
+      # Reasoning off: a caller line or a judge verdict never needs it,
+      # and it would only burn CPU time (clients strip leaks anyway).
+      - --reasoning-budget
+      - "0"
+      # Slots: requests in different slots are batched into one decoder
+      # pass. The context is split between them (16384 / 4 = 4096 tokens
+      # per dialogue by default) — raise LLM_CTX_SIZE with LLM_PARALLEL.
+      - --parallel
+      - ${LLM_PARALLEL:-4}
+      - --ctx-size
+      - ${LLM_CTX_SIZE:-16384}
+      - --threads
+      - ${LLM_THREADS:-6}
+      - --metrics
+    volumes:
+      - ./models:/models:ro
+    networks:
+      - inference
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      # Loading several GB of weights from disk takes a while on first
+      # start; failures during this window do not count.
+      start_period: 300s
+      start_interval: 2s
+
+networks:
+  inference:
+    internal: true
 
 volumes:
   postgres-data:

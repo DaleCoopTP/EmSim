@@ -79,6 +79,9 @@ func startAPIProcess(t *testing.T, binary, databaseURL, publicAddr, adminAddr st
 		"DATABASE_URL="+databaseURL, "API_LISTEN_ADDR="+publicAddr, "ADMIN_LISTEN_ADDR="+adminAddr,
 		"COOKIE_SECURE=false", // no TLS in this test, same as compose's demo profile
 		"BLOB_ROOT="+blobRoot,
+		// No model in integration tests: new 112 lessons freeze rubric-v2,
+		// the same explicit setting compose.no-llm.yaml uses (ADR-029).
+		"ASSESSMENT_JUDGE=off",
 	)
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {

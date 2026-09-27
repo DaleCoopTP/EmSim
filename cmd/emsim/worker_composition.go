@@ -327,8 +327,8 @@ func callerStubDelay() (time.Duration, error) {
 }
 
 // judgeConfigFor is ADR-028's own worker-side wiring: nil when
-// ASSESSMENT_JUDGE is off (the default — no judge at all, matching
-// 112-6's pre-ADR-028 behavior exactly), otherwise a JudgeConfig whose
+// ASSESSMENT_JUDGE is off (explicit since ADR-029 — no judge at all,
+// matching 112-6's pre-ADR-028 behavior exactly), otherwise a JudgeConfig whose
 // Registry has exactly one entry, descjudge.Handler under its own
 // PromptVersion — the same "one prompt version, one handler" convention
 // this ADR's own doc comment describes. Model/Parameters are sealed
@@ -415,13 +415,14 @@ func composePools(
 	if err := handlers.Register(reporting.KindBuild, reporting.NewBuilderFromEnvironment(reportingpg.NewStore(pool), store)); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
-	// 112-5b/ADR-025: CALLER_REPLIER selects StubCallerReplier (default —
-	// 112-5a's own behavior, no model dependency) or aicaller.Replier (a
-	// model call over an OpenAI-compatible endpoint, falling back to the
+	// 112-5b/ADR-025: CALLER_REPLIER selects aicaller.Replier (default
+	// since ADR-029 — a model call over an OpenAI-compatible endpoint,
+	// compose's own llm service, falling back to the
 	// very same stub for a scenario with no caller profile — see
-	// aicaller.Replier's own doc comment). callerFallback stays nil for
-	// the stub: only the model path can fail in a way ADR-025's neutral
-	// reply is meant to cover.
+	// aicaller.Replier's own doc comment) or StubCallerReplier (explicit
+	// CALLER_REPLIER=stub — 112-5a's own behavior, no model dependency).
+	// callerFallback stays nil for the stub: only the model path can fail
+	// in a way ADR-025's neutral reply is meant to cover.
 	stubDelay, err := callerStubDelay()
 	if err != nil {
 		return nil, err

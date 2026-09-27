@@ -13,6 +13,7 @@ design-docs
 !design-docs/contracts/*.json
 !design-docs/contracts/embed.go
 orchestration-core-main
+models
 tmp
 *.pdf
 *.xlsx

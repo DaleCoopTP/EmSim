@@ -17,6 +17,9 @@
 # Reference copy of orchestration-core (ported by copy, see docs/technical-discovery.md)
 /orchestration-core-main/
 
+# Model weights for compose.yaml's llm service (ADR-029, `make model`)
+/models/
+
 # Source materials (PDF/XLSX) live outside the repository until needed for import
 /*.pdf
 /*.xlsx

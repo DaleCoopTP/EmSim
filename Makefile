@@ -1,4 +1,4 @@
-.PHONY: format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build seed web-install web-build web-check verify-web
+.PHONY: format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build seed model web-install web-build web-check verify-web
 
 GO_FILES := $(shell git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do test -f "$$file" && printf '%s\n' "$$file"; done)
 
@@ -27,8 +27,11 @@ verify: format-check build test vet staticcheck
 
 verify-integration: verify test-integration
 
+# Both supported stacks: the stock one with the bundled model (ADR-029)
+# and the no-model override e2e/CI and Ollama-on-the-host development use.
 compose-config:
 	docker compose config --quiet
+	docker compose -f compose.yaml -f compose.no-llm.yaml config --quiet
 
 compose-build: compose-config
 	docker compose build
@@ -39,6 +42,13 @@ compose-build: compose-config
 # service and seed/README.md).
 seed:
 	docker compose run --rm seed
+
+# Fetches the llm service's GGUF weights into ./models with sha256
+# verification (ADR-029) — once, on a machine with internet access, when
+# preparing the offline package. See scripts/fetch-model.sh for the other
+# sources (--from-ollama, --url).
+model:
+	scripts/fetch-model.sh
 
 # The Go build/test/verify targets above never need Node — web/dist ships
 # a checked-in .gitkeep placeholder (web/embed.go), so "go build ./..."

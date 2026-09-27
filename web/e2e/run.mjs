@@ -49,8 +49,14 @@ const environment = {
   // a 0s delay lets the worker's reply (poll interval 250ms) land before
   // that state is ever observably rendered.
   CALLER_STUB_DELAY: process.env.CALLER_STUB_DELAY ?? "800ms",
+  // ADR-029: the stock stack needs the bundled model. e2e runs without
+  // it (compose.no-llm.yaml), always on the deterministic stub caller and
+  // with no description judge, whatever the developer's shell exports —
+  // the specs assert the stub's fixed phrases and rubric-v2.
+  CALLER_REPLIER: "stub",
+  ASSESSMENT_JUDGE: "off",
 };
-const compose = ["compose", "-p", project];
+const compose = ["compose", "-p", project, "-f", "compose.yaml", "-f", "compose.no-llm.yaml"];
 
 try {
   run("docker", [...compose, "up", "--build", "--wait", "--wait-timeout", "180"], environment);

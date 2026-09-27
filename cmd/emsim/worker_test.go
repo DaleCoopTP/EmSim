@@ -144,8 +144,8 @@ func TestCallerReplyFallbackOutcomeAppliesOnlyOnLastAttempt(t *testing.T) {
 }
 
 // TestJudgeConfigForOff is ADR-028's own compatibility requirement,
-// mirroring the caller wiring above: a stock deployment with
-// ASSESSMENT_JUDGE unset (config.AssessmentJudgeOff's own default) must
+// mirroring the caller wiring above: a deployment with
+// ASSESSMENT_JUDGE=off (explicit since ADR-029 made llm the default) must
 // get a nil JudgeConfig — Service.judge==nil skips every new code path
 // sealInputForItem/Handle added, exactly 112-6's pre-ADR-028 behavior.
 func TestJudgeConfigForOff(t *testing.T) {

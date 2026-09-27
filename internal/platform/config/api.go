@@ -28,9 +28,10 @@ type API struct {
 	// Operator112RubricVersion) a newly created lesson/preview run
 	// freezes at CreateLesson/StartPreview time. It never wires an LLM
 	// client here: the api process never calls assessment.Service.Handle,
-	// only the worker does. A stock `docker compose up` with no
-	// ASSESSMENT_JUDGE set keeps freezing rubric-v2, same as before this
-	// ADR.
+	// only the worker does. Unset means AssessmentJudgeLLM since ADR-029
+	// (a stock `docker compose up` ships the judge's model, so new
+	// lessons freeze rubric-v3); ASSESSMENT_JUDGE=off keeps freezing
+	// rubric-v2 and must be set on the worker the same way.
 	AssessmentJudge string
 }
 
@@ -39,7 +40,7 @@ func APIFromEnvironment(lookup func(string) string) (API, error) {
 	cookieSecure, secureErr := parseBoolOrDefault(lookup("COOKIE_SECURE"), true)
 	assessmentJudge := strings.TrimSpace(lookup("ASSESSMENT_JUDGE"))
 	if assessmentJudge == "" {
-		assessmentJudge = AssessmentJudgeOff
+		assessmentJudge = AssessmentJudgeLLM
 	}
 	config := API{
 		DatabaseURL:     strings.TrimSpace(lookup("DATABASE_URL")),

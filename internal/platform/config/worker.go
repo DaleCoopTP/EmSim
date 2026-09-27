@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -76,18 +77,20 @@ type Worker struct {
 	// stay comfortably longer than this.
 	CallerReplyTimeout time.Duration
 	// CallerReplier selects operator112.CallerReplier for the "caller"
-	// pool (112-5b/ADR-025): CallerReplierStub (default — StubCallerReplier,
-	// no model dependency, exactly 112-5a's own behavior) or
-	// CallerReplierLLM (aicaller.Replier over CallerLLMURL/CallerLLMModel).
-	// A stock `docker compose up` with no CALLER_REPLIER set must keep
-	// working without Ollama/llama-server, so the zero value from an
-	// unset env var resolves to CallerReplierStub, not an error.
+	// pool (112-5b/ADR-025): CallerReplierLLM (default since ADR-029 —
+	// aicaller.Replier over CallerLLMURL/CallerLLMModel, the compose
+	// "llm" service in a stock deployment) or CallerReplierStub
+	// (StubCallerReplier, no model dependency, exactly 112-5a's own
+	// behavior — an explicit setting for e2e/CI and development without
+	// a model). An unset env var resolves to CallerReplierLLM, and then a
+	// missing URL/model is a startup error naming the variable, never a
+	// silent fallback to the stub.
 	CallerReplier string
 	// CallerLLMURL/CallerLLMModel are required only when CallerReplier is
-	// CallerReplierLLM — an OpenAI-compatible base URL (e.g.
-	// "http://host.docker.internal:11434/v1" for Ollama in development;
-	// a llama-server URL at the customer, slice-112-5b-plan.md's stage 2)
-	// and the model name Ollama/llama-server serves under it.
+	// CallerReplierLLM — an OpenAI-compatible base URL (compose's own
+	// "http://llm:8080/v1" llama-server, ADR-029; or
+	// "http://host.docker.internal:11434/v1" for Ollama in development)
+	// and the model name (llama-server's --alias) it serves under.
 	CallerLLMURL   string
 	CallerLLMModel string
 	// CallerTemperature/CallerTopP/CallerRepeatPenalty/CallerMaxTokens are
@@ -101,10 +104,10 @@ type Worker struct {
 	// AssessmentJudge (ADR-028) selects whether assessment.evaluate's
 	// worker-side Handle actually calls a model for operator112_intake's
 	// DESCRIPTION_CONTENT criterion (operator112/rubric-v3):
-	// AssessmentJudgeOff (default — no judge wired at all, exactly
-	// 112-6's pre-ADR-028 behavior) or AssessmentJudgeLLM (a
-	// descjudge.Handler over JudgeLLMURL/JudgeLLMModel, registered into
-	// assessment.JudgeConfig.Registry). It is deliberately the same enum
+	// AssessmentJudgeLLM (default since ADR-029 — a descjudge.Handler
+	// over JudgeLLMURL/JudgeLLMModel, registered into
+	// assessment.JudgeConfig.Registry) or AssessmentJudgeOff (explicit —
+	// no judge wired at all, exactly 112-6's pre-ADR-028 behavior). It is deliberately the same enum
 	// spelling as API.AssessmentJudge (both read the same env var in
 	// compose) but a separate config field: the api process only ever
 	// needs it to pick a rubric_version at lesson creation, never to
@@ -170,7 +173,7 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 	}
 	callerReplier := strings.TrimSpace(lookup("CALLER_REPLIER"))
 	if callerReplier == "" {
-		callerReplier = CallerReplierStub
+		callerReplier = CallerReplierLLM
 	}
 	callerTemperature, err := parseFloatOrDefault(lookup("CALLER_TEMPERATURE"), defaultCallerTemperature)
 	if err != nil {
@@ -190,7 +193,7 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 	}
 	assessmentJudge := strings.TrimSpace(lookup("ASSESSMENT_JUDGE"))
 	if assessmentJudge == "" {
-		assessmentJudge = AssessmentJudgeOff
+		assessmentJudge = AssessmentJudgeLLM
 	}
 	judgeTimeout, err := parseDurationOrDefault(lookup("JUDGE_TIMEOUT"), defaultJudgeTimeout)
 	if err != nil {
@@ -262,7 +265,7 @@ func (c Worker) Validate() error {
 		return ErrInvalidWorkerConfiguration
 	}
 	if c.CallerReplier == CallerReplierLLM && (c.CallerLLMURL == "" || c.CallerLLMModel == "") {
-		return ErrInvalidWorkerConfiguration
+		return fmt.Errorf("%w: CALLER_REPLIER=llm (the default) needs CALLER_LLM_URL and CALLER_LLM_MODEL; set CALLER_REPLIER=stub to run without a model", ErrInvalidWorkerConfiguration)
 	}
 	if c.CallerTemperature < 0 || c.CallerTopP < 0 || c.CallerTopP > 1 || c.CallerRepeatPenalty < 0 || c.CallerMaxTokens < 1 {
 		return ErrInvalidWorkerConfiguration
@@ -271,7 +274,7 @@ func (c Worker) Validate() error {
 		return ErrInvalidWorkerConfiguration
 	}
 	if c.AssessmentJudge == AssessmentJudgeLLM && (c.JudgeLLMURL == "" || c.JudgeLLMModel == "") {
-		return ErrInvalidWorkerConfiguration
+		return fmt.Errorf("%w: ASSESSMENT_JUDGE=llm (the default) needs JUDGE_LLM_URL and JUDGE_LLM_MODEL; set ASSESSMENT_JUDGE=off to run without a model", ErrInvalidWorkerConfiguration)
 	}
 	if c.JudgeTimeout <= 0 || c.JudgeMaxTokens < 1 {
 		return ErrInvalidWorkerConfiguration

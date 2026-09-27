@@ -1,0 +1,28 @@
+# Runs EmSim without the bundled model (ADR-029):
+#
+#   docker compose -f compose.yaml -f compose.no-llm.yaml up --build
+#
+# The llm service is switched off (it only starts under a profile nobody
+# enables), and the caller/judge defaults flip to the no-model mode:
+# 112-5a's stub caller and no description judge (new 112 lessons freeze
+# operator112/rubric-v2). e2e (web/e2e/run.mjs) and CI use exactly this.
+#
+# For development against Ollama on the host (`ollama serve` plus
+# `ollama pull t-tech/T-lite-it-2.1:q5_K_M`), keep this file and set
+# CALLER_REPLIER=llm ASSESSMENT_JUDGE=llm: the endpoint defaults below
+# already point at the host's Ollama.
+
+services:
+  llm:
+    profiles: ["bundled-model-disabled"]
+
+  api:
+    environment:
+      ASSESSMENT_JUDGE: ${ASSESSMENT_JUDGE:-off}
+
+  worker:
+    environment:
+      CALLER_REPLIER: ${CALLER_REPLIER:-stub}
+      CALLER_LLM_URL: ${CALLER_LLM_URL:-http://host.docker.internal:11434/v1}
+      ASSESSMENT_JUDGE: ${ASSESSMENT_JUDGE:-off}
+      JUDGE_LLM_URL: ${JUDGE_LLM_URL:-http://host.docker.internal:11434/v1}

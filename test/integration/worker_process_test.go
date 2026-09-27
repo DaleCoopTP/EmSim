@@ -73,6 +73,9 @@ func startWorkerProcess(t *testing.T, binary, databaseURL, role, id string, blob
 		"WORKER_POLL_INTERVAL=50ms", "WORKER_DRAIN_TIMEOUT=100ms",
 		"SHORT_CONCURRENCY=1", "LLM_CONCURRENCY=1", "STT_CONCURRENCY=1", "REPORT_CONCURRENCY=1",
 		"CALLER_CONCURRENCY=1", "CALLER_REPLY_TIMEOUT=10s", "CALLER_STUB_DELAY=1ms",
+		// The stub caller and no judge, explicitly: llm is the default
+		// since ADR-029 and these tests run without a model.
+		"CALLER_REPLIER=stub", "ASSESSMENT_JUDGE=off",
 		"BLOB_ROOT="+blobRoot,
 		"WORKER_LOCAL_TEST_POLICY=e2e-fast-v1",
 	)
