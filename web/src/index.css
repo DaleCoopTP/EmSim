@@ -368,6 +368,10 @@ dd { margin: 0; }
 .dds-status-form-actions { display: flex; gap: 6px; }
 .card-status-badge { display: inline-block; padding: 1px 6px; color: #fff; background: var(--arm-ok); border-radius: 2px; font-size: 11px; }
 .card-status-alarm { background: var(--arm-danger); }
+.dds-item-status span.card-status-badge { display: inline-block; color: #fff; font-size: 11px; text-transform: none; }
+.dds-service-block button.dds-service-history-toggle { padding: 1px 6px; color: var(--arm-link); background: transparent; border: 0; }
+.dds-service-block button.dds-service-history-toggle:hover:not(:disabled) { background: transparent; text-decoration: underline; }
+.dds-service-history strong { display: inline; }
 .dds-item-status { display: flex; flex-wrap: wrap; gap: 1px; margin-bottom: 7px; background: #aeb8bd; }
 .dds-item-status > div { flex: 1 1 160px; min-height: 48px; padding: 6px 10px; background: #edf0f1; }
 .dds-item-status span { display: block; color: #647279; font-size: 10px; text-transform: uppercase; }
