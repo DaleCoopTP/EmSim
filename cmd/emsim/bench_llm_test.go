@@ -22,14 +22,20 @@ func TestParseBenchOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseBenchOptions: %v", err)
 	}
-	if fmt.Sprint(opts.levels) != "[1 4 20]" || opts.duration != 30*time.Second || opts.judgeLoops != 1 {
+	if fmt.Sprint(opts.levels) != "[1 4 20]" || opts.duration != 30*time.Second || opts.judgeLoops != 1 ||
+		opts.firstLine != 3*time.Second || opts.openingDelaySet {
 		t.Fatalf("unexpected options: %+v", opts)
+	}
+	opts, err = parseBenchOptions([]string{"--first-line", "1s", "--opening-delay", "0s"}, io.Discard)
+	if err != nil || opts.firstLine != time.Second || !opts.openingDelaySet || opts.openingDelay != 0 {
+		t.Fatalf("explicit pacing = %+v, %v; an explicit --opening-delay 0s must override CALLER_OPENING_DELAY", opts, err)
 	}
 	if _, err := parseBenchOptions([]string{"--help"}, io.Discard); !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("--help error = %v, want flag.ErrHelp so the command exits cleanly", err)
 	}
 	for _, args := range [][]string{
 		{"--concurrency", "0"}, {"--concurrency", "two"}, {"--duration", "0s"}, {"--judge", "-1"}, {"extra"},
+		{"--first-line", "-1s"}, {"--opening-delay", "-1s"},
 	} {
 		if _, err := parseBenchOptions(args, io.Discard); err == nil {
 			t.Fatalf("parseBenchOptions(%v) accepted invalid arguments", args)
@@ -72,17 +78,20 @@ func TestPercentileIsNearestRank(t *testing.T) {
 }
 
 // TestBenchRunAgainstFakeServer drives one short level against an
-// OpenAI-compatible fake with llama-server-style /metrics: model replies,
-// no-model openings, judge answers and server stats must all be reported.
+// OpenAI-compatible fake with llama-server-style /metrics and timings:
+// model replies, no-model openings, both warm-up stages, the first
+// reply's prompt accounting, judge answers and server stats must all be
+// reported.
 func TestBenchRunAgainstFakeServer(t *testing.T) {
-	var predicted, warmups atomic.Int64
+	var predicted, systemWarmups, openingWarmups atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/metrics":
 			fmt.Fprintf(w, "# HELP llamacpp:tokens_predicted_total x\nllamacpp:tokens_predicted_total %d\nllamacpp:prompt_tokens_total 10\nllamacpp:requests_deferred 1\nllamacpp:requests_processing 2\n", predicted.Load())
 		case "/v1/chat/completions":
 			var req struct {
-				MaxTokens      int `json:"max_tokens"`
+				MaxTokens      int               `json:"max_tokens"`
+				Messages       []json.RawMessage `json:"messages"`
 				ResponseFormat *struct {
 					JSONSchema struct {
 						Schema struct {
@@ -97,7 +106,12 @@ func TestBenchRunAgainstFakeServer(t *testing.T) {
 			}
 			predicted.Add(20)
 			if req.MaxTokens == 1 {
-				warmups.Add(1)
+				switch len(req.Messages) {
+				case 2:
+					systemWarmups.Add(1)
+				case 4:
+					openingWarmups.Add(1)
+				}
 			}
 			text := "Мы на месте, приезжайте скорее."
 			if req.ResponseFormat != nil {
@@ -110,7 +124,7 @@ func TestBenchRunAgainstFakeServer(t *testing.T) {
 			}
 			body, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
 				"message": map[string]string{"role": "assistant", "content": text}, "finish_reason": "stop",
-			}}})
+			}}, "timings": map[string]int{"prompt_n": 40, "cache_n": 480}})
 			_, _ = w.Write(body)
 		default:
 			http.NotFound(w, r)
@@ -127,7 +141,8 @@ func TestBenchRunAgainstFakeServer(t *testing.T) {
 		CallerTemperature: 0.3, CallerTopP: 0.9, CallerMaxTokens: 150, CallerWarmup: true,
 		JudgeLLMURL: server.URL + "/v1", JudgeLLMModel: "m", JudgeMaxTokens: 1024,
 	}
-	opts := benchOptions{levels: []int{2}, duration: 1500 * time.Millisecond, think: 10 * time.Millisecond, judgeLoops: 1}
+	cfg.CallerOpeningDelay = 20 * time.Millisecond
+	opts := benchOptions{levels: []int{2}, duration: 1500 * time.Millisecond, think: 10 * time.Millisecond, firstLine: 10 * time.Millisecond, judgeLoops: 1}
 	report, err := benchRun(context.Background(), opts, cfg, scenarios, io.Discard)
 	if err != nil {
 		t.Fatalf("benchRun: %v", err)
@@ -139,12 +154,18 @@ func TestBenchRunAgainstFakeServer(t *testing.T) {
 	if level.Concurrency != 2 || level.Caller.Count == 0 || level.Caller.Errors != 0 || level.NoModelReplies == 0 {
 		t.Fatalf("unexpected caller results: %+v", level)
 	}
-	if warmups.Load() == 0 || level.FirstReply.Count == 0 || level.FirstReply.Count > level.Caller.Count {
-		t.Fatalf("warm-up requests = %d, first replies = %+v, model replies = %+v: every dialogue must be warmed after its opening and its first model reply measured separately",
-			warmups.Load(), level.FirstReply, level.Caller)
+	if systemWarmups.Load() == 0 || openingWarmups.Load() == 0 || level.FirstReply.Count == 0 || level.FirstReply.Count > level.Caller.Count {
+		t.Fatalf("system/opening warm-ups = %d/%d, first replies = %+v, model replies = %+v: every dialogue must be warmed at answer and first line and its first model reply measured separately",
+			systemWarmups.Load(), openingWarmups.Load(), level.FirstReply, level.Caller)
 	}
-	if !report.Warmup {
-		t.Fatal("report must say the warm-up was on")
+	if level.WarmSystem.Count == 0 || level.WarmOpening.Count == 0 || level.WarmChecked != level.FirstReply.Count || level.WarmReady > level.WarmChecked {
+		t.Fatalf("unexpected warm-up stats: %+v", level)
+	}
+	if level.FirstPrompt == nil || level.FirstPrompt.P50 != 40 || level.FirstCached == nil || level.FirstCached.P50 != 480 {
+		t.Fatalf("first reply prompt accounting = %+v/%+v, want 40 new and 480 cached", level.FirstPrompt, level.FirstCached)
+	}
+	if !report.Warmup || report.OpeningDelay != "20ms" || report.FirstLine != "10ms" {
+		t.Fatalf("report header = warm-up %v, opening delay %q, first line %q", report.Warmup, report.OpeningDelay, report.FirstLine)
 	}
 	if level.OverTimeout != 0 {
 		t.Fatalf("fast fake replies reported over timeout: %+v", level)
@@ -158,7 +179,7 @@ func TestBenchRunAgainstFakeServer(t *testing.T) {
 
 	var table strings.Builder
 	printBenchTable(&table, report)
-	if !strings.Contains(table.String(), "p95 s") {
+	if !strings.Contains(table.String(), "p95 s") || !strings.Contains(table.String(), "warm ready") {
 		t.Fatalf("table has no header:\n%s", table.String())
 	}
 	var jsonOut strings.Builder

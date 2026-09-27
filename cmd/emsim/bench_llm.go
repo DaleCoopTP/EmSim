@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"text/tabwriter"
 	"time"
 
@@ -68,9 +69,21 @@ type benchOptions struct {
 	levels     []int
 	duration   time.Duration
 	think      time.Duration
+	firstLine  time.Duration
 	judgeLoops int
 	scenarios  string
 	jsonPath   string
+	// openingDelay overrides CALLER_OPENING_DELAY when openingDelaySet.
+	openingDelay    time.Duration
+	openingDelaySet bool
+}
+
+// benchPace is one dialogue's timing, as a class produces it (ADR-029):
+// the operator answers the call, writes the first line after firstLine,
+// the caller's opening arrives openingDelay later, and every reply is
+// followed by a think pause.
+type benchPace struct {
+	firstLine, openingDelay, think time.Duration
 }
 
 type benchScenario struct {
@@ -88,6 +101,13 @@ type latencyStats struct {
 	P95       float64 `json:"p95_s"`
 	P99       float64 `json:"p99_s"`
 	Max       float64 `json:"max_s"`
+}
+
+// countStats summarizes per-reply token counts.
+type countStats struct {
+	Count int `json:"count"`
+	P50   int `json:"p50"`
+	P95   int `json:"p95"`
 }
 
 type serverStats struct {
@@ -108,6 +128,19 @@ type benchLevel struct {
 	OverTimeoutShare float64      `json:"caller_over_timeout_share"`
 	Judge            latencyStats `json:"judge"`
 	Server           *serverStats `json:"server,omitempty"`
+	// Warm-up (ADR-029), only with CALLER_WARMUP on: how long each stage
+	// took, and in how many dialogues both had finished before the first
+	// model-answered question was sent (WarmReady of WarmChecked).
+	WarmSystem  latencyStats `json:"warmup_system"`
+	WarmOpening latencyStats `json:"warmup_opening"`
+	WarmReady   int          `json:"warmup_ready_before_first_reply"`
+	WarmChecked int          `json:"warmup_dialogues"`
+	// FirstPrompt/FirstCached are the first model reply's prompt tokens
+	// processed from scratch and reused from the prefix cache, from
+	// llama-server's timings; nil against a server that does not report
+	// them.
+	FirstPrompt *countStats `json:"first_reply_prompt_tokens,omitempty"`
+	FirstCached *countStats `json:"first_reply_cached_tokens,omitempty"`
 }
 
 type benchReport struct {
@@ -116,6 +149,8 @@ type benchReport struct {
 	CallerReplyTimeout string       `json:"caller_reply_timeout"`
 	Warmup             bool         `json:"warmup"`
 	Think              string       `json:"think"`
+	FirstLine          string       `json:"first_line"`
+	OpeningDelay       string       `json:"opening_delay"`
 	Scenarios          []string     `json:"scenarios"`
 	Levels             []benchLevel `json:"levels"`
 }
@@ -160,6 +195,8 @@ func parseBenchOptions(args []string, stderr io.Writer) (benchOptions, error) {
 	levels := fs.String("concurrency", "1,2,4", "comma-separated numbers of simultaneous dialogues, one measurement per value")
 	duration := fs.Duration("duration", 2*time.Minute, "measurement time per concurrency level")
 	think := fs.Duration("think", 5*time.Second, "operator pause between receiving a reply and sending the next message")
+	firstLine := fs.Duration("first-line", 3*time.Second, "operator pause between answering the call and sending the first message")
+	openingDelay := fs.Duration("opening-delay", 0, "hold-back of the caller's opening (default: CALLER_OPENING_DELAY)")
 	judge := fs.Int("judge", 0, "simultaneous description-judge request loops running alongside the dialogues")
 	scenarios := fs.String("scenarios", "/app/seed/scenarios", "directory with the pilot-112-ai-*.json seed scenarios")
 	jsonPath := fs.String("json", "", `also write the report as JSON to this file ("-" for stdout)`)
@@ -169,11 +206,19 @@ func parseBenchOptions(args []string, stderr io.Writer) (benchOptions, error) {
 		}
 		return benchOptions{}, errBenchUsage
 	}
-	if fs.NArg() != 0 || *duration <= 0 || *think < 0 || *judge < 0 {
+	if fs.NArg() != 0 || *duration <= 0 || *think < 0 || *firstLine < 0 || *openingDelay < 0 || *judge < 0 {
 		fs.Usage()
 		return benchOptions{}, errBenchUsage
 	}
-	opts := benchOptions{duration: *duration, think: *think, judgeLoops: *judge, scenarios: *scenarios, jsonPath: *jsonPath}
+	opts := benchOptions{
+		duration: *duration, think: *think, firstLine: *firstLine, openingDelay: *openingDelay,
+		judgeLoops: *judge, scenarios: *scenarios, jsonPath: *jsonPath,
+	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "opening-delay" {
+			opts.openingDelaySet = true
+		}
+	})
 	for _, part := range strings.Split(*levels, ",") {
 		n, err := strconv.Atoi(strings.TrimSpace(part))
 		if err != nil || n < 1 {
@@ -291,6 +336,49 @@ func (r *latencyRecorder) over(limit time.Duration) int {
 	return n
 }
 
+// countRecorder collects per-reply token counts.
+type countRecorder struct {
+	mu     sync.Mutex
+	counts []int
+}
+
+func (r *countRecorder) add(n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.counts = append(r.counts, n)
+}
+
+func (r *countRecorder) stats() *countStats {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.counts) == 0 {
+		return nil
+	}
+	sorted := append([]int(nil), r.counts...)
+	sort.Ints(sorted)
+	rank := func(p float64) int {
+		i := int(math.Ceil(p / 100 * float64(len(sorted))))
+		if i < 1 {
+			i = 1
+		}
+		return sorted[i-1]
+	}
+	return &countStats{Count: len(sorted), P50: rank(50), P95: rank(95)}
+}
+
+// lastTimingChat keeps the llama-server timings of the last model call
+// of one virtual operator, whose calls are sequential.
+type lastTimingChat struct {
+	inner aicaller.ChatCompleter
+	last  *llm.Timings
+}
+
+func (c *lastTimingChat) Complete(ctx context.Context, req llm.Request) (llm.Result, error) {
+	result, err := c.inner.Complete(ctx, req)
+	c.last = result.Timings
+	return result, err
+}
+
 // percentile is the nearest-rank percentile of an ascending slice.
 func percentile(sorted []time.Duration, p float64) time.Duration {
 	rank := int(math.Ceil(p / 100 * float64(len(sorted))))
@@ -307,6 +395,10 @@ func benchRun(ctx context.Context, opts benchOptions, cfg config.Worker, scenari
 		CallerURL: cfg.CallerLLMURL, CallerModel: cfg.CallerLLMModel,
 		CallerReplyTimeout: cfg.CallerReplyTimeout.String(), Think: opts.think.String(), Warmup: cfg.CallerWarmup,
 	}
+	if !opts.openingDelaySet {
+		opts.openingDelay = cfg.CallerOpeningDelay
+	}
+	report.FirstLine, report.OpeningDelay = opts.firstLine.String(), opts.openingDelay.String()
 	for _, s := range scenarios {
 		report.Scenarios = append(report.Scenarios, s.key)
 	}
@@ -329,29 +421,43 @@ func benchRun(ctx context.Context, opts benchOptions, cfg config.Worker, scenari
 	return report, nil
 }
 
+// dialogueRecorders is what every virtual operator of one level reports
+// into.
+type dialogueRecorders struct {
+	first, warmSystem, warmOpening *latencyRecorder
+	firstPrompt, firstCached       *countRecorder
+
+	mu                              sync.Mutex
+	noModel, warmReady, warmChecked int
+}
+
 func benchLevelRun(ctx context.Context, opts benchOptions, cfg config.Worker, scenarios []benchScenario, level int, metricsURL string) benchLevel {
-	callerRec, firstRec, judgeRec := &latencyRecorder{}, &latencyRecorder{}, &latencyRecorder{}
+	callerRec, judgeRec := &latencyRecorder{}, &latencyRecorder{}
+	rec := &dialogueRecorders{
+		first: &latencyRecorder{}, warmSystem: &latencyRecorder{}, warmOpening: &latencyRecorder{},
+		firstPrompt: &countRecorder{}, firstCached: &countRecorder{},
+	}
 	replier := aicaller.Replier{
 		Chat:  timedChat{inner: llm.NewClient(cfg.CallerLLMURL), recorder: callerRec},
 		Model: cfg.CallerLLMModel, Temperature: cfg.CallerTemperature, TopP: cfg.CallerTopP,
 		RepeatPenalty: cfg.CallerRepeatPenalty, MaxTokens: cfg.CallerMaxTokens,
 		Stub: operator112.StubCallerReplier{},
 	}
-	// The warm-up goes through its own, unmeasured client: only replies
-	// count towards the latency figures, exactly as a trainee sees them.
+	// The warm-ups go through their own client: they are timed
+	// separately and never count towards the reply figures, exactly as a
+	// trainee sees them.
 	var warm func(context.Context, operator112.CallerReplyRequest) error
 	if cfg.CallerWarmup {
 		warmReplier := replier
 		warmReplier.Chat = llm.NewClient(cfg.CallerLLMURL)
 		warm = warmReplier.Warm
 	}
+	pace := benchPace{firstLine: opts.firstLine, openingDelay: opts.openingDelay, think: opts.think}
 	levelCtx, cancel := context.WithTimeout(ctx, opts.duration)
 	defer cancel()
 
 	sampler := startMetricsSampler(metricsURL)
 	start := time.Now()
-	var noModel int
-	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for i := 0; i < level; i++ {
 		wg.Add(1)
@@ -361,10 +467,7 @@ func benchLevelRun(ctx context.Context, opts benchOptions, cfg config.Worker, sc
 			if !benchSleep(levelCtx, opts.think*time.Duration(session)/time.Duration(level)) {
 				return
 			}
-			n := benchDialogues(levelCtx, replier, warm, firstRec, scenarios, session, opts.think)
-			mu.Lock()
-			noModel += n
-			mu.Unlock()
+			benchDialogues(levelCtx, replier, warm, rec, scenarios, session, pace)
 		}(i)
 	}
 	judged := judgeScenarios(scenarios)
@@ -381,8 +484,11 @@ func benchLevelRun(ctx context.Context, opts benchOptions, cfg config.Worker, sc
 
 	result := benchLevel{
 		Concurrency: level, JudgeLoops: opts.judgeLoops, Seconds: round2(elapsed.Seconds()),
-		Caller: callerRec.stats(elapsed), FirstReply: firstRec.stats(elapsed), NoModelReplies: noModel,
+		Caller: callerRec.stats(elapsed), FirstReply: rec.first.stats(elapsed), NoModelReplies: rec.noModel,
 		OverTimeout: callerRec.over(cfg.CallerReplyTimeout), Judge: judgeRec.stats(elapsed), Server: server,
+		WarmSystem: rec.warmSystem.stats(elapsed), WarmOpening: rec.warmOpening.stats(elapsed),
+		WarmReady: rec.warmReady, WarmChecked: rec.warmChecked,
+		FirstPrompt: rec.firstPrompt.stats(), FirstCached: rec.firstCached.stats(),
 	}
 	if result.Caller.Count > 0 {
 		result.OverTimeoutShare = round2(float64(result.OverTimeout) / float64(result.Caller.Count))
@@ -392,25 +498,58 @@ func benchLevelRun(ctx context.Context, opts benchOptions, cfg config.Worker, sc
 
 // benchDialogues runs one virtual operator until ctx is done: dialogue
 // after dialogue, cycling through the scenarios from a per-session
-// offset. A reply already in flight when ctx ends is still awaited and
-// counted — the level's report covers every request it started. When
-// warm is set, it runs right after each opening, concurrently with the
-// operator's pause, as the worker's caller.warmup does (ADR-029); the
-// first model-answered reply of every dialogue is also recorded in
-// first. It returns how many replies were answered without the model.
-func benchDialogues(ctx context.Context, replier aicaller.Replier, warm func(context.Context, operator112.CallerReplyRequest) error, first *latencyRecorder, scenarios []benchScenario, session int, think time.Duration) int {
+// offset, paced as a class is (benchPace). A reply already in flight
+// when ctx ends is still awaited and counted — the level's report covers
+// every request it started. When warm is set, the dialogue is warmed as
+// the worker warms it (ADR-029, callerWarmupPrefix): the system prompt
+// on answering, the first line plus the opening when that line is sent,
+// both concurrently with the operator. The first model-answered reply of
+// every dialogue is recorded separately, with its prompt accounting and
+// whether both warm-ups had finished by the time it was requested.
+func benchDialogues(ctx context.Context, replier aicaller.Replier, warm func(context.Context, operator112.CallerReplyRequest) error, rec *dialogueRecorders, scenarios []benchScenario, session int, pace benchPace) {
 	var warming sync.WaitGroup
 	defer warming.Wait()
-	noModel := 0
+	chat := &lastTimingChat{inner: replier.Chat}
+	replier.Chat = chat
 	for n := session; ; n++ {
 		scenario := scenarios[n%len(scenarios)]
 		var transcript []training.IntakeLine
+		var inflight atomic.Int32
+		startWarm := func(stage string, stageRec *latencyRecorder) {
+			if warm == nil {
+				return
+			}
+			prefix, reason := callerWarmupPrefix(stage, scenario.caller, transcript)
+			if reason != "" {
+				return
+			}
+			req := operator112.CallerReplyRequest{Facts: scenario.facts, Caller: scenario.caller, Transcript: append([]training.IntakeLine(nil), prefix...)}
+			inflight.Add(1)
+			warming.Add(1)
+			go func() {
+				defer warming.Done()
+				defer inflight.Add(-1)
+				warmCtx, cancel := context.WithTimeout(context.Background(), benchCallCap)
+				defer cancel()
+				start := time.Now()
+				err := warm(warmCtx, req)
+				stageRec.add(time.Since(start), err)
+			}()
+		}
+		startWarm(training.CallerWarmupStageSystem, rec.warmSystem)
+		if !benchSleep(ctx, pace.firstLine) {
+			return
+		}
 		firstModelReply := true
 		for turn, text := range benchOperatorLines {
 			if ctx.Err() != nil {
-				return noModel
+				return
 			}
 			transcript = append(transcript, training.IntakeLine{Speaker: "operator", Text: text, ServerAt: time.Now()})
+			if turn == 0 {
+				startWarm(training.CallerWarmupStageOpening, rec.warmOpening)
+			}
+			warmed := inflight.Load() == 0
 			callCtx, cancel := context.WithTimeout(context.Background(), benchCallCap)
 			start := time.Now()
 			reply, err := replier.Reply(callCtx, operator112.CallerReplyRequest{
@@ -422,24 +561,33 @@ func benchDialogues(ctx context.Context, replier aicaller.Replier, warm func(con
 			case err != nil:
 				reply = replier.Fallback(operator112.CallerReplyRequest{})
 			case reply.Source != training.CallerTurnSourceModel:
-				noModel++
+				rec.mu.Lock()
+				rec.noModel++
+				rec.mu.Unlock()
 			case firstModelReply:
-				first.add(took, nil)
 				firstModelReply = false
+				rec.first.add(took, nil)
+				if chat.last != nil {
+					rec.firstPrompt.add(chat.last.PromptTokens)
+					rec.firstCached.add(chat.last.CachedTokens)
+				}
+				if warm != nil {
+					rec.mu.Lock()
+					rec.warmChecked++
+					if warmed {
+						rec.warmReady++
+					}
+					rec.mu.Unlock()
+				}
 			}
 			transcript = append(transcript, training.IntakeLine{Speaker: "caller", Text: reply.Text, Reveals: reply.Reveals, ServerAt: time.Now()})
-			if warm != nil && reply.Source == training.CallerTurnSourceOpening {
-				req := operator112.CallerReplyRequest{Facts: scenario.facts, Caller: scenario.caller, Transcript: append([]training.IntakeLine(nil), transcript...)}
-				warming.Add(1)
-				go func() {
-					defer warming.Done()
-					warmCtx, cancel := context.WithTimeout(context.Background(), benchCallCap)
-					defer cancel()
-					_ = warm(warmCtx, req)
-				}()
+			pause := pace.think
+			if turn == 0 {
+				// The opening is held back after the first line.
+				pause += pace.openingDelay
 			}
-			if !benchSleep(ctx, think) {
-				return noModel
+			if !benchSleep(ctx, pause) {
+				return
 			}
 		}
 	}
@@ -606,10 +754,11 @@ func printBenchTable(w io.Writer, report benchReport) {
 	if report.Warmup {
 		warmup = "on"
 	}
-	fmt.Fprintf(w, "model %s at %s, CALLER_REPLY_TIMEOUT %s, operator pause %s, warm-up %s\n", report.CallerModel, report.CallerURL, report.CallerReplyTimeout, report.Think, warmup)
+	fmt.Fprintf(w, "model %s at %s, CALLER_REPLY_TIMEOUT %s, operator pause %s, first line after %s, opening delay %s, warm-up %s\n",
+		report.CallerModel, report.CallerURL, report.CallerReplyTimeout, report.Think, report.FirstLine, report.OpeningDelay, warmup)
 	fmt.Fprintf(w, "scenarios: %s\n\n", strings.Join(report.Scenarios, ", "))
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', tabwriter.AlignRight)
-	fmt.Fprintln(tw, "dialogues\treplies/min\tp50 s\tp95 s\tp99 s\tmax s\tfirst p50 s\tfirst p95 s\tover timeout\terrors\tno-model\tjudge p95 s\tjudge err\ttok/s out\ttok/s in\tmax queued\t")
+	fmt.Fprintln(tw, "dialogues\treplies/min\tp50 s\tp95 s\tp99 s\tmax s\tfirst p50 s\tfirst p95 s\tfirst new tok\twarm sys p95 s\twarm open p95 s\twarm ready\tover timeout\terrors\tno-model\tjudge p95 s\tjudge err\ttok/s out\ttok/s in\tmax queued\t")
 	for _, l := range report.Levels {
 		server := []string{"n/a", "n/a", "n/a"}
 		if l.Server != nil {
@@ -619,9 +768,19 @@ func printBenchTable(w io.Writer, report benchReport) {
 		if l.JudgeLoops > 0 {
 			judgeP95, judgeErr = fmtFloat(l.Judge.P95), strconv.Itoa(l.Judge.Errors)
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d (%.0f%%)\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t\n",
+		firstNew := "n/a"
+		if l.FirstPrompt != nil {
+			firstNew = strconv.Itoa(l.FirstPrompt.P50)
+		}
+		warmSys, warmOpen, warmReady := "-", "-", "-"
+		if report.Warmup {
+			warmSys, warmOpen = fmtFloat(l.WarmSystem.P95), fmtFloat(l.WarmOpening.P95)
+			warmReady = fmt.Sprintf("%d/%d", l.WarmReady, l.WarmChecked)
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d (%.0f%%)\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t\n",
 			l.Concurrency, fmtFloat(l.Caller.PerMinute), fmtFloat(l.Caller.P50), fmtFloat(l.Caller.P95),
 			fmtFloat(l.Caller.P99), fmtFloat(l.Caller.Max), fmtFloat(l.FirstReply.P50), fmtFloat(l.FirstReply.P95),
+			firstNew, warmSys, warmOpen, warmReady,
 			l.OverTimeout, l.OverTimeoutShare*100,
 			l.Caller.Errors, l.NoModelReplies, judgeP95, judgeErr, server[0], server[1], server[2])
 	}

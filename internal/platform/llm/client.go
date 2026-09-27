@@ -68,6 +68,19 @@ type Request struct {
 type Result struct {
 	Text         string
 	FinishReason string
+	// Timings is llama-server's own per-request prompt accounting, nil
+	// when the server does not report it (Ollama). Only bench-llm reads
+	// it, to see how much of a prompt the prefix cache already held
+	// (ADR-029's warm-up).
+	Timings *Timings
+}
+
+// Timings is the part of llama-server's "timings" response object that
+// describes the prompt: PromptTokens were processed for this request,
+// CachedTokens were reused from the slot's prefix cache.
+type Timings struct {
+	PromptTokens int `json:"prompt_n"`
+	CachedTokens int `json:"cache_n"`
 }
 
 // Client calls one OpenAI-compatible /v1/chat/completions endpoint.
@@ -129,7 +142,7 @@ func (c *Client) Complete(ctx context.Context, req Request) (Result, error) {
 	if len(decoded.Choices) == 0 {
 		return Result{}, fmt.Errorf("llm: response has no choices")
 	}
-	return Result{Text: decoded.Choices[0].Message.Content, FinishReason: decoded.Choices[0].FinishReason}, nil
+	return Result{Text: decoded.Choices[0].Message.Content, FinishReason: decoded.Choices[0].FinishReason, Timings: decoded.Timings}, nil
 }
 
 type chatCompletionsResponse struct {
@@ -137,4 +150,5 @@ type chatCompletionsResponse struct {
 		Message      Message `json:"message"`
 		FinishReason string  `json:"finish_reason"`
 	} `json:"choices"`
+	Timings *Timings `json:"timings"`
 }

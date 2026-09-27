@@ -46,8 +46,25 @@ func TestClientCompleteSendsExpectedRequestShape(t *testing.T) {
 	if captured.Model != "t-tech/T-lite-it-2.1:q5_K_M" || len(captured.Messages) != 2 || captured.RepeatPenalty != 1.1 {
 		t.Fatalf("unexpected captured request: %+v", captured)
 	}
-	if result.Text != "Здравствуйте." || result.FinishReason != "stop" {
+	if result.Text != "Здравствуйте." || result.FinishReason != "stop" || result.Timings != nil {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+// TestClientCompleteReadsLlamaServerTimings: llama-server reports how
+// many prompt tokens it processed and how many came from the prefix
+// cache; bench-llm uses them to check the caller warm-up (ADR-029).
+func TestClientCompleteReadsLlamaServerTimings(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Да."},"finish_reason":"stop"}],"timings":{"cache_n":480,"prompt_n":37,"prompt_ms":2310.5}}`))
+	}))
+	defer server.Close()
+	result, err := NewClient(server.URL).Complete(context.Background(), Request{Model: "m"})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if result.Timings == nil || result.Timings.PromptTokens != 37 || result.Timings.CachedTokens != 480 {
+		t.Fatalf("Timings = %+v, want prompt 37, cached 480", result.Timings)
 	}
 }
 
