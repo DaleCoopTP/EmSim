@@ -5,7 +5,8 @@
 // "bootstrap-admin" creates the initial admin account for an empty
 // installation (slice-planning.md §2), "import" loads the prepared
 // services/classifier/scenario reference data slice 2 needs
-// (slice-planning.md §3, seed/README.md).
+// (slice-planning.md §3, seed/README.md), and "bench-llm" measures the
+// local model's reply latency under a class's load (ADR-029, W0).
 package main
 
 import (
@@ -18,7 +19,7 @@ import (
 )
 
 var (
-	errCommandRequired = errors.New("subcommand is required: migrate | api | worker | bootstrap-admin | import")
+	errCommandRequired = errors.New("subcommand is required: migrate | api | worker | bootstrap-admin | import | bench-llm")
 	errUnknownCommand  = errors.New("unknown subcommand")
 	errNotImplemented  = errors.New("subcommand is not implemented yet")
 )
@@ -53,6 +54,8 @@ func run(ctx context.Context, args []string) error {
 		return runBootstrapAdmin(ctx, rest)
 	case "import":
 		return runImport(ctx, rest)
+	case "bench-llm":
+		return runBenchLLM(ctx, rest)
 	default:
 		return errUnknownCommand
 	}
@@ -60,7 +63,7 @@ func run(ctx context.Context, args []string) error {
 
 // runMigrate lives in migrate.go, runAPI in api.go, runWorker in worker.go
 // (+ worker_admin.go/worker_composition.go), runBootstrapAdmin in
-// bootstrap.go, runImport in import.go.
+// bootstrap.go, runImport in import.go, runBenchLLM in bench_llm.go.
 
 func errorCode(err error) string {
 	switch {
