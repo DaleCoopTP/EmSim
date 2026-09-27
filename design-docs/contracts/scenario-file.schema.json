@@ -42,6 +42,11 @@
     "body": {
       "$ref": "https://emsim.local/schemas/scenario/v1",
       "description": "Неизменяемое тело версии по scenario.schema.json. target_service и exercise_type читаются из body, а не дублируются в обёртке — единственный источник."
+    },
+    "archived": {
+      "type": "boolean",
+      "default": false,
+      "description": "ADR-030: true — сценарий скрыт из каталога (scenarios.status=archived); импорт выставляет статус по флагу идемпотентно в обе стороны, тело и версии не меняет. Прошлые прогоны и отчёты читаются как раньше."
     }
   }
 }
