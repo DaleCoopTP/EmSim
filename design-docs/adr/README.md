@@ -29,3 +29,4 @@
 | [023](023-operator112-notify-and-save.md) | Оповещение служб «Сохранить → оповестить и сохранить карточку» | accepted |
 | [024](024-operator112-async-caller-reply.md) | Асинхронный ход свободного диалога с заявителем | accepted |
 | [025](025-operator112-ai-caller.md) | ИИ-заявитель 112 на интерактивном пути, уточняет ADR-003 | accepted |
+| [029](029-operator112-local-inference-container.md) | Локальная модель (`llama-server`) в составе compose, ИИ-заявитель и судья по умолчанию | accepted |
