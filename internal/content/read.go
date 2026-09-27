@@ -95,16 +95,36 @@ func (s *Service) ScenarioDetail(ctx context.Context, id uuid.UUID) (ScenarioDet
 	return detail, nil
 }
 
-// ScenarioVersions is GET /scenarios/{id}/versions.
-func (s *Service) ScenarioVersions(ctx context.Context, id uuid.UUID) ([]VersionSummary, error) {
+// ScenarioVersions is GET /scenarios/{id}/versions. The scenario's own
+// author sees every version; any other instructor sees only published
+// ones (approved_at set — the current approved and any earlier approved,
+// now superseded, version), never a draft or a superseded draft, and
+// ErrNotFound for a scenario that has no published version at all
+// (ADR-027: someone else's draft is invisible, not merely off-limits).
+func (s *Service) ScenarioVersions(ctx context.Context, actorID, id uuid.UUID) ([]VersionSummary, error) {
 	var versions []VersionSummary
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
-		if _, err := s.store.ScenarioByID(ctx, tx, id); err != nil {
+		sc, err := s.store.ScenarioByID(ctx, tx, id)
+		if err != nil {
 			return err
 		}
-		v, err := s.store.ListVersions(ctx, tx, id)
-		versions = v
-		return err
+		all, err := s.store.ListVersions(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if sc.CreatedBy == actorID {
+			versions = all
+			return nil
+		}
+		for _, v := range all {
+			if v.ApprovedAt != nil {
+				versions = append(versions, v)
+			}
+		}
+		if len(versions) == 0 {
+			return ErrNotFound
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

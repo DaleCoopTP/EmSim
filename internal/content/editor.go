@@ -85,8 +85,8 @@ func operator112EditorEligible(body Body) bool {
 
 // CreateOperator112Scenario is POST /scenarios: either copies an
 // existing full_case+free_text version (own, another instructor's
-// approved one, or a file-imported seed — ownership of the *source* is
-// never checked, only its shape) into a brand-new scenario under the
+// approved one, or a file-imported seed — never someone else's
+// unapproved draft, see readVersionForCopy) into a brand-new scenario under the
 // caller's own authorship, or starts one from a caller-supplied body. A
 // structurally invalid body (e.g. still-empty dialogue.facts on a fresh
 // scenario) is not rejected here — Issues carries whatever
@@ -96,7 +96,7 @@ func (s *Service) CreateOperator112Scenario(ctx context.Context, actorID uuid.UU
 	var body Body
 	switch {
 	case in.CopyFromVersionID != nil:
-		src, err := s.readVersionForCopy(ctx, *in.CopyFromVersionID)
+		src, err := s.readVersionForCopy(ctx, actorID, *in.CopyFromVersionID)
 		if err != nil {
 			return EditorScenario{}, err
 		}
@@ -159,17 +159,27 @@ func (s *Service) CreateOperator112Scenario(ctx context.Context, actorID uuid.UU
 }
 
 // readVersionForCopy loads a source version by id for POST /scenarios'
-// copy_from_version_id — no ownership check: any full_case+free_text
-// version (own draft, another instructor's approved scenario, or a
-// file-imported seed) may be copied, since the copy becomes an
-// independent new scenario under the caller's own authorship
-// (ADR-027's "Копирование").
-func (s *Service) readVersionForCopy(ctx context.Context, versionID uuid.UUID) (Body, error) {
+// copy_from_version_id. The source may be the caller's own version (any
+// status) or any published one — another instructor's approved scenario
+// or a file-imported seed; the copy then becomes an independent new
+// scenario under the caller's own authorship (ADR-027's "Копирование").
+// Someone else's never-approved draft is ErrNotFound, exactly like a
+// direct read of it: copying must not become a way around draft privacy.
+func (s *Service) readVersionForCopy(ctx context.Context, actorID, versionID uuid.UUID) (Body, error) {
 	var body Body
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
 		v, err := s.store.VersionByID(ctx, tx, versionID)
 		if err != nil {
 			return err
+		}
+		if v.ApprovedAt == nil {
+			sc, err := s.store.ScenarioByID(ctx, tx, v.ScenarioID)
+			if err != nil {
+				return err
+			}
+			if sc.CreatedBy != actorID {
+				return ErrNotFound
+			}
 		}
 		body = v.Body
 		return nil

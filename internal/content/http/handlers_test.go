@@ -129,7 +129,7 @@ func (f *fakeContentService) ScenarioDetail(context.Context, uuid.UUID) (content
 	return f.detailResult, f.detailErr
 }
 
-func (f *fakeContentService) ScenarioVersions(context.Context, uuid.UUID) ([]content.VersionSummary, error) {
+func (f *fakeContentService) ScenarioVersions(context.Context, uuid.UUID, uuid.UUID) ([]content.VersionSummary, error) {
 	return f.versionsResult, f.versionsErr
 }
 

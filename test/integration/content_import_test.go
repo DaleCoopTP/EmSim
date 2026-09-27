@@ -238,7 +238,7 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 		t.Fatalf("stored body must omit fields the seed file itself omits, got: %s", detail.BodyJSON)
 	}
 
-	versions, err := svc.ScenarioVersions(ctx, case02ID)
+	versions, err := svc.ScenarioVersions(ctx, actorID, case02ID)
 	if err != nil {
 		t.Fatalf("ScenarioVersions: %v", err)
 	}
@@ -409,7 +409,7 @@ func TestContentImportScenarioVersionRules(t *testing.T) {
 	if scenarioID == uuid.Nil {
 		t.Fatalf("vtest scenario not found after v1 import")
 	}
-	v1Versions, err := svc.ScenarioVersions(ctx, scenarioID)
+	v1Versions, err := svc.ScenarioVersions(ctx, actorID, scenarioID)
 	if err != nil {
 		t.Fatalf("ScenarioVersions after v1: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestContentImportScenarioVersionRules(t *testing.T) {
 	if _, err := svc.ImportScenarios(ctx, map[string]io.Reader{"v2.json": strings.NewReader(v2)}, actorID, actorRole, "r2"); err != nil {
 		t.Fatalf("import v2: %v", err)
 	}
-	versions, err := svc.ScenarioVersions(ctx, scenarioID)
+	versions, err := svc.ScenarioVersions(ctx, actorID, scenarioID)
 	if err != nil {
 		t.Fatalf("ScenarioVersions after v2: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestContentImportScenarioVersionRules(t *testing.T) {
 	if replay.NewScenarios != 0 || replay.NewVersions != 0 || replay.Unchanged != 2 {
 		t.Fatalf("replay of v1+v2 = %+v, want all Unchanged=2", replay)
 	}
-	versionsAfterReplay, err := svc.ScenarioVersions(ctx, scenarioID)
+	versionsAfterReplay, err := svc.ScenarioVersions(ctx, actorID, scenarioID)
 	if err != nil {
 		t.Fatalf("ScenarioVersions after replay: %v", err)
 	}

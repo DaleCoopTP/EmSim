@@ -80,6 +80,17 @@ func TestOperator112EditorVersionLifecycleAgainstRealDatabase(t *testing.T) {
 	if _, err := contentService.SaveOperator112Draft(ctx, other.ID, created.ID, content.ScenarioEditInput{BaseDigestHex: hex.EncodeToString(created.Digest[:]), Body: body}); !errors.Is(err, content.ErrNotFound) {
 		t.Fatalf("foreign SaveOperator112Draft = %v, want ErrNotFound", err)
 	}
+	// Neither copying the draft nor listing its versions is a way around
+	// that: both are ErrNotFound for a foreign instructor too.
+	if _, err := contentService.CreateOperator112Scenario(ctx, other.ID, content.ScenarioCreateInput{Title: "Копия черновика", Difficulty: 1, CopyFromVersionID: &created.VersionID}); !errors.Is(err, content.ErrNotFound) {
+		t.Fatalf("foreign copy of draft = %v, want ErrNotFound", err)
+	}
+	if _, err := contentService.ScenarioVersions(ctx, other.ID, created.ID); !errors.Is(err, content.ErrNotFound) {
+		t.Fatalf("foreign ScenarioVersions of draft = %v, want ErrNotFound", err)
+	}
+	if ownCopy, err := contentService.CreateOperator112Scenario(ctx, author.ID, content.ScenarioCreateInput{Title: "Своя копия", Difficulty: 1, CopyFromVersionID: &created.VersionID}); err != nil || ownCopy.CreatedBy != author.ID {
+		t.Fatalf("own copy of draft = %+v, %v; want a new draft by author", ownCopy, err)
+	}
 
 	// A stale base_digest is rejected without creating a version.
 	if _, err := contentService.SaveOperator112Draft(ctx, author.ID, created.ID, content.ScenarioEditInput{BaseDigestHex: "00", Body: body}); !errors.Is(err, content.ErrStaleDraft) {
@@ -129,6 +140,19 @@ func TestOperator112EditorVersionLifecycleAgainstRealDatabase(t *testing.T) {
 	}
 	if copied.CreatedBy != other.ID || copied.Status != "draft" {
 		t.Fatalf("copied = %+v, want created_by=other status=draft", copied)
+	}
+
+	// Once published, a foreign instructor lists only published versions —
+	// never the superseded v1 draft the author saved over.
+	foreignVersions, err := contentService.ScenarioVersions(ctx, other.ID, created.ID)
+	if err != nil {
+		t.Fatalf("foreign ScenarioVersions: %v", err)
+	}
+	if len(foreignVersions) != 1 || foreignVersions[0].ID != approved.VersionID {
+		t.Fatalf("foreign ScenarioVersions = %+v, want only the approved version", foreignVersions)
+	}
+	if _, err := contentService.CreateOperator112Scenario(ctx, other.ID, content.ScenarioCreateInput{Title: "Копия старого черновика", Difficulty: 1, CopyFromVersionID: &created.VersionID}); !errors.Is(err, content.ErrNotFound) {
+		t.Fatalf("foreign copy of superseded draft = %v, want ErrNotFound", err)
 	}
 }
 

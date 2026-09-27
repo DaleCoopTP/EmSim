@@ -33,7 +33,7 @@ type contentService interface {
 	ListServices(ctx context.Context) ([]content.ServiceRecord, error)
 	ListScenarios(ctx context.Context, filter content.ScenarioFilter) ([]content.ScenarioSummary, int, error)
 	ScenarioDetail(ctx context.Context, id uuid.UUID) (content.ScenarioDetail, error)
-	ScenarioVersions(ctx context.Context, id uuid.UUID) ([]content.VersionSummary, error)
+	ScenarioVersions(ctx context.Context, actorID, id uuid.UUID) ([]content.VersionSummary, error)
 	ScenarioPreview(ctx context.Context, id uuid.UUID) (content.ScenarioPreview, error)
 
 	// The methods below back the 112-7/ADR-027 scenario editor
@@ -206,7 +206,12 @@ func (h *Handlers) scenarioVersions(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.CodeNotFound, "scenario not found", nil)
 		return
 	}
-	versions, err := h.content.ScenarioVersions(r.Context(), id)
+	actor, ok := authhttp.PrincipalFromContext(r.Context())
+	if !ok {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "scenario not found", nil)
+		return
+	}
+	versions, err := h.content.ScenarioVersions(r.Context(), actor.UserID, id)
 	if err != nil {
 		writeScenarioLookupError(w, r, err)
 		return
