@@ -1,8 +1,9 @@
-import { useMutation } from "@tanstack/react-query";
-import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
+import { useEventStream } from "../../api/realtime";
 import { stopLesson } from "../../api/training";
 import type { Me } from "../../api/useMe";
-import { useItem } from "../../api/workplace";
+import { itemQueryKey, useItem } from "../../api/workplace";
 import { errorMessage } from "../../api/errors";
 import { Operator112ProfileCase } from "../trainee/Operator112ProfileCase";
 import type { IntakeItem } from "../trainee/Operator112Workplace";
@@ -14,16 +15,21 @@ import type { IntakeItem } from "../trainee/Operator112Workplace";
 // like a trainee drives their own item (GET/POST /items/{id}...), so this
 // route is a thin wrapper around the same Operator112ProfileCase/
 // CallerChat components the trainee workplace uses, not a parallel
-// implementation. lessonId travels through navigation state (set by
-// whoever started this preview — ScenarioEditorRoute) purely so this
-// screen can offer an explicit "завершить" button; the preview is not
-// broken without it; StartPreview auto-stops the previous one anyway.
+// implementation. The one thing the trainee workplace does around those
+// components that they do not do themselves is subscribe to SSE: the
+// caller's reply (112-5a's caller.reply) lands asynchronously, so without
+// a stream the chat would sit at "печатает…" until a reload. The preview
+// lesson's own instructor feed (/lessons/{id}/stream, owned by the
+// author) carries the same item invalidations /my/stream does. lessonId
+// travels in the ?lesson= query (set by ScenarioEditorRoute), so a reload
+// keeps both the stream and the explicit "завершить" button;
+// StartPreview auto-stops the previous preview anyway.
 export function ScenarioPreviewRoute() {
   const { itemId = "" } = useParams();
   const me = useOutletContext<Me>();
   const navigate = useNavigate();
-  const location = useLocation();
-  const lessonId = (location.state as { lessonId?: string } | null)?.lessonId ?? "";
+  const [search] = useSearchParams();
+  const lessonId = search.get("lesson") ?? "";
   const item = useItem(itemId);
   const stop = useMutation({
     mutationFn: () => stopLesson(lessonId),
@@ -40,6 +46,7 @@ export function ScenarioPreviewRoute() {
 
   return (
     <section className="instructor-page scenario-preview">
+      {lessonId && <PreviewStream lessonId={lessonId} itemId={itemId} />}
       <header className="page-heading">
         <div><h1>Предпросмотр</h1><p>Вы проходите свой собственный черновик. Результат не входит в отчёты и статистику.</p></div>
         {lessonId && <button type="button" disabled={stop.isPending} onClick={() => stop.mutate()}>Завершить предпросмотр</button>}
@@ -49,4 +56,14 @@ export function ScenarioPreviewRoute() {
       <Operator112ProfileCase me={me} item={item.data as unknown as IntakeItem} onClose={() => navigate("/instructor/scenarios")} />
     </section>
   );
+}
+
+// PreviewStream is a component rather than an inline hook call only so
+// the subscription can be conditional on lessonId being known.
+function PreviewStream({ lessonId, itemId }: { lessonId: string; itemId: string }) {
+  const queryClient = useQueryClient();
+  useEventStream(`/lessons/${encodeURIComponent(lessonId)}/stream`, () => {
+    void queryClient.invalidateQueries({ queryKey: itemQueryKey(itemId) });
+  });
+  return null;
 }

@@ -170,7 +170,7 @@ export function ScenarioEditorRoute() {
     if (!scenarioId || !hasSavedVersion) return;
     startPreview.mutate(
       { scenarioId, versionId: savedVersionId },
-      { onSuccess: (result) => navigate(`/instructor/preview/${result.item_id}`, { state: { lessonId: result.lesson_id } }) },
+      { onSuccess: (result) => navigate(`/instructor/preview/${result.item_id}?lesson=${encodeURIComponent(result.lesson_id)}`) },
     );
   };
 

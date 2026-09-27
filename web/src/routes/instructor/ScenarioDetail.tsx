@@ -152,7 +152,7 @@ function Operator112ScenarioDetail({ s, me, onNavigate }: { s: Scenario; me: Me;
     if (!s.version_id) return;
     startPreview.mutate(
       { scenarioId, versionId: s.version_id },
-      { onSuccess: (result) => onNavigate(`/instructor/preview/${result.item_id}`) },
+      { onSuccess: (result) => onNavigate(`/instructor/preview/${result.item_id}?lesson=${encodeURIComponent(result.lesson_id)}`) },
     );
   };
 

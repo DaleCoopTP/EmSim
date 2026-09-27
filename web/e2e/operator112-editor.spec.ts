@@ -89,11 +89,23 @@ test("112-7 editor: create, validate, pass it yourself, approve, and assign", as
   // Пройти самому: a real preview run, driven exactly like a trainee's own
   // full_case item (Operator112ProfileCase reused as-is).
   await page.getByRole("button", { name: "Пройти самому (предпросмотр)" }).click();
-  await expect(page).toHaveURL(/\/instructor\/preview\/[0-9a-f-]+$/);
+  await expect(page).toHaveURL(/\/instructor\/preview\/[0-9a-f-]+\?lesson=[0-9a-f-]+$/);
   await expect(page.getByRole("heading", { name: "Предпросмотр" })).toBeVisible();
 
   await page.getByRole("button", { name: "Открыть кейс" }).click();
   await page.getByRole("button", { name: "ответить" }).click();
+
+  // A real exchange with the caller: the reply arrives asynchronously
+  // (caller.reply on the worker), so the preview screen must pick it up
+  // from its own SSE subscription — without one it stays at "печатает…"
+  // until a reload (review 2026-09-26, item 2).
+  await expect(page.getByRole("dialog", { name: "Чат с заявителем" })).toBeVisible();
+  await page.getByLabel("Сообщение заявителю").fill("Что случилось?");
+  await page.getByRole("button", { name: "Отправить" }).click();
+  await expect(page.getByText("Заявитель печатает…")).toBeVisible();
+  await expect(page.getByText(/Я упал\.\.\. Глаз очень болит/)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Заявитель печатает…")).toHaveCount(0);
+
   await page.getByLabel("Тип происшествия").fill("Взрыв газа");
   await page.getByRole("option", { name: "Взрыв газа", exact: true }).click();
   await page.getByRole("button", { name: "Сохранить карточку" }).click();
