@@ -75,13 +75,14 @@ func TestPercentileIsNearestRank(t *testing.T) {
 // OpenAI-compatible fake with llama-server-style /metrics: model replies,
 // no-model openings, judge answers and server stats must all be reported.
 func TestBenchRunAgainstFakeServer(t *testing.T) {
-	var predicted atomic.Int64
+	var predicted, warmups atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/metrics":
 			fmt.Fprintf(w, "# HELP llamacpp:tokens_predicted_total x\nllamacpp:tokens_predicted_total %d\nllamacpp:prompt_tokens_total 10\nllamacpp:requests_deferred 1\nllamacpp:requests_processing 2\n", predicted.Load())
 		case "/v1/chat/completions":
 			var req struct {
+				MaxTokens      int `json:"max_tokens"`
 				ResponseFormat *struct {
 					JSONSchema struct {
 						Schema struct {
@@ -95,6 +96,9 @@ func TestBenchRunAgainstFakeServer(t *testing.T) {
 				return
 			}
 			predicted.Add(20)
+			if req.MaxTokens == 1 {
+				warmups.Add(1)
+			}
 			text := "Мы на месте, приезжайте скорее."
 			if req.ResponseFormat != nil {
 				answers := map[string]string{}
@@ -120,7 +124,7 @@ func TestBenchRunAgainstFakeServer(t *testing.T) {
 	}
 	cfg := config.Worker{
 		CallerLLMURL: server.URL + "/v1", CallerLLMModel: "m", CallerReplyTimeout: 10 * time.Second,
-		CallerTemperature: 0.3, CallerTopP: 0.9, CallerMaxTokens: 150,
+		CallerTemperature: 0.3, CallerTopP: 0.9, CallerMaxTokens: 150, CallerWarmup: true,
 		JudgeLLMURL: server.URL + "/v1", JudgeLLMModel: "m", JudgeMaxTokens: 1024,
 	}
 	opts := benchOptions{levels: []int{2}, duration: 1500 * time.Millisecond, think: 10 * time.Millisecond, judgeLoops: 1}
@@ -134,6 +138,13 @@ func TestBenchRunAgainstFakeServer(t *testing.T) {
 	level := report.Levels[0]
 	if level.Concurrency != 2 || level.Caller.Count == 0 || level.Caller.Errors != 0 || level.NoModelReplies == 0 {
 		t.Fatalf("unexpected caller results: %+v", level)
+	}
+	if warmups.Load() == 0 || level.FirstReply.Count == 0 || level.FirstReply.Count > level.Caller.Count {
+		t.Fatalf("warm-up requests = %d, first replies = %+v, model replies = %+v: every dialogue must be warmed after its opening and its first model reply measured separately",
+			warmups.Load(), level.FirstReply, level.Caller)
+	}
+	if !report.Warmup {
+		t.Fatal("report must say the warm-up was on")
 	}
 	if level.OverTimeout != 0 {
 		t.Fatalf("fast fake replies reported over timeout: %+v", level)

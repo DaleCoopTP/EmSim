@@ -19,10 +19,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,6 +103,13 @@ func (f *chatFixture) send(t *testing.T, ctx context.Context, kind training.Comm
 // one trainee.
 func setupFreeTextChatItem(t *testing.T, ctx context.Context, databaseURL string) *chatFixture {
 	t.Helper()
+	return setupChatItemFromScenario(t, ctx, databaseURL, freeTextChatScenarioJSON, "test-112-free-text-chat")
+}
+
+// setupChatItemFromScenario is setupFreeTextChatItem for any one-scenario
+// fixture file (scenarioJSON, imported under its own key).
+func setupChatItemFromScenario(t *testing.T, ctx context.Context, databaseURL, scenarioJSON, key string) *chatFixture {
+	t.Helper()
 	if err := pgstore.Up(ctx, databaseURL); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +127,7 @@ func setupFreeTextChatItem(t *testing.T, ctx context.Context, databaseURL string
 	if _, err := contentService.ImportClassifierTypes(ctx, openSeedFile(t, "../../seed/classifier.json"), adminID, adminRole, "chat-classifier"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := contentService.ImportScenarios(ctx, map[string]io.Reader{"chat-test.json": strings.NewReader(freeTextChatScenarioJSON)}, adminID, adminRole, "chat-scenarios"); err != nil {
+	if _, err := contentService.ImportScenarios(ctx, map[string]io.Reader{"chat-test.json": strings.NewReader(scenarioJSON)}, adminID, adminRole, "chat-scenarios"); err != nil {
 		t.Fatal(err)
 	}
 	trainingService := newTrainingService(pool)
@@ -144,7 +153,7 @@ func setupFreeTextChatItem(t *testing.T, ctx context.Context, databaseURL string
 
 	var versionID uuid.UUID
 	if err := pool.QueryRow(ctx, `SELECT sv.id FROM scenario_versions sv JOIN scenarios s ON s.id=sv.scenario_id WHERE s.source_key=$1 AND sv.version=1`,
-		"test-112-free-text-chat").Scan(&versionID); err != nil {
+		key).Scan(&versionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := trainingService.ReplaceAssignments(ctx, principal(actor, uuid.Nil), lesson.ID, []training.AssignmentInput{
@@ -197,7 +206,7 @@ func waitForCondition(t *testing.T, ctx context.Context, pool *pgxpool.Pool, lab
 // vary CALLER_REPLY_TIMEOUT/CALLER_STUB_DELAY (TestCallerChatFinalizerFailsExhaustedTurn
 // deliberately sets a timeout far shorter than the stub's own delay, to
 // force every attempt to time out).
-func startCallerWorkerProcess(t *testing.T, binary, databaseURL, id, replyTimeout, stubDelay string) *workerProcess {
+func startCallerWorkerProcess(t *testing.T, binary, databaseURL, id, replyTimeout, stubDelay string, extraEnv ...string) *workerProcess {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -224,6 +233,9 @@ func startCallerWorkerProcess(t *testing.T, binary, databaseURL, id, replyTimeou
 		"BLOB_ROOT="+t.TempDir(),
 		"WORKER_LOCAL_TEST_POLICY=e2e-fast-v1",
 	)
+	// Later entries win for a duplicated key (os/exec), so a test can
+	// switch this worker to the model path.
+	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -441,5 +453,129 @@ func TestCallerChatFinalizerFailsExhaustedTurn(t *testing.T) {
 	}
 	if r := fixture.send(t, ctx, training.CommandSendCallerMessage, map[string]any{"text": "ещё раз"}); r.Outcome != training.OutcomeApplied {
 		t.Fatalf("retry send after failure: %+v", r)
+	}
+}
+
+// aiCallerChatScenarioJSON is a free_text scenario with a caller profile,
+// so the worker's aicaller.Replier answers it (opening without a model,
+// later turns through the model) instead of delegating to the stub.
+const aiCallerChatScenarioJSON = `{
+  "schema": "emsim/scenario-file/v1",
+  "key": "test-112-ai-caller-warmup",
+  "version": 1,
+  "title": "Integration test: AI caller warm-up",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "exercise_type": "operator112_intake",
+    "difficulty": 1,
+    "intake112": {
+      "mode": "full_case",
+      "caller_mode": "free_text",
+      "call": {"aon": "+79161313131", "local_time": "02:03", "time_zone": "Europe/Moscow"},
+      "dialogue": {
+        "caller": {
+          "persona": "Ты — встревоженный очевидец, говоришь коротко.",
+          "opening": {"id": "opening", "text": "Помогите, пахнет газом!", "reveals": []}
+        },
+        "facts": [
+          {"id": "address_city", "label": "Город", "card_path": "/address/city", "knowledge": "initial", "value": "Москва",
+           "statement": "Мы в Москве.", "disclosure_patterns": ["москв"]}
+        ]
+      },
+      "reference": {
+        "expected_types": ["gas_explosion"],
+        "case_description": "Integration test fixture, not a training case.",
+        "expected_services": ["pilot_gas_104"]
+      }
+    }
+  }
+}`
+
+type recordedChatRequest struct {
+	MaxTokens int `json:"max_tokens"`
+	Messages  []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	} `json:"messages"`
+}
+
+// TestCallerWarmupPrimesModelAfterOpening drives a real worker on the
+// model path (ADR-029): the no-model opening must enqueue one
+// caller.warmup, which sends the model the dialogue prefix with a
+// single-token budget, and the next real reply must start with exactly
+// the same messages, so a prefix-caching server reuses the warm-up's work.
+func TestCallerWarmupPrimesModelAfterOpening(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	databaseURL := openTestDatabase(t, ctx)
+	fixture := setupChatItemFromScenario(t, ctx, databaseURL, aiCallerChatScenarioJSON, "test-112-ai-caller-warmup")
+
+	var mu sync.Mutex
+	var requests []recordedChatRequest
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req recordedChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		requests = append(requests, req)
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Мы в Москве."},"finish_reason":"stop"}]}`))
+	}))
+	defer model.Close()
+
+	binary := buildEmsimBinary(t, ctx)
+	worker := startCallerWorkerProcess(t, binary, databaseURL, "caller-warmup-worker", "10s", "1ms",
+		"CALLER_REPLIER=llm", "CALLER_LLM_URL="+model.URL+"/v1", "CALLER_LLM_MODEL=test-model")
+	defer worker.stop(t, false)
+
+	fixture.send(t, ctx, training.CommandOpen, map[string]any{})
+	if r := fixture.send(t, ctx, training.CommandAnswerIncoming, map[string]any{}); r.Outcome != training.OutcomeApplied {
+		t.Fatalf("answer_incoming: %+v", r)
+	}
+	fixture.send(t, ctx, training.CommandSendCallerMessage, map[string]any{"text": "112, что у вас случилось?"})
+	waitForCondition(t, ctx, fixture.pool, "warm-up done",
+		`SELECT EXISTS(SELECT 1 FROM tasks WHERE kind='caller.warmup' AND status='done' AND scope_id=$1 AND result->>'warmed'='true')`,
+		fixture.itemID)
+
+	mu.Lock()
+	if len(requests) != 1 {
+		mu.Unlock()
+		t.Fatalf("model requests after the opening = %d, want exactly the warm-up", len(requests))
+	}
+	warm := requests[0]
+	mu.Unlock()
+	if warm.MaxTokens != 1 || len(warm.Messages) != 4 ||
+		warm.Messages[1].Content != "112, что у вас случилось?" || warm.Messages[2].Content != "Помогите, пахнет газом!" ||
+		warm.Messages[3].Role != "user" || warm.Messages[3].Content != "" {
+		t.Fatalf("unexpected warm-up request: %+v", warm)
+	}
+
+	fixture.send(t, ctx, training.CommandSendCallerMessage, map[string]any{"text": "Назовите город, пожалуйста"})
+	waitForCondition(t, ctx, fixture.pool, "model reply done",
+		`SELECT EXISTS(SELECT 1 FROM tasks WHERE kind='caller.reply' AND status='done' AND (payload->>'item_id')::uuid=$1 AND (payload->>'turn')::int=2)`,
+		fixture.itemID)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requests) != 2 {
+		t.Fatalf("model requests = %d, want warm-up + one reply", len(requests))
+	}
+	reply := requests[1]
+	if reply.MaxTokens == 1 || len(reply.Messages) < 4 {
+		t.Fatalf("unexpected reply request: %+v", reply)
+	}
+	for i := 0; i < 3; i++ {
+		if reply.Messages[i] != warm.Messages[i] {
+			t.Fatalf("reply message %d differs from the warm-up prefix:\n%+v\n%+v", i, reply.Messages[i], warm.Messages[i])
+		}
+	}
+	var warmups int
+	if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM tasks WHERE kind='caller.warmup' AND scope_id=$1`, fixture.itemID).Scan(&warmups); err != nil {
+		t.Fatal(err)
+	}
+	if warmups != 1 {
+		t.Fatalf("caller.warmup tasks = %d, want one per dialogue", warmups)
 	}
 }

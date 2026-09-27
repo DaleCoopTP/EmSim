@@ -135,6 +135,10 @@ services:
       REPORT_CONCURRENCY: 1
       CALLER_CONCURRENCY: ${CALLER_CONCURRENCY:-3}
       CALLER_REPLY_TIMEOUT: ${CALLER_REPLY_TIMEOUT:-30s}
+      # ADR-029: right after a dialogue's opening, send the model the
+      # dialogue prefix so the first model-answered question does not
+      # process the whole system prompt from scratch.
+      CALLER_WARMUP: ${CALLER_WARMUP:-true}
       CALLER_STUB_DELAY: ${CALLER_STUB_DELAY:-1s}
       # 112-5b/ADR-025/029: "llm" (default) answers caller.reply through
       # aicaller.Replier over the llm service; "stub" is 112-5a's six fixed

@@ -96,11 +96,33 @@ func systemPrompt(persona string) string {
 // three to decide the no-model paths (opening/scripted) before calling
 // this, so they are passed in rather than recomputed.
 func BuildMessages(persona string, facts []content.Intake112Fact, transcript []training.IntakeLine, open, revealed map[string]bool, askedThisTurn []string, currentMessage string) []llm.Message {
-	messages := []llm.Message{{Role: "system", Content: systemPrompt(persona)}}
 	history := transcript
 	if len(history) > 0 {
 		history = history[:len(history)-1]
 	}
+	messages := systemAndHistory(persona, history)
+	block := dynamicBlock(facts, open, revealed, askedThisTurn, currentMessage)
+	messages = append(messages, llm.Message{Role: "user", Content: currentMessage + "\n\n" + block})
+	return messages
+}
+
+// WarmupMessages is the prompt-cache warm-up request for a dialogue whose
+// transcript so far is transcript (ADR-029): the system message and the
+// whole history, mapped exactly as BuildMessages maps them, followed by an
+// empty user message. The next real reply's BuildMessages starts with
+// the very same messages — its history is this transcript, and only its
+// final user message differs — so a server with a prefix cache
+// (llama-server) has already processed everything but the operator's new
+// line and the per-turn facts block when that reply is requested.
+func WarmupMessages(persona string, transcript []training.IntakeLine) []llm.Message {
+	return append(systemAndHistory(persona, transcript), llm.Message{Role: "user", Content: ""})
+}
+
+// systemAndHistory is the part of a caller prompt that stays
+// byte-identical across a dialogue's turns: the system message followed
+// by history, operator lines as "user" and caller lines as "assistant".
+func systemAndHistory(persona string, history []training.IntakeLine) []llm.Message {
+	messages := []llm.Message{{Role: "system", Content: systemPrompt(persona)}}
 	for _, line := range history {
 		role := "assistant"
 		if line.Speaker == "operator" {
@@ -108,8 +130,6 @@ func BuildMessages(persona string, facts []content.Intake112Fact, transcript []t
 		}
 		messages = append(messages, llm.Message{Role: role, Content: line.Text})
 	}
-	block := dynamicBlock(facts, open, revealed, askedThisTurn, currentMessage)
-	messages = append(messages, llm.Message{Role: "user", Content: currentMessage + "\n\n" + block})
 	return messages
 }
 

@@ -3146,3 +3146,22 @@ Changed: `compose.yaml` (`llm.environment.LLAMA_ARG_REPACK: ${LLM_REPACK:-true}`
 Validation: `docker compose up -d --build` с `LLM_REPACK=false LLM_PARALLEL=1 LLM_CTX_SIZE=4096 CALLER_CONCURRENCY=1` — весь стек healthy, `llm` rc=0; `wget` из `worker` на `http://llm:8080/v1/chat/completions` — ответ «голубое»; `make verify`, `make compose-config` — ок.
 
 Risks / not checked: влияние `LLM_REPACK=false` на скорость на целевом x86-64 не замерялось (там умолчание — repack); профиль 8 ГБ проверен только одиночными запросами, не `bench-llm`. Next: W0 `bench-llm` на сервере заказчика (без изменений).
+
+## 2026-09-27 — прогрев кэша промпта ИИ-заявителя (`caller.warmup`)
+
+Решение пользователя 27.09: сделать прогрев сейчас; потоковый показ ответа по словам — только в конце MVP. Живой прогон пользователя на Mac показал ~29 с на первый ответ модели в диалоге (второй вопрос): модель разбирала весь промпт с нуля, последующие ходы брали начало из кэша llama-server.
+
+Changed:
+- `aicaller`: `WarmupMessages` (system + история в точности как у следующего `BuildMessages` + пустое user-сообщение; общая часть вынесена в `systemAndHistory`), `Replier.Warm` (`max_tokens: 1`, сценарий без профиля заявителя не прогревается).
+- `cmd/emsim/worker_composition.go`: вид задачи `caller.warmup` (пул `caller`, приоритет 50 < 100 у `caller.reply`, 1 попытка). `callerReplyHandler` ставит её в той же транзакции, что применяет вступление (`Source=opening`), dedup — одна на item. Обработчик читает диалог без блокировок, пропускает прогрев, если оператор уже отправил следующий вопрос, вызывает модель вне транзакции и всегда завершает задачу `done` (`result.warmed`/`reason`); item, evidence и журнал не меняются.
+- `config.Worker.CallerWarmup` ← `CALLER_WARMUP` (по умолчанию `true`); compose, `.env.example`.
+- `bench-llm`: прогрев после вступления параллельно паузе оператора (по `CALLER_WARMUP`, через отдельный неизмеряемый клиент), колонки `first p50/p95` — первый ответ модели в диалоге; `warmup` в отчёте.
+- ADR-029 (решение «Прогрев кэша промпта»), README, `slice-112-5b-plan.md`, CLAUDE.md.
+
+Validation: `make verify` — ok; `make compose-config` — ok; `go test -race` стенда — ok; новый интеграционный `TestCallerWarmupPrimesModelAfterOpening` (настоящий процесс worker, `CALLER_REPLIER=llm`, поддельный сервер модели): после вступления ровно один запрос прогрева с `max_tokens=1` и префиксом [system, фраза оператора, вступление, пустой user], первые три сообщения следующего ответа совпадают с ним, одна задача на item — ok. Полный `make test-integration` — см. итог сессии.
+
+Not verified: реальный выигрыш на llama-server (живой модели в песочнице нет) — пользователь сравнит `first p50/p95` в `bench-llm` с `CALLER_WARMUP=false` и без него. Пустое user-сообщение в запросе прогрева проверено только на поддельном сервере.
+
+Risks: при `CALLER_CONCURRENCY=1` (профиль Mac) уже запущенный прогрев занимает пул, и ответ на быстро присланный вопрос ждёт его окончания; в классе с несколькими слотами прогретое начало может вытесниться из кэша до второго хода.
+
+Next: на Mac или сервере — `bench-llm` с прогревом и без; затем W0 на сервере заказчика.

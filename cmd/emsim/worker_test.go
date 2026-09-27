@@ -179,3 +179,21 @@ func TestJudgeConfigForLLMWiresOneHandler(t *testing.T) {
 		t.Fatalf("Parameters[max_tokens] = %v, want %d", got.Parameters["max_tokens"], cfg.JudgeMaxTokens)
 	}
 }
+
+// TestCallerWarmupShouldRunOnlyWhileCallerSpokeLast: a warm-up is worth a
+// model call only until the operator sends the next message — after that
+// the real reply is already queued and the warm-up would just compete
+// with it for the model (ADR-029).
+func TestCallerWarmupShouldRunOnlyWhileCallerSpokeLast(t *testing.T) {
+	afterOpening := []training.IntakeLine{{Speaker: "operator", Text: "112"}, {Speaker: "caller", Text: "Помогите!"}}
+	if !callerWarmupShouldRun(afterOpening) {
+		t.Fatal("warm-up must run right after the opening")
+	}
+	questionSent := append(afterOpening, training.IntakeLine{Speaker: "operator", Text: "Адрес?"})
+	if callerWarmupShouldRun(questionSent) {
+		t.Fatal("warm-up must be skipped once the next operator message is in")
+	}
+	if callerWarmupShouldRun(nil) {
+		t.Fatal("warm-up must be skipped for an empty transcript")
+	}
+}

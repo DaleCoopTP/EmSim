@@ -98,6 +98,25 @@ func (r Replier) Reply(ctx context.Context, req operator112.CallerReplyRequest) 
 	}, nil
 }
 
+// Warm asks the model to process req's dialogue prefix ahead of the next
+// reply (ADR-029's prompt-cache warm-up): WarmupMessages with a single
+// generated token, the output discarded. It is called right after the
+// no-model opening, while the trainee reads it and types, so the first
+// model-answered turn does not have to process the whole system prompt
+// and opening from scratch. A scenario with no caller profile never
+// reaches the model and is not warmed. The call has no effect on the
+// dialogue; an error only means the next reply starts cold.
+func (r Replier) Warm(ctx context.Context, req operator112.CallerReplyRequest) error {
+	if req.Caller == nil || len(req.Transcript) == 0 {
+		return nil
+	}
+	_, err := r.Chat.Complete(ctx, llm.Request{
+		Model: r.Model, Messages: WarmupMessages(req.Caller.Persona, req.Transcript),
+		Temperature: r.Temperature, TopP: r.TopP, RepeatPenalty: r.RepeatPenalty, MaxTokens: 1,
+	})
+	return err
+}
+
 // Fallback returns FallbackText for req — see FallbackText's own doc
 // comment. Reveals is always empty: a fallback discloses nothing new,
 // and generation parameters are still recorded (Source=fallback) so

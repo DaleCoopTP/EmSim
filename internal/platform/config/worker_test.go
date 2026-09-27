@@ -104,6 +104,17 @@ func TestWorkerModelDefaultsToLLM(t *testing.T) {
 	if got.JudgeTimeout != defaultJudgeTimeout || got.JudgeMaxTokens != defaultJudgeMaxTokens {
 		t.Fatalf("unexpected judge defaults: %+v", got)
 	}
+	if !got.CallerWarmup {
+		t.Fatal("CallerWarmup default = false, want true (ADR-029)")
+	}
+	values["CALLER_WARMUP"] = "false"
+	if got, err := WorkerFromEnvironment(lookup, "worker"); err != nil || got.CallerWarmup {
+		t.Fatalf("CALLER_WARMUP=false = %v/%v, want disabled", got.CallerWarmup, err)
+	}
+	values["CALLER_WARMUP"] = "sometimes"
+	if _, err := WorkerFromEnvironment(lookup, "worker"); !errors.Is(err, ErrInvalidWorkerConfiguration) {
+		t.Fatalf("invalid CALLER_WARMUP error = %v", err)
+	}
 }
 
 // TestWorkerRunsWithoutModelWhenExplicitlyDisabled keeps the no-model

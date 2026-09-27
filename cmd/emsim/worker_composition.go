@@ -100,8 +100,27 @@ func registerKinds(registry *tasks.Registry) error {
 	}); err != nil {
 		return err
 	}
+	// ADR-029: best-effort prompt-cache warm-up, same "caller" pool but a
+	// lower priority, so a real reply waiting for a free worker is always
+	// claimed first. One attempt: a failed warm-up only means the next
+	// reply starts cold, never worth a retry.
+	if err := registry.Register(tasks.Spec{
+		Name: kindCallerWarmup, Pool: "caller", MaxAttempts: 1,
+		Lease: 2 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 50,
+	}); err != nil {
+		return err
+	}
 	return nil
 }
+
+// kindCallerWarmup is ADR-029's prompt-cache warm-up: callerReplyHandler
+// enqueues it in the transaction that applies a dialogue's no-model
+// opening, and callerWarmupHandler sends the dialogue's prefix to the
+// model so the first model-answered question does not process the whole
+// system prompt from scratch. It is purely technical — it never changes
+// the item, its evidence or its journal — so it lives here, next to the
+// worker that owns it, rather than in training.
+const kindCallerWarmup tasks.Kind = "caller.warmup"
 
 func noopHandler(pool *pgxpool.Pool, store *tasks.Store) tasks.Handler {
 	return tasks.HandlerFunc(func(ctx context.Context, lease tasks.Lease) error {
@@ -207,7 +226,7 @@ func callerReplyFallbackOutcome(fallback func(operator112.CallerReplyRequest) op
 	return fallback(req), true
 }
 
-func callerReplyHandler(pool *pgxpool.Pool, store *tasks.Store, trainingService *training.Service, replier operator112.CallerReplier, timeout time.Duration, maxAttempts int, fallback func(operator112.CallerReplyRequest) operator112.CallerReply) tasks.Handler {
+func callerReplyHandler(pool *pgxpool.Pool, store *tasks.Store, trainingService *training.Service, replier operator112.CallerReplier, timeout time.Duration, maxAttempts int, fallback func(operator112.CallerReplyRequest) operator112.CallerReply, warmup bool) tasks.Handler {
 	return tasks.HandlerFunc(func(ctx context.Context, lease tasks.Lease) error {
 		var payload callerReplyPayload
 		if err := json.Unmarshal(lease.Payload, &payload); err != nil {
@@ -246,6 +265,11 @@ func callerReplyHandler(pool *pgxpool.Pool, store *tasks.Store, trainingService 
 		if err := trainingService.ApplyCallerReply(ctx, tx, payload.ItemID, payload.Turn, outcome, time.Now().UTC()); err != nil {
 			return err
 		}
+		if warmup && reply.Source == training.CallerTurnSourceOpening {
+			if err := enqueueCallerWarmup(ctx, tx, store, payload.ItemID); err != nil {
+				return err
+			}
+		}
 		if _, err := store.Terminal(ctx, tx, tasks.TerminalRequest{
 			Lease: lease, Now: time.Now().UTC(), Outcome: tasks.Done(nil),
 		}); err != nil {
@@ -253,6 +277,78 @@ func callerReplyHandler(pool *pgxpool.Pool, store *tasks.Store, trainingService 
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return errors.New("caller.reply commit failed")
+		}
+		return nil
+	})
+}
+
+// enqueueCallerWarmup schedules kindCallerWarmup for itemID inside the
+// transaction that applied the opening; one warm-up per item (dedup key).
+func enqueueCallerWarmup(ctx context.Context, tx pgx.Tx, store *tasks.Store, itemID uuid.UUID) error {
+	payload, err := json.Marshal(map[string]any{"item_id": itemID})
+	if err != nil {
+		return fmt.Errorf("caller.warmup: marshal payload: %w", err)
+	}
+	_, _, err = store.EnqueueTx(ctx, tx, tasks.EnqueueRequest{
+		TaskID: uuid.New(), Kind: kindCallerWarmup, ScopeType: "item", ScopeID: &itemID,
+		DedupKey: "caller.warmup:" + itemID.String(), Payload: payload, NextAttemptAt: time.Now().UTC(),
+	})
+	return err
+}
+
+// callerWarmupShouldRun reports whether a warm-up still helps: only while
+// the caller's line is the last one in the transcript. Once the operator
+// has sent the next message, its reply is already on the way and warming
+// the old prefix would only compete with it for the model.
+func callerWarmupShouldRun(transcript []training.IntakeLine) bool {
+	return len(transcript) > 0 && transcript[len(transcript)-1].Speaker == "caller"
+}
+
+// callerWarmupHandler is kindCallerWarmup's worker side. It reads the
+// dialogue without any lock, calls warm outside any transaction (bounded
+// by timeout, like a reply), and always finishes the task as done — the
+// result only records whether the model was actually warmed, since the
+// warm-up is best-effort and has no domain effect to retry for.
+func callerWarmupHandler(pool *pgxpool.Pool, store *tasks.Store, trainingService *training.Service, warm func(context.Context, operator112.CallerReplyRequest) error, timeout time.Duration) tasks.Handler {
+	return tasks.HandlerFunc(func(ctx context.Context, lease tasks.Lease) error {
+		var payload struct {
+			ItemID uuid.UUID `json:"item_id"`
+		}
+		if err := json.Unmarshal(lease.Payload, &payload); err != nil {
+			return fmt.Errorf("caller.warmup: decode payload: %w", err)
+		}
+		result := `{"warmed":false,"reason":"disabled"}`
+		if warm != nil {
+			replyCtx, err := trainingService.CallerReplyContext(ctx, payload.ItemID)
+			switch {
+			case err != nil:
+				result = `{"warmed":false,"reason":"no_dialogue"}`
+			case !callerWarmupShouldRun(replyCtx.Transcript):
+				result = `{"warmed":false,"reason":"stale"}`
+			default:
+				callCtx, cancel := context.WithTimeout(ctx, timeout)
+				err = warm(callCtx, operator112.CallerReplyRequest{
+					Facts: replyCtx.Dialogue.Facts, Caller: replyCtx.Dialogue.Caller, Transcript: replyCtx.Transcript,
+				})
+				cancel()
+				result = `{"warmed":true}`
+				if err != nil {
+					result = `{"warmed":false,"reason":"model_unavailable"}`
+				}
+			}
+		}
+		tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+		if err != nil {
+			return errors.New("caller.warmup transaction failed")
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := store.Terminal(ctx, tx, tasks.TerminalRequest{
+			Lease: lease, Now: time.Now().UTC(), Outcome: tasks.Done([]byte(result)),
+		}); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return errors.New("caller.warmup commit failed")
 		}
 		return nil
 	})
@@ -430,6 +526,7 @@ func composePools(
 	stubReplier := operator112.StubCallerReplier{Delay: stubDelay}
 	var callerReplier operator112.CallerReplier = stubReplier
 	var callerFallback func(operator112.CallerReplyRequest) operator112.CallerReply
+	var callerWarm func(context.Context, operator112.CallerReplyRequest) error
 	if processConfig.CallerReplier == config.CallerReplierLLM {
 		aiReplier := aicaller.Replier{
 			Chat: llm.NewClient(processConfig.CallerLLMURL), Model: processConfig.CallerLLMModel,
@@ -439,6 +536,9 @@ func composePools(
 		}
 		callerReplier = aiReplier
 		callerFallback = aiReplier.Fallback
+		if processConfig.CallerWarmup {
+			callerWarm = aiReplier.Warm
+		}
 	}
 	callerReplySpec, ok := registry.Lookup(training.KindCallerReply)
 	if !ok {
@@ -446,7 +546,14 @@ func composePools(
 	}
 	if err := handlers.Register(training.KindCallerReply, callerReplyHandler(
 		pool, store, trainingService, callerReplier, processConfig.CallerReplyTimeout, callerReplySpec.MaxAttempts, callerFallback,
+		callerWarm != nil,
 	)); err != nil {
+		return nil, errors.New("handler configuration is invalid")
+	}
+	// Registered whatever CALLER_REPLIER says: a warm-up already queued
+	// before a switch to the stub still has a handler, which then just
+	// finishes it without a model call.
+	if err := handlers.Register(kindCallerWarmup, callerWarmupHandler(pool, store, trainingService, callerWarm, processConfig.CallerReplyTimeout)); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
 

@@ -322,3 +322,49 @@ func TestCleanReplyKeepsFullTextWhenNotTruncated(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// TestWarmupPrefixMatchesNextReply is the warm-up's whole point (ADR-029):
+// the messages sent after the opening must be exactly the first messages
+// of the next real reply, so the server's prefix cache covers them.
+func TestWarmupPrefixMatchesNextReply(t *testing.T) {
+	afterOpening := []training.IntakeLine{
+		line("operator", "112, что у вас случилось?"),
+		line("caller", "Помогите, у нас пахнет газом!", "address_city"),
+	}
+	chat := &stubChat{result: llm.Result{Text: "x", FinishReason: "length"}}
+	r := Replier{Chat: chat, Model: "m", Temperature: 0.3}
+	if err := r.Warm(context.Background(), operator112.CallerReplyRequest{Facts: testFacts(), Caller: testCaller(), Transcript: afterOpening, Turn: 1}); err != nil {
+		t.Fatalf("Warm: %v", err)
+	}
+	warm := chat.gotReq
+	if warm.MaxTokens != 1 || warm.Model != "m" {
+		t.Fatalf("warm-up request must generate a single token with the reply's model: %+v", warm)
+	}
+
+	reply := &stubChat{result: llm.Result{Text: "Мы в Москве.", FinishReason: "stop"}}
+	r.Chat = reply
+	next := append(append([]training.IntakeLine(nil), afterOpening...), line("operator", "Назовите адрес, пожалуйста"))
+	if _, err := r.Reply(context.Background(), operator112.CallerReplyRequest{Facts: testFacts(), Caller: testCaller(), Transcript: next, Turn: 2}); err != nil {
+		t.Fatalf("Reply: %v", err)
+	}
+	shared := len(warm.Messages) - 1 // everything but the warm-up's empty closing user message
+	if len(reply.gotReq.Messages) <= shared {
+		t.Fatalf("reply has %d messages, warm-up prefix %d", len(reply.gotReq.Messages), shared)
+	}
+	for i := 0; i < shared; i++ {
+		if warm.Messages[i] != reply.gotReq.Messages[i] {
+			t.Fatalf("message %d differs between warm-up and reply:\n%+v\n%+v", i, warm.Messages[i], reply.gotReq.Messages[i])
+		}
+	}
+	if last := warm.Messages[shared]; last.Role != "user" || last.Content != "" {
+		t.Fatalf("warm-up must end with an empty user message, got %+v", last)
+	}
+}
+
+func TestWarmSkipsScenarioWithoutCallerProfile(t *testing.T) {
+	r := Replier{Chat: erroringChat{t}, Model: "m"}
+	req := operator112.CallerReplyRequest{Facts: testFacts(), Transcript: []training.IntakeLine{line("operator", "Алло")}}
+	if err := r.Warm(context.Background(), req); err != nil {
+		t.Fatalf("Warm without a caller profile: %v", err)
+	}
+}
