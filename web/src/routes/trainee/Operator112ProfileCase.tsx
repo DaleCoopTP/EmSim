@@ -27,10 +27,12 @@ const phonePlaceholder = "+7 (   )   -   -";
 const timerAlertSeconds = 180;
 const unavailable = "Недоступно в учебной карточке";
 
+const invalidMessage = "Карточка не сохранена: поля, выделенные красным, заполнены некорректно.";
+
 const errorLabels: Record<string, string> = {
   stale_seq: "Карточка изменилась. Проверьте новые данные и повторите действие.",
   transition_not_allowed: "Это действие сейчас недоступно.",
-  invalid_payload: "Проверьте поля карточки.",
+  invalid_payload: "Карточка не сохранена: сервер отклонил данные. Проверьте поля карточки.",
   item_closed: "Обработка уже завершена.",
   lesson_stopped: "Занятие остановлено преподавателем.",
 };
@@ -39,17 +41,64 @@ const knownValue = (field: IntakeField | undefined) => field?.state === "known" 
 const fromText = (value: string): IntakeField => value ? { state: "known", value } : empty;
 const profileTitle = (name: string) => name.split(" · ")[0];
 
+// The server rejects a text value with surrounding whitespace
+// (training.ValidIntakeCard, validProfileAnswer). A trailing space or a
+// newline left in the description is invisible, so the draft is trimmed
+// on save; a value that is only whitespace becomes unanswered.
+const trimField = (field: IntakeField): IntakeField => {
+  if (field.state !== "known" || field.value === undefined) return field;
+  const value = field.value.trim();
+  return value ? { state: "known", value } : empty;
+};
+const isField = (value: unknown): value is IntakeField => typeof value === "object" && value !== null && "state" in value;
+const trimFields = <T extends object>(fields: T): T =>
+  Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, isField(value) ? trimField(value) : value])) as T;
+function normalizeDraft(draft: IntakeCard, catalog: IntakeCatalog | undefined): IntakeCard {
+  const card = { ...trimFields(draft), address: trimFields(draft.address) };
+  if (!draft.profiles) return card;
+  card.profiles = Object.fromEntries(Object.entries(draft.profiles).map(([id, profile]) => {
+    const textFields = new Set(catalog?.profiles.find((definition) => definition.id === id)?.fields
+      .filter((field) => field.kind === "text").map((field) => field.id));
+    const answers = Object.fromEntries(Object.entries(profile.answers).map(([fieldID, answer]) => {
+      if (!textFields.has(fieldID) || answer.state !== "known") return [fieldID, answer];
+      const value = (answer.value ?? "").trim();
+      return [fieldID, value ? { state: "known", value } : { state: "unanswered" }];
+    }));
+    return [id, { ...profile, answers }];
+  }));
+  return card;
+}
+
+// invalidFields mirrors the server's own per-field limits
+// (training.ValidIntakeCard) on an already trimmed draft, so a value the
+// server would reject is shown in red before anything is sent. Keys are
+// the card's own field names, address fields as "address.<name>".
+const fieldLimits: Partial<Record<keyof IntakeCard, number>> = { complaint: 1999, channel: 100 };
+const runeCount = (value: string) => Array.from(value).length;
+function invalidFields(card: IntakeCard): Set<string> {
+  const invalid = new Set<string>();
+  const check = (key: string, field: unknown, max: number) => {
+    if (!isField(field)) return;
+    const value = field.value ?? "";
+    const bad = field.state === "known" ? value === "" || runeCount(value) > max || value.trim() !== value : value !== "";
+    if (bad) invalid.add(key);
+  };
+  for (const [key, field] of Object.entries(card)) check(key, field, fieldLimits[key as keyof IntakeCard] ?? 1000);
+  for (const [key, field] of Object.entries(card.address)) check(`address.${key}`, field, 1000);
+  return invalid;
+}
+
 // Underlined ARM field: caption above, value on the line. The "?" toggle keeps
 // the domain distinction "заявитель не знает" without the reference layout
 // losing its plain look.
-function ArmField({ label, field, onChange, disabled, className, placeholder, children }: {
+function ArmField({ label, field, onChange, disabled, className, placeholder, invalid, children }: {
   label: string; field: IntakeField | undefined; onChange: (value: IntakeField) => void; disabled: boolean;
-  className?: string; placeholder?: string; children?: ReactNode;
+  className?: string; placeholder?: string; invalid?: boolean; children?: ReactNode;
 }) {
   const unknown = field?.state === "unknown";
-  return <div className={`arm112-field${unknown ? " is-unknown" : ""}${className ? ` ${className}` : ""}`}>
+  return <div className={`arm112-field${unknown ? " is-unknown" : ""}${invalid ? " is-invalid" : ""}${className ? ` ${className}` : ""}`}>
     <label><span>{label}:</span>
-      <input aria-label={`${label}: значение`} value={knownValue(field)} maxLength={1000} disabled={disabled || unknown}
+      <input aria-label={`${label}: значение`} aria-invalid={invalid || undefined} value={knownValue(field)} maxLength={1000} disabled={disabled || unknown}
         placeholder={unknown ? "неизвестно" : placeholder} onChange={(event) => onChange(fromText(event.target.value))} />
     </label>
     <button type="button" className="arm112-unknown" aria-label={`${label}: неизвестно`} aria-pressed={unknown} disabled={disabled}
@@ -83,6 +132,9 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
   const [chatRejection, setChatRejection] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [draft, setDraft] = useState<IntakeCard>(item.card);
+  // Fields the last save attempt found invalid; cleared as soon as the
+  // operator edits the draft again.
+  const [invalid, setInvalid] = useState<Set<string>>(() => new Set());
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [reviewReason, setReviewReason] = useState("");
   const [servicesOpen, setServicesOpen] = useState(false);
@@ -165,13 +217,26 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
       void deliver(value);
     } catch (cause) { setError(cause); }
   };
-  const update = (key: keyof IntakeCard, field: IntakeField) => setDraft((current) => ({ ...current, [key]: field }));
-  const updateAddress = (key: keyof IntakeCard["address"], field: IntakeField) => setDraft((current) => ({ ...current, address: { ...current.address, [key]: field } }));
+  const clearInvalid = (key: string) => setInvalid((current) => {
+    if (!current.has(key)) return current;
+    const next = new Set(current);
+    next.delete(key);
+    return next;
+  });
+  const update = (key: keyof IntakeCard, field: IntakeField) => { clearInvalid(key); setDraft((current) => ({ ...current, [key]: field })); };
+  const updateAddress = (key: keyof IntakeCard["address"], field: IntakeField) => { clearInvalid(`address.${key}`); setDraft((current) => ({ ...current, address: { ...current.address, [key]: field } })); };
   const updateAnswer = (profileID: string, fieldID: string, answer: IntakeProfileAnswer) => setDraft((current) => ({
     ...current, profiles: { ...current.profiles, [profileID]: { ...current.profiles![profileID],
       answers: { ...current.profiles![profileID].answers, [fieldID]: answer } } },
   }));
-  const save = (event: FormEvent) => { event.preventDefault(); send("save_intake_draft", { draft }); };
+  const save = (event: FormEvent) => {
+    event.preventDefault();
+    const normalized = normalizeDraft(draft, catalog);
+    const problems = invalidFields(normalized);
+    setDraft(normalized);
+    setInvalid(problems);
+    if (problems.size === 0) send("save_intake_draft", { draft: normalized });
+  };
   const toggleFlag = (key: "no_on_site" | "no_access") => update(key, draft[key]?.state === "known" ? empty : { state: "known", value: "yes" });
   const clearAddress = () => setDraft((current) => ({ ...current, address: Object.fromEntries(Object.keys(current.address).map((key) => [key, empty])) as IntakeCard["address"] }));
   const allServices = item.available_service_codes ?? [];
@@ -187,6 +252,9 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
   const statusValue = draft.applicant_status.state === "unknown" ? "unknown" : knownValue(draft.applicant_status);
   const channelValue = draft.channel.state === "unknown" ? "unknown" : knownValue(draft.channel);
   const rejection = receipt?.outcome === "rejected" ? errorLabels[receipt.error_code ?? ""] ?? receipt.error_code : null;
+  // A rejection is also repeated next to the "сохранить" button (without a
+  // second alert role): the feedback block sits below the form and is easy
+  // to miss.
   const operator = [me.workstation ? `АРМ ${me.workstation.number}` : null, me.user.full_name].filter(Boolean).join(", ");
 
   return <section className="arm112 intake-profile-case">
@@ -233,7 +301,8 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
     </div> : <>
       <form id="profile-case-form" className="arm112-body" onSubmit={save}>
         <div className="arm112-strip arm112-applicant">
-          <input className="arm112-plain" aria-label="Фамилия и имя заявителя" placeholder="Фамилия и имя заявителя" maxLength={1000}
+          <input className={`arm112-plain${invalid.has("applicant_name") ? " is-invalid" : ""}`} aria-invalid={invalid.has("applicant_name") || undefined}
+            aria-label="Фамилия и имя заявителя" placeholder="Фамилия и имя заявителя" maxLength={1000}
             value={knownValue(draft.applicant_name)} disabled={!editable} onChange={(event) => update("applicant_name", fromText(event.target.value))} />
           <select className="arm112-plain" aria-label="Статус заявителя" value={statusValue} disabled={!editable}
             onChange={(event) => update("applicant_status", event.target.value === "unknown" ? { state: "unknown" } : fromText(event.target.value))}>
@@ -276,34 +345,34 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
             <div className="arm112-address-line"><output aria-label="Адрес целиком">{addressSummary}</output>
               <button type="button" className="arm112-x" aria-label="Очистить адрес целиком" disabled={!editable} onClick={clearAddress}><CloseIcon size={18} /></button></div>
             <div className="arm112-address-row arm112-cols-3">
-              <ArmField label="Страна" field={address.country} disabled={!editable} onChange={(v) => updateAddress("country", v)} />
-              <ArmField label="Субъект" field={address.region} disabled={!editable} onChange={(v) => updateAddress("region", v)} />
-              <ArmField label="Населённый пункт" field={address.city} disabled={!editable} onChange={(v) => updateAddress("city", v)} />
+              <ArmField label="Страна" field={address.country} invalid={invalid.has("address.country")} disabled={!editable} onChange={(v) => updateAddress("country", v)} />
+              <ArmField label="Субъект" field={address.region} invalid={invalid.has("address.region")} disabled={!editable} onChange={(v) => updateAddress("region", v)} />
+              <ArmField label="Населённый пункт" field={address.city} invalid={invalid.has("address.city")} disabled={!editable} onChange={(v) => updateAddress("city", v)} />
             </div>
             <div className="arm112-address-row arm112-cols-wide">
-              <ArmField label="Объект" field={address.object} disabled={!editable} onChange={(v) => updateAddress("object", v)} />
-              <ArmField label="Округ" field={address.okrug} disabled={!editable} onChange={(v) => updateAddress("okrug", v)} />
-              <ArmField label="Район" field={address.district} disabled={!editable} onChange={(v) => updateAddress("district", v)} />
+              <ArmField label="Объект" field={address.object} invalid={invalid.has("address.object")} disabled={!editable} onChange={(v) => updateAddress("object", v)} />
+              <ArmField label="Округ" field={address.okrug} invalid={invalid.has("address.okrug")} disabled={!editable} onChange={(v) => updateAddress("okrug", v)} />
+              <ArmField label="Район" field={address.district} invalid={invalid.has("address.district")} disabled={!editable} onChange={(v) => updateAddress("district", v)} />
             </div>
             <div className="arm112-address-row arm112-cols-wide">
-              <ArmField label="Улица" field={address.street} disabled={!editable} onChange={(v) => updateAddress("street", v)} />
-              <ArmField label="Дом/Вл" field={address.house} disabled={!editable} onChange={(v) => updateAddress("house", v)} />
-              <ArmField label="Корпус" field={address.building} disabled={!editable} onChange={(v) => updateAddress("building", v)} />
+              <ArmField label="Улица" field={address.street} invalid={invalid.has("address.street")} disabled={!editable} onChange={(v) => updateAddress("street", v)} />
+              <ArmField label="Дом/Вл" field={address.house} invalid={invalid.has("address.house")} disabled={!editable} onChange={(v) => updateAddress("house", v)} />
+              <ArmField label="Корпус" field={address.building} invalid={invalid.has("address.building")} disabled={!editable} onChange={(v) => updateAddress("building", v)} />
             </div>
             <div className="arm112-address-row arm112-cols-5">
-              <ArmField label="Стр/соор" field={address.structure} disabled={!editable} onChange={(v) => updateAddress("structure", v)} />
-              <ArmField label="Квартира/офис" field={address.flat} disabled={!editable} onChange={(v) => updateAddress("flat", v)} />
-              <ArmField label="Подъезд" field={address.entrance} disabled={!editable} onChange={(v) => updateAddress("entrance", v)} />
-              <ArmField label="Этаж" field={address.floor} disabled={!editable} onChange={(v) => updateAddress("floor", v)} />
-              <ArmField label="Код" field={address.code} disabled={!editable} onChange={(v) => updateAddress("code", v)} />
+              <ArmField label="Стр/соор" field={address.structure} invalid={invalid.has("address.structure")} disabled={!editable} onChange={(v) => updateAddress("structure", v)} />
+              <ArmField label="Квартира/офис" field={address.flat} invalid={invalid.has("address.flat")} disabled={!editable} onChange={(v) => updateAddress("flat", v)} />
+              <ArmField label="Подъезд" field={address.entrance} invalid={invalid.has("address.entrance")} disabled={!editable} onChange={(v) => updateAddress("entrance", v)} />
+              <ArmField label="Этаж" field={address.floor} invalid={invalid.has("address.floor")} disabled={!editable} onChange={(v) => updateAddress("floor", v)} />
+              <ArmField label="Код" field={address.code} invalid={invalid.has("address.code")} disabled={!editable} onChange={(v) => updateAddress("code", v)} />
             </div>
             <div className="arm112-address-row arm112-cols-descriptive">
-              <ArmField label="Описательный адрес" field={address.descriptive} disabled={!editable} onChange={(v) => updateAddress("descriptive", v)} />
-              <ArmField label="Ориентир" field={address.landmark} disabled={!editable} onChange={(v) => updateAddress("landmark", v)} />
+              <ArmField label="Описательный адрес" field={address.descriptive} invalid={invalid.has("address.descriptive")} disabled={!editable} onChange={(v) => updateAddress("descriptive", v)} />
+              <ArmField label="Ориентир" field={address.landmark} invalid={invalid.has("address.landmark")} disabled={!editable} onChange={(v) => updateAddress("landmark", v)} />
               <button type="button" className="arm112-small" disabled={!editable} onClick={clearAddress}>очистить адрес</button>
             </div>
           </section>
-          <section className="arm112-panel arm112-description">
+          <section className={`arm112-panel arm112-description${invalid.has("complaint") ? " is-invalid" : ""}`}>
             <label><span>Описание со слов заявителя</span>
               <textarea aria-label="Описание со слов заявителя" placeholder="введите" maxLength={1999} disabled={!editable || draft.complaint.state === "unknown"}
                 value={knownValue(draft.complaint)} onChange={(event) => update("complaint", fromText(event.target.value))} /></label>
@@ -348,6 +417,7 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
         {pending && <p className="notice">Действие сохраняется…</p>}
         {pending && error && <button type="button" onClick={() => void deliver(pending)}>Повторить отправку</button>}
         {error && <p role="alert" className="error">{errorMessage(error)}</p>}
+        {invalid.size > 0 && <p role="alert" className="error">{invalidMessage}</p>}
         {rejection && <p role="alert" className="error">{rejection}</p>}
         {receipt?.outcome === "applied" && <p role="status">Действие сохранено{receipt.replayed ? " после восстановления" : ""}.</p>}
       </div>
@@ -368,6 +438,7 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
       <button type="button" className="arm112-bar-square" aria-label="Добавить службу" disabled={reviewBlocked} title={reviewBlocked && editable ? "Сохраните карточку, чтобы выбрать службы" : undefined}
         onClick={() => setServicesOpen(true)}><PlusIcon size={26} /></button>
       <div className="arm112-bar-actions">
+        {(invalid.size > 0 || rejection) && <p className="arm112-bar-error" aria-hidden="true">{invalid.size > 0 ? invalidMessage : rejection}</p>}
         {!terminal && editable && <button type="submit" form="profile-case-form" className="arm112-bar-text" aria-label="Сохранить карточку" disabled={!!pending || !dirty && state.has_saved_draft}>сохранить</button>}
         {opened && <button type="button" className="arm112-bar-text" aria-label="Завершить кейс" disabled={!!pending || dirty || !state.has_saved_draft || !(notifyFlow ? notified : state.service_review) || !(draft.incident_types?.length) || (isCall && state.call_status !== "ended")}
           title="Доступно после сохранения карточки и фиксации служб" onClick={() => send(notifyFlow ? "complete_intake" : "complete_profile_case", {})}>завершить</button>}

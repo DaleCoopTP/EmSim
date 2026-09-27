@@ -737,6 +737,7 @@ dd { margin: 0; }
 .arm112 .arm112-bar-square:hover:not(:disabled), .arm112 .arm112-bar-text:hover:not(:disabled) { background: var(--a112-orange-dark); }
 .arm112 .arm112-bar-square:disabled { opacity: .55; }
 .arm112-bar-actions { display: flex; align-items: center; margin-left: auto; padding-right: 8px; }
+.arm112-bar-error { margin: 0 12px 0 0; max-width: 260px; padding: 6px 10px; background: #fff; color: #b3261e; font-size: 14px; line-height: 1.25; border-radius: 2px; }
 .arm112 .arm112-bar-text { align-self: center; height: 48px; margin-left: 6px; padding: 0 18px; color: #fff; background: transparent; border: 1px solid #fff; font-size: 21px; }
 .arm112 .arm112-bar-text:disabled { opacity: .55; }
 
@@ -805,3 +806,8 @@ dd { margin: 0; }
     font-size: 20px; text-align: center;
   }
 }
+
+/* A field the last save attempt found invalid (Operator112ProfileCase). */
+.arm112-field.is-invalid input, .arm112-plain.is-invalid, .arm112-description.is-invalid textarea {
+  border-bottom-color: #d32f2f; background: #fdecea; }
+.arm112-field.is-invalid > label > span { color: #b3261e; }
