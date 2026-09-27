@@ -120,6 +120,13 @@ test("112-7 editor: create, validate, pass it yourself, approve, and assign", as
   // built-in terminal feedback — match the latter's full text specifically.
   await expect(page.getByText("Кейс завершён. Результат появится после оценки преподавателя.")).toBeVisible();
 
+  // The preview's own auto-assessment appears right here once the worker
+  // records it (review 2026-09-26, item 10) — the preview lesson is not in
+  // the lesson list, so this screen is the author's only way to it.
+  await expect(page.getByRole("heading", { name: "Автоматическая оценка" })).toBeVisible();
+  await expect(page.getByText(/^Итог: (готова|требует проверки преподавателем)/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("link", { name: "Открыть полный разбор карточки" })).toBeVisible();
+
   // The preview lesson never shows up in the instructor's own list
   // (ADR-027's own exclusion — ListLessonsByInstructor).
   await page.getByRole("button", { name: "Завершить предпросмотр" }).click();

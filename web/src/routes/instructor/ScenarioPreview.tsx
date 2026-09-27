@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
+import { useAssessment } from "../../api/assessment";
 import { useEventStream } from "../../api/realtime";
+import { IntakeAutoAssessment } from "../../components/IntakeAutoAssessment";
 import { stopLesson } from "../../api/training";
 import type { Me } from "../../api/useMe";
 import { itemQueryKey, useItem } from "../../api/workplace";
@@ -51,7 +53,7 @@ export function ScenarioPreviewRoute() {
         <div><h1>Предпросмотр</h1><p>Вы проходите свой собственный черновик. Результат не входит в отчёты и статистику.</p></div>
         {lessonId && <button type="button" disabled={stop.isPending} onClick={() => stop.mutate()}>Завершить предпросмотр</button>}
       </header>
-      {terminal && <p className="notice">Кейс завершён. Оценка появится в разборе карточки после автопроверки.</p>}
+      {terminal && <PreviewAssessment itemId={itemId} />}
       {stop.isError && <p className="error">{errorMessage(stop.error)}</p>}
       <Operator112ProfileCase me={me} item={item.data as unknown as IntakeItem} onClose={() => navigate("/instructor/scenarios")} />
     </section>
@@ -66,4 +68,45 @@ function PreviewStream({ lessonId, itemId }: { lessonId: string; itemId: string 
     void queryClient.invalidateQueries({ queryKey: itemQueryKey(itemId) });
   });
   return null;
+}
+
+const assessmentStatusLabels: Record<string, string> = { ready: "готова", needs_review: "требует проверки преподавателем" };
+
+const automaticStateLabels: Record<string, string> = {
+  waiting: "ожидает подготовки",
+  pending: "в очереди",
+  leased: "выполняется",
+  done: "готова",
+  failed: "ошибка подготовки",
+  dead_letter: "не выполнена",
+  cancelled: "отменена",
+};
+
+// PreviewAssessment shows the preview run's own auto-assessment right
+// here once the item is closed (112-7's "пройти самому с автооценкой"):
+// a preview lesson is hidden from the lesson list, so the ordinary path
+// to the item review does not exist. It reuses the item review's own
+// IntakeAutoAssessment panel; useAssessment polls while the task is
+// still waiting/pending/leased. The full review stays one link away.
+function PreviewAssessment({ itemId }: { itemId: string }) {
+  const review = useAssessment(itemId);
+  const reviewLink = <Link to={`/instructor/items/${encodeURIComponent(itemId)}/review`}>Открыть полный разбор карточки</Link>;
+  if (review.isPending) return <p className="notice">Кейс завершён. Загрузка оценки…</p>;
+  if (review.isError) return <p className="error">{errorMessage(review.error)}</p>;
+  const detail = review.data;
+  const rubricByID = Object.fromEntries((detail.rubric_effective.criteria ?? []).map((c) => [c.id, c]));
+  const auto = detail.final?.kind === "auto" ? detail.final : detail.revisions.find((r) => r.kind === "auto");
+  const state = detail.automatic_state ?? "";
+  return (
+    <section className="preview-assessment">
+      <h2>Автоматическая оценка</h2>
+      {auto ? (
+        <p>Итог: {assessmentStatusLabels[auto.status] ?? auto.status}{auto.score == null ? "" : ` · ${auto.score.toFixed(1)} из 100`}</p>
+      ) : (
+        <p className="notice">Кейс завершён. Автооценка: {automaticStateLabels[state] ?? "ещё не поставлена"}.</p>
+      )}
+      {auto && <IntakeAutoAssessment criteria={auto.criteria} rubricCriteria={rubricByID} />}
+      <p>{reviewLink}</p>
+    </section>
+  );
 }
