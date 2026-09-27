@@ -1294,7 +1294,7 @@ func (s *Service) Execute(ctx context.Context, actor auth.Principal, itemID uuid
 
 	var receipt Receipt
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
-		lesson, run, item, err := s.lockForCommand(ctx, tx, itemID, cmd.Type)
+		lesson, run, item, err := s.lockForCommand(ctx, tx, itemID, cmd)
 		if err != nil {
 			return err
 		}
@@ -1396,7 +1396,31 @@ func unchangedDecision(item Item, rejection Rejection) Decision {
 // lock is safe for discovering *which* rows to lock in the correct
 // order, and ownership can be (and is, by the caller) checked from that
 // peek immediately, before any lock is even acquired.
-func (s *Service) lockForCommand(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, cmdType CommandType) (Lesson, Run, Item, error) {
+// mayCloseItem reports whether cmd can close the item and therefore
+// needs the close lock order (lessons and runs FOR UPDATE, for the
+// queue's next offer). Besides the explicit closing commands, a DDS
+// set_status into one of the workflow snapshot's terminal statuses
+// closes the card itself (ADR-030); the snapshot never changes after
+// offer, so reading it from the unlocked peek is safe. A malformed
+// payload only means the stronger locks are skipped — Decide rejects it
+// anyway.
+func mayCloseItem(item Item, cmd Command) bool {
+	switch cmd.Type {
+	case CommandClose, CommandCompleteIntake, CommandMarkNoContact, CommandMarkCallDropped:
+		return true
+	case CommandSetStatus:
+		var payload struct {
+			Status content.Reaction `json:"status"`
+		}
+		if json.Unmarshal(cmd.Payload, &payload) != nil {
+			return false
+		}
+		return item.Workflow.IsTerminal(payload.Status)
+	}
+	return false
+}
+
+func (s *Service) lockForCommand(ctx context.Context, tx pgx.Tx, itemID uuid.UUID, cmd Command) (Lesson, Run, Item, error) {
 	peekItem, err := s.store.ItemByID(ctx, tx, itemID, LockNone)
 	if err != nil {
 		return Lesson{}, Run{}, Item{}, err
@@ -1408,14 +1432,15 @@ func (s *Service) lockForCommand(ctx context.Context, tx pgx.Tx, itemID uuid.UUI
 
 	lessonLock := LockShare
 	run := peekRun
-	if cmdType == CommandClose || cmdType == CommandCompleteIntake || cmdType == CommandMarkNoContact || cmdType == CommandMarkCallDropped {
+	closing := mayCloseItem(peekItem, cmd)
+	if closing {
 		lessonLock = LockUpdate
 	}
 	lesson, err := s.store.LessonByID(ctx, tx, peekRun.LessonID, lessonLock)
 	if err != nil {
 		return Lesson{}, Run{}, Item{}, err
 	}
-	if cmdType == CommandClose || cmdType == CommandCompleteIntake || cmdType == CommandMarkNoContact || cmdType == CommandMarkCallDropped {
+	if closing {
 		run, err = s.store.RunByID(ctx, tx, peekRun.ID, LockUpdate)
 		if err != nil {
 			return Lesson{}, Run{}, Item{}, err
@@ -2437,7 +2462,7 @@ func (s *Service) Now(ctx context.Context) (time.Time, error) {
 // lesson → run → item → calls, matching commands and close.
 func (s *Service) UploadRecording(ctx context.Context, actor auth.Principal, itemID, callID uuid.UUID, blob Blob) error {
 	return s.store.WithTx(ctx, func(tx pgx.Tx) error {
-		lesson, run, item, err := s.lockForCommand(ctx, tx, itemID, CommandCallEnd)
+		lesson, run, item, err := s.lockForCommand(ctx, tx, itemID, Command{Type: CommandCallEnd})
 		if err != nil {
 			return err
 		}
