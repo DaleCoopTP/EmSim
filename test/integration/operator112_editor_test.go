@@ -92,6 +92,29 @@ func TestOperator112EditorVersionLifecycleAgainstRealDatabase(t *testing.T) {
 		t.Fatalf("own copy of draft = %+v, %v; want a new draft by author", ownCopy, err)
 	}
 
+	// Preview gate (review 2026-09-26, item 6): the stored version is
+	// validated server-side — clean passes, a version with an error issue
+	// is BlockingIssuesError, and someone else's is ErrNotFound.
+	if err := contentService.CheckPreviewable(ctx, author.ID, created.ID, created.VersionID); err != nil {
+		t.Fatalf("CheckPreviewable(clean) = %v, want nil", err)
+	}
+	if err := contentService.CheckPreviewable(ctx, other.ID, created.ID, created.VersionID); !errors.Is(err, content.ErrNotFound) {
+		t.Fatalf("foreign CheckPreviewable = %v, want ErrNotFound", err)
+	}
+	broken := unmarshalScenarioBody(t, freeTextChatScenarioJSON)
+	broken.Intake112.Reference.ExpectedTypes = nil
+	brokenScenario, err := contentService.CreateOperator112Scenario(ctx, author.ID, content.ScenarioCreateInput{Title: "Кейс с ошибкой", Difficulty: 1, Body: &broken})
+	if err != nil {
+		t.Fatalf("create broken: %v", err)
+	}
+	var blocking *content.BlockingIssuesError
+	if err := contentService.CheckPreviewable(ctx, author.ID, brokenScenario.ID, brokenScenario.VersionID); !errors.As(err, &blocking) {
+		t.Fatalf("CheckPreviewable(broken) = %v, want BlockingIssuesError", err)
+	}
+	if err := contentService.CheckPreviewable(ctx, author.ID, created.ID, brokenScenario.VersionID); !errors.Is(err, content.ErrNotFound) {
+		t.Fatalf("CheckPreviewable(version of another scenario) = %v, want ErrNotFound", err)
+	}
+
 	// A stale base_digest is rejected without creating a version.
 	if _, err := contentService.SaveOperator112Draft(ctx, author.ID, created.ID, content.ScenarioEditInput{BaseDigestHex: "00", Body: body}); !errors.Is(err, content.ErrStaleDraft) {
 		t.Fatalf("stale save = %v, want ErrStaleDraft", err)

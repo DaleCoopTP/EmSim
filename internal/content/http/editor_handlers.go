@@ -264,6 +264,10 @@ func (h *Handlers) startPreviewRun(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.CodeInternalError, "preview is not available", nil)
 		return
 	}
+	if err := h.content.CheckPreviewable(r.Context(), actor.UserID, scenarioID, versionID); err != nil {
+		writeEditorError(w, r, err)
+		return
+	}
 	lessonID, itemID, err := h.preview.StartPreview(r.Context(), actor.UserID, scenarioID, versionID)
 	if err != nil {
 		writeEditorError(w, r, err)

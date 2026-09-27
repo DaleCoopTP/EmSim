@@ -327,6 +327,41 @@ func (s *Service) SaveOperator112Draft(ctx context.Context, actorID, scenarioID 
 	return result, nil
 }
 
+// CheckPreviewable is POST /scenarios/{id}/preview-runs' own gate, run
+// before training.StartPreview (which stops the author's previous
+// preview and creates a real lesson): the *stored* version the request
+// names — never an earlier client-side /validate of a form that may
+// have changed since — must belong to the caller's own scenario and
+// carry no Severity=error issue (BlockingIssuesError otherwise, the
+// same rule approve enforces). StartPreview still re-checks ownership
+// and status itself; this only adds the validation it cannot do.
+func (s *Service) CheckPreviewable(ctx context.Context, actorID, scenarioID, versionID uuid.UUID) error {
+	return s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		sc, err := s.store.ScenarioByID(ctx, tx, scenarioID)
+		if err != nil {
+			return err
+		}
+		if sc.CreatedBy != actorID {
+			return ErrNotFound
+		}
+		v, err := s.store.VersionByID(ctx, tx, versionID)
+		if err != nil {
+			return err
+		}
+		if v.ScenarioID != scenarioID {
+			return ErrNotFound
+		}
+		issues, err := ValidateDetailed(v.Body, storeCatalog{ctx: ctx, tx: tx, store: s.store})
+		if err != nil {
+			return err
+		}
+		if hasBlockingIssue(issues) {
+			return &BlockingIssuesError{Issues: issues}
+		}
+		return nil
+	})
+}
+
 // ValidateOperator112Draft is POST /scenarios/{id}/validate: the
 // in-progress editor form, checked without saving. 404s for anyone but
 // the scenario's own author (same as every other editor entry point) —

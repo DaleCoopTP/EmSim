@@ -45,6 +45,7 @@ type contentService interface {
 	EditorScenarioDetail(ctx context.Context, actorID, scenarioID uuid.UUID) (content.EditorScenario, error)
 	SaveOperator112Draft(ctx context.Context, actorID, scenarioID uuid.UUID, in content.ScenarioEditInput) (content.EditorScenario, error)
 	ValidateOperator112Draft(ctx context.Context, actorID, scenarioID uuid.UUID, body content.Body) ([]content.ValidationIssue, error)
+	CheckPreviewable(ctx context.Context, actorID, scenarioID, versionID uuid.UUID) error
 	ProbeOperator112(ctx context.Context, actorID, scenarioID uuid.UUID, body content.Body, text string) ([]content.ProbeMatch, error)
 	ApproveOperator112Scenario(ctx context.Context, actorID, scenarioID, versionID uuid.UUID, baseDigestHex string) (content.EditorScenario, error)
 	IntakeCatalogForInstructor(ctx context.Context) (content.IntakeCatalog, error)

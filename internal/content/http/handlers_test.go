@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -52,6 +53,7 @@ type fakeContentService struct {
 
 	versionsResult []content.VersionSummary
 	versionsErr    error
+	previewableErr error
 
 	previewResult content.ScenarioPreview
 	previewErr    error
@@ -90,6 +92,10 @@ func (f *fakeContentService) SaveOperator112Draft(context.Context, uuid.UUID, uu
 	return f.saveResult, f.saveErr
 }
 
+func (f *fakeContentService) CheckPreviewable(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	return f.previewableErr
+}
+
 func (f *fakeContentService) ValidateOperator112Draft(context.Context, uuid.UUID, uuid.UUID, content.Body) ([]content.ValidationIssue, error) {
 	return f.validateIssues, f.validateErr
 }
@@ -110,9 +116,11 @@ func (f *fakeContentService) IntakeCatalogForInstructor(context.Context) (conten
 type fakePreviewStarter struct {
 	lessonID, itemID uuid.UUID
 	err              error
+	calls            int
 }
 
 func (f *fakePreviewStarter) StartPreview(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (uuid.UUID, uuid.UUID, error) {
+	f.calls++
 	return f.lessonID, f.itemID, f.err
 }
 
@@ -451,5 +459,43 @@ func TestScenarioVersionsReturnsMetadata(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].ID != versionID.String() || items[0].Version != 1 || items[0].Status != "approved" {
 		t.Fatalf("unexpected items: %+v", items)
+	}
+}
+
+// TestStartPreviewRunRejectsBlockingIssuesBeforeStarting: the stored
+// version is validated server-side before training.StartPreview runs —
+// which would otherwise stop the author's previous preview and create a
+// real lesson for a scenario with blocking errors (review 2026-09-26,
+// item 6).
+func TestStartPreviewRunRejectsBlockingIssuesBeforeStarting(t *testing.T) {
+	auth := &fakeAuth{validToken: "tok", principal: instructorPrincipal()}
+	svc := &fakeContentService{previewableErr: &content.BlockingIssuesError{Issues: []content.ValidationIssue{
+		{Path: "intake112.reference.expected_types", Code: "invalid_full_case", Severity: content.SeverityError},
+	}}}
+	starter := &fakePreviewStarter{lessonID: uuid.New(), itemID: uuid.New()}
+	mux := httpapi.NewMux()
+	NewHandlers(svc, starter, auth, true).Register(mux)
+
+	request := authedRequest(http.MethodPost, "/api/v1/scenarios/"+uuid.New().String()+"/preview-runs", "tok")
+	request.Body = io.NopCloser(strings.NewReader(`{"version_id":"` + uuid.New().String() + `"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	wrapped(mux).ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), "has_blocking_issues") {
+		t.Fatalf("status = %d, body=%s; want 422 has_blocking_issues", response.Code, response.Body.String())
+	}
+	if starter.calls != 0 {
+		t.Fatalf("StartPreview called %d times; want 0 for a version with blocking issues", starter.calls)
+	}
+
+	svc.previewableErr = nil
+	request = authedRequest(http.MethodPost, "/api/v1/scenarios/"+uuid.New().String()+"/preview-runs", "tok")
+	request.Body = io.NopCloser(strings.NewReader(`{"version_id":"` + uuid.New().String() + `"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	wrapped(mux).ServeHTTP(response, request)
+	if response.Code != http.StatusCreated || starter.calls != 1 {
+		t.Fatalf("clean version: status = %d, calls = %d; want 201 and one StartPreview", response.Code, starter.calls)
 	}
 }

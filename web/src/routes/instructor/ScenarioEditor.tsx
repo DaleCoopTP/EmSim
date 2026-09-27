@@ -365,7 +365,7 @@ export function ScenarioEditorRoute() {
 
       <footer className="scenario-editor-actions">
         <button type="button" disabled={saving} onClick={save}>{isNew ? "Создать черновик" : "Сохранить как новую версию"}</button>
-        <button type="button" disabled={!hasSavedVersion || startPreview.isPending} onClick={preview}>Пройти самому (предпросмотр)</button>
+        <button type="button" disabled={!hasSavedVersion || errorCount > 0 || startPreview.isPending} onClick={preview}>Пройти самому (предпросмотр)</button>
         <button type="button" disabled={!hasSavedVersion || errorCount > 0 || approveMutation.isPending} onClick={approve}>Утвердить</button>
         {saveError && <p className="error">{errorMessage(saveError)}</p>}
         {startPreview.isError && <p className="error">{errorMessage(startPreview.error)}</p>}
