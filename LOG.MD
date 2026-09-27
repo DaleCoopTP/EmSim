@@ -3131,3 +3131,18 @@ Next: на сервере заказчика — `make model`, `docker compose u
 `scripts/fetch-model.sh`: `PINNED_SHA256=5ff7c6c3…7a38` — blob `t-tech/T-lite-it-2.1:q5_K_M` из локального Ollama пользователя (получен `--from-ollama`, файл в `models/` проверен). Снимает риск «`PINNED_SHA256` пуст» из предыдущей записи: теперь любой источник (`make model`, `--from-ollama`, `--url`) принимает только эти веса.
 
 Next: первый `docker compose up --build` с моделью у пользователя; затем `bench-llm` на сервере заказчика.
+
+## 2026-09-27 — `llm` в compose перезапускался по кругу: OOM в 8-ГБ Docker VM
+
+Причина: глобальный OOM-killer ядра Docker Desktop VM (7,65 ГБ) убивает `llama-server` при загрузке. При стандартных параметрах RSS процесса — ~7,2 ГБ анонимной памяти (переупаковка весов `CPU_REPACK` ~4,7 ГБ + KV-кеш `--ctx-size 16384` ~2,4 ГБ), запас VM < 100 МБ, поэтому исход зависит от прочей занятости VM (сборка, другие контейнеры); флаги, сеть `internal` и healthcheck ни при чём.
+
+Подтверждено:
+- `dmesg` VM: `Out of memory: Killed process … (llama-server) anon-rss:7206940kB`, `global_oom`; `docker events`: `oom` → `die exitCode=137` → `start`; `docker compose ps`: `Restarting (137)`. `ExitCode=0`/`OOMKilled=false` в `docker inspect` — состояние уже новой попытки после рестарта.
+- Эксперимент с одной переменной при фиксированной нагрузке 700 МБ (tmpfs-контейнер) и поднятом стеке: стоковый `llm` — 7 рестартов за 48 с; тот же с `--no-repack` (и отдельно через env `LLAMA_ARG_REPACK=false`) — healthy; `LLAMA_ARG_REPACK=true` — снова цикл.
+- Но только `--no-repack` при ctx 16384 не годится: 5,4 ГБ весов через mmap не помещаются в страничный кеш, генерация ~0,3 ток/с (11,7 млн major faults). С `LLM_PARALLEL=1 LLM_CTX_SIZE=4096` (контекст на диалог прежний): repack — 5,4 ГБ anon, 6,1–6,8 ток/с; no-repack — 0,65 ГБ anon, 6,4–9,7 ток/с.
+
+Changed: `compose.yaml` (`llm.environment.LLAMA_ARG_REPACK: ${LLM_REPACK:-true}` + комментарий), `.env.example`, README («Модель»: `LLM_REPACK`, раздел «Память» с профилем для 8 ГБ), ADR-029 («Последствия», дополнение о памяти), `slice-112-5b-plan.md` (таблица параметров). Умолчания класса (repack, 4 слота, 16384) не менялись.
+
+Validation: `docker compose up -d --build` с `LLM_REPACK=false LLM_PARALLEL=1 LLM_CTX_SIZE=4096 CALLER_CONCURRENCY=1` — весь стек healthy, `llm` rc=0; `wget` из `worker` на `http://llm:8080/v1/chat/completions` — ответ «голубое»; `make verify`, `make compose-config` — ок.
+
+Risks / not checked: влияние `LLM_REPACK=false` на скорость на целевом x86-64 не замерялось (там умолчание — repack); профиль 8 ГБ проверен только одиночными запросами, не `bench-llm`. Next: W0 `bench-llm` на сервере заказчика (без изменений).

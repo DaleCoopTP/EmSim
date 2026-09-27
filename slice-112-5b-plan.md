@@ -152,6 +152,7 @@
 | `LLM_PARALLEL` | 4 | слоты `llama-server` |
 | `LLM_THREADS` | 6 | потоки CPU для генерации |
 | `LLM_CTX_SIZE` | 16384 | контекст на все слоты (по 4096 на слот при 4 слотах) |
+| `LLM_REPACK` | true | переупаковка весов под CPU; на машинах с ~8 ГБ у Docker — `false` вместе с `LLM_PARALLEL=1`, `LLM_CTX_SIZE=4096` (ADR-029, «Последствия») |
 | `CALLER_CONCURRENCY` | 3 | одновременные ответы заявителя; вместе с `LLM_CONCURRENCY` не больше `LLM_PARALLEL` |
 | `LLM_CONCURRENCY` | 1 | одновременные запросы судьи |
 | `CALLER_REPLY_TIMEOUT` | 30s | было 15s, подобрано на Mac с GPU |
