@@ -156,9 +156,16 @@ func provisionWorkstations(t *testing.T, f trainingE2EFixture, adminClient *http
 // must already exist in the replacement inventory installed above.
 func createTrainee(t *testing.T, f trainingE2EFixture, adminClient *http.Client, login string, workstationNo int) *http.Client {
 	t.Helper()
+	return createTraineeWithService(t, f, adminClient, login, workstationNo, "dds_district")
+}
+
+// createTraineeWithService is createTrainee for a trainee of another DDS
+// service — the ADR-030 services have their own codes.
+func createTraineeWithService(t *testing.T, f trainingE2EFixture, adminClient *http.Client, login string, workstationNo int, serviceCode string) *http.Client {
+	t.Helper()
 	response := jsonRequest(t, f.ctx, adminClient, f.baseURL, http.MethodPost, "/api/v1/admin/users", map[string]any{
 		"login": login, "password": "correct-horse-battery-staple",
-		"full_name": "Курсант " + login, "role": "trainee", "service_code": "dds_district",
+		"full_name": "Курсант " + login, "role": "trainee", "service_code": serviceCode,
 	}, nil)
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("create trainee %s status = %d", login, response.StatusCode)

@@ -449,8 +449,8 @@ func TestAPIProcessContentCatalogAccess(t *testing.T) {
 	// service_code) but not scenario content.
 	var services []map[string]any
 	response = jsonRequest(t, ctx, adminClient, baseURL, http.MethodGet, "/api/v1/services", nil, &services)
-	if response.StatusCode != http.StatusOK || len(services) != 6 {
-		t.Fatalf("admin GET /services status = %d, len = %d, want 200 and 6", response.StatusCode, len(services))
+	if response.StatusCode != http.StatusOK || len(services) != 8 {
+		t.Fatalf("admin GET /services status = %d, len = %d, want 200 and 8 (seed/services.json, incl. the ADR-030 DDS services)", response.StatusCode, len(services))
 	}
 	response = jsonRequest(t, ctx, adminClient, baseURL, http.MethodGet, "/api/v1/scenarios", nil, nil)
 	if response.StatusCode != http.StatusForbidden {
@@ -473,11 +473,18 @@ func TestAPIProcessContentCatalogAccess(t *testing.T) {
 		Total int `json:"total"`
 	}
 	response = jsonRequest(t, ctx, instructorClient, baseURL, http.MethodGet, "/api/v1/scenarios", nil, &scenarioList)
-	// The slice-4 event, slice-5 phone, and 112 intake fixtures (including
-	// 112-5b's three AI-caller scenarios) are part of the imported
-	// catalogue too; assert that the full offline seed loaded.
-	if response.StatusCode != http.StatusOK || scenarioList.Total != 15 || len(scenarioList.Items) != 15 {
+	// The 112 intake fixtures (including 112-5b's three AI-caller
+	// scenarios) and ADR-030's two full-cycle DDS scenarios make up the
+	// default catalogue; assert that the full offline seed loaded.
+	if response.StatusCode != http.StatusOK || scenarioList.Total != 13 || len(scenarioList.Items) != 13 {
 		t.Fatalf("instructor GET /scenarios status = %d, body = %+v", response.StatusCode, scenarioList)
+	}
+	// The four slice 2–7 DDS pilots are archived (ADR-030): listed only
+	// under status=archived, and their preview still works.
+	scenarioList.Items = nil
+	response = jsonRequest(t, ctx, instructorClient, baseURL, http.MethodGet, "/api/v1/scenarios?status=archived", nil, &scenarioList)
+	if response.StatusCode != http.StatusOK || scenarioList.Total != 4 || len(scenarioList.Items) != 4 {
+		t.Fatalf("instructor GET /scenarios?status=archived status = %d, body = %+v", response.StatusCode, scenarioList)
 	}
 
 	var case02ID string
