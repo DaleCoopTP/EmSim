@@ -21,11 +21,11 @@
 #   LLM_MODELS_DIR    target directory              (./models)
 set -euo pipefail
 
-# Pinned digest of the validated weights. Empty until confirmed against the
-# Ollama blob the user has tested with (see README.md, "Модель"); while
-# empty the script still verifies the file against the source's own digest
-# and prints the value to pin here.
-PINNED_SHA256=""
+# Pinned digest of the validated weights: the Ollama blob of
+# t-tech/T-lite-it-2.1:q5_K_M the user tested with (2026-09-27, taken with
+# --from-ollama). Every source must match it; clear it only to adopt new
+# weights on purpose.
+PINNED_SHA256="5ff7c6c37f3046b92ca65cd16f6161ed47d73395a9c4b9721db11e685d017a38"
 
 MODEL_FILE="${LLM_MODEL_FILE:-T-lite-it-2.1-Q5_K_M.gguf}"
 OLLAMA_MODEL="${LLM_OLLAMA_MODEL:-t-tech/T-lite-it-2.1:q5_K_M}"

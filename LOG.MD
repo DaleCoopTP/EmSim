@@ -3125,3 +3125,9 @@ Open issues / risks:
 - Ёмкость класса неизвестна до замера; 20 одновременных генераций 8B на 6 CPU могут не уложиться в `CALLER_REPLY_TIMEOUT`.
 
 Next: на сервере заказчика — `make model`, `docker compose up`, `bench-llm` при `LLM_PARALLEL` 4/8/20, решение по ёмкости; записать в `slice-112-5b-plan.md` и сюда.
+
+## 2026-09-27 — sha256 модели закреплён
+
+`scripts/fetch-model.sh`: `PINNED_SHA256=5ff7c6c3…7a38` — blob `t-tech/T-lite-it-2.1:q5_K_M` из локального Ollama пользователя (получен `--from-ollama`, файл в `models/` проверен). Снимает риск «`PINNED_SHA256` пуст» из предыдущей записи: теперь любой источник (`make model`, `--from-ollama`, `--url`) принимает только эти веса.
+
+Next: первый `docker compose up --build` с моделью у пользователя; затем `bench-llm` на сервере заказчика.
