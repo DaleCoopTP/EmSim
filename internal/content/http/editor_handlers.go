@@ -74,10 +74,11 @@ func (h *Handlers) createScenario(w http.ResponseWriter, r *http.Request) {
 // ----------------------------------------------------------------- save
 
 type scenarioEditBody struct {
-	BaseDigest string          `json:"base_digest"`
-	Title      *string         `json:"title,omitempty"`
-	Difficulty *int            `json:"difficulty,omitempty"`
-	Body       json.RawMessage `json:"body"`
+	BaseVersionID string          `json:"base_version_id"`
+	BaseDigest    string          `json:"base_digest"`
+	Title         *string         `json:"title,omitempty"`
+	Difficulty    *int            `json:"difficulty,omitempty"`
+	Body          json.RawMessage `json:"body"`
 }
 
 func (h *Handlers) saveDraft(w http.ResponseWriter, r *http.Request) {
@@ -96,13 +97,18 @@ func (h *Handlers) saveDraft(w http.ResponseWriter, r *http.Request) {
 		writeDecodeError(w, r, err)
 		return
 	}
+	baseVersionID, err := uuid.Parse(reqBody.BaseVersionID)
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "invalid base_version_id", map[string]any{"field": "base_version_id"})
+		return
+	}
 	body, err := decodeScenarioBody(reqBody.Body)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.CodeInvalidRequest, "malformed body", map[string]any{"field": "body"})
 		return
 	}
 	saved, err := h.content.SaveOperator112Draft(r.Context(), actor.UserID, scenarioID, content.ScenarioEditInput{
-		BaseDigestHex: reqBody.BaseDigest, Title: reqBody.Title, Difficulty: reqBody.Difficulty, Body: body,
+		BaseVersionID: baseVersionID, BaseDigestHex: reqBody.BaseDigest, Title: reqBody.Title, Difficulty: reqBody.Difficulty, Body: body,
 	})
 	if err != nil {
 		writeEditorError(w, r, err)

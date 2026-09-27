@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 
@@ -77,7 +78,7 @@ func TestOperator112EditorVersionLifecycleAgainstRealDatabase(t *testing.T) {
 	if _, err := contentService.EditorScenarioDetail(ctx, other.ID, created.ID); !errors.Is(err, content.ErrNotFound) {
 		t.Fatalf("foreign EditorScenarioDetail = %v, want ErrNotFound", err)
 	}
-	if _, err := contentService.SaveOperator112Draft(ctx, other.ID, created.ID, content.ScenarioEditInput{BaseDigestHex: hex.EncodeToString(created.Digest[:]), Body: body}); !errors.Is(err, content.ErrNotFound) {
+	if _, err := contentService.SaveOperator112Draft(ctx, other.ID, created.ID, content.ScenarioEditInput{BaseVersionID: created.VersionID, BaseDigestHex: hex.EncodeToString(created.Digest[:]), Body: body}); !errors.Is(err, content.ErrNotFound) {
 		t.Fatalf("foreign SaveOperator112Draft = %v, want ErrNotFound", err)
 	}
 	// Neither copying the draft nor listing its versions is a way around
@@ -116,13 +117,13 @@ func TestOperator112EditorVersionLifecycleAgainstRealDatabase(t *testing.T) {
 	}
 
 	// A stale base_digest is rejected without creating a version.
-	if _, err := contentService.SaveOperator112Draft(ctx, author.ID, created.ID, content.ScenarioEditInput{BaseDigestHex: "00", Body: body}); !errors.Is(err, content.ErrStaleDraft) {
+	if _, err := contentService.SaveOperator112Draft(ctx, author.ID, created.ID, content.ScenarioEditInput{BaseVersionID: created.VersionID, BaseDigestHex: "00", Body: body}); !errors.Is(err, content.ErrStaleDraft) {
 		t.Fatalf("stale save = %v, want ErrStaleDraft", err)
 	}
 
 	newTitle := "Мой кейс, версия 2"
 	saved, err := contentService.SaveOperator112Draft(ctx, author.ID, created.ID, content.ScenarioEditInput{
-		BaseDigestHex: hex.EncodeToString(created.Digest[:]), Title: &newTitle, Body: body,
+		BaseVersionID: created.VersionID, BaseDigestHex: hex.EncodeToString(created.Digest[:]), Title: &newTitle, Body: body,
 	})
 	if err != nil {
 		t.Fatalf("save: %v", err)
@@ -136,6 +137,56 @@ func TestOperator112EditorVersionLifecycleAgainstRealDatabase(t *testing.T) {
 	}
 	if v1Status != "superseded" {
 		t.Fatalf("v1 status = %q, want superseded (every save supersedes the prior version)", v1Status)
+	}
+
+	// A title-only save keeps the body digest, so a second tab still
+	// holding v1 must be caught by its version id, not silently overwrite
+	// the new title (review 2026-09-26, item 8).
+	if saved.Digest != created.Digest {
+		t.Fatalf("title-only save changed the body digest; this check needs the same-digest case")
+	}
+	otherTabTitle := "Правка из второй вкладки"
+	if _, err := contentService.SaveOperator112Draft(ctx, author.ID, created.ID, content.ScenarioEditInput{
+		BaseVersionID: created.VersionID, BaseDigestHex: hex.EncodeToString(created.Digest[:]), Title: &otherTabTitle, Body: body,
+	}); !errors.Is(err, content.ErrStaleDraft) {
+		t.Fatalf("second tab's save over a newer title = %v, want ErrStaleDraft", err)
+	}
+	if _, err := contentService.ApproveOperator112Scenario(ctx, author.ID, created.ID, created.VersionID, hex.EncodeToString(created.Digest[:])); !errors.Is(err, content.ErrStaleDraft) {
+		t.Fatalf("approve of a superseded version = %v, want ErrStaleDraft", err)
+	}
+
+	// Concurrent saves from the same base are serialized by the scenario
+	// row lock: exactly one wins, the other gets ErrStaleDraft (never a
+	// unique-violation on the next version number).
+	type saveResult struct {
+		saved content.EditorScenario
+		err   error
+	}
+	results := make(chan saveResult, 2)
+	for i := range 2 {
+		go func() {
+			title := fmt.Sprintf("Параллельная правка %d", i)
+			r, err := contentService.SaveOperator112Draft(ctx, author.ID, created.ID, content.ScenarioEditInput{
+				BaseVersionID: saved.VersionID, BaseDigestHex: hex.EncodeToString(saved.Digest[:]), Title: &title, Body: body,
+			})
+			results <- saveResult{r, err}
+		}()
+	}
+	var winners, stale int
+	for range 2 {
+		r := <-results
+		switch {
+		case r.err == nil:
+			winners++
+			saved = r.saved
+		case errors.Is(r.err, content.ErrStaleDraft):
+			stale++
+		default:
+			t.Fatalf("concurrent save: %v", r.err)
+		}
+	}
+	if winners != 1 || stale != 1 {
+		t.Fatalf("concurrent saves: %d won, %d stale; want 1 and 1", winners, stale)
 	}
 
 	// Approve rejects a stale digest, then succeeds with the current one.

@@ -155,7 +155,7 @@ export function ScenarioEditorRoute() {
       return;
     }
     saveMutation.mutate(
-      { scenarioId: scenarioId!, baseDigest: savedDigest, title, difficulty: body.difficulty, body },
+      { scenarioId: scenarioId!, baseVersionId: savedVersionId, baseDigest: savedDigest, title, difficulty: body.difficulty, body },
       {
         onSuccess: (result) => {
           setSavedVersionId(result.version_id);

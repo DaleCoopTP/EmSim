@@ -191,9 +191,16 @@ func (s *Service) readVersionForCopy(ctx context.Context, actorID, versionID uui
 // highest-numbered version (draft or approved — whichever is latest),
 // rejecting with ErrNotFound (never ErrForbidden — ADR-027: a chужой
 // draft is invisible, not merely off-limits) unless actorID is its
-// created_by.
-func (s *Service) ownedLatestVersion(ctx context.Context, tx pgx.Tx, actorID, scenarioID uuid.UUID) (ScenarioRecord, ScenarioVersionRecord, error) {
-	sc, err := s.store.ScenarioByID(ctx, tx, scenarioID)
+// created_by. forUpdate locks the scenario row first, so concurrent
+// saves/approves of one scenario run one after another: the second then
+// sees the first's new latest version and gets ErrStaleDraft rather
+// than a unique-violation on the next version number.
+func (s *Service) ownedLatestVersion(ctx context.Context, tx pgx.Tx, actorID, scenarioID uuid.UUID, forUpdate bool) (ScenarioRecord, ScenarioVersionRecord, error) {
+	lookup := s.store.ScenarioByID
+	if forUpdate {
+		lookup = s.store.ScenarioByIDForUpdate
+	}
+	sc, err := lookup(ctx, tx, scenarioID)
 	if err != nil {
 		return ScenarioRecord{}, ScenarioVersionRecord{}, err
 	}
@@ -221,7 +228,7 @@ func (s *Service) ownedLatestVersion(ctx context.Context, tx pgx.Tx, actorID, sc
 func (s *Service) EditorScenarioDetail(ctx context.Context, actorID, scenarioID uuid.UUID) (EditorScenario, error) {
 	var result EditorScenario
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
-		sc, v, err := s.ownedLatestVersion(ctx, tx, actorID, scenarioID)
+		sc, v, err := s.ownedLatestVersion(ctx, tx, actorID, scenarioID, false)
 		if err != nil {
 			return err
 		}
@@ -244,6 +251,12 @@ func (s *Service) EditorScenarioDetail(ctx context.Context, actorID, scenarioID 
 // ScenarioEditInput is PUT /scenarios/{id}'s own request
 // (openapi.yaml's ScenarioEdit).
 type ScenarioEditInput struct {
+	// BaseVersionID and BaseDigestHex identify the version the client
+	// last read. The digest alone covers only the body: a title-only save
+	// creates a new version with the same digest, so a second tab still
+	// holding the old digest would silently overwrite that title. Both
+	// must match the scenario's latest version, or ErrStaleDraft.
+	BaseVersionID uuid.UUID
 	BaseDigestHex string
 	Title         *string
 	Difficulty    *int
@@ -262,11 +275,11 @@ func (s *Service) SaveOperator112Draft(ctx context.Context, actorID, scenarioID 
 
 	var result EditorScenario
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
-		sc, current, err := s.ownedLatestVersion(ctx, tx, actorID, scenarioID)
+		sc, current, err := s.ownedLatestVersion(ctx, tx, actorID, scenarioID, true)
 		if err != nil {
 			return err
 		}
-		if hex.EncodeToString(current.Digest[:]) != in.BaseDigestHex {
+		if current.ID != in.BaseVersionID || hex.EncodeToString(current.Digest[:]) != in.BaseDigestHex {
 			return ErrStaleDraft
 		}
 		title := sc.Title
@@ -447,11 +460,17 @@ func (s *Service) ProbeOperator112(ctx context.Context, actorID, scenarioID uuid
 func (s *Service) ApproveOperator112Scenario(ctx context.Context, actorID, scenarioID, versionID uuid.UUID, baseDigestHex string) (EditorScenario, error) {
 	var result EditorScenario
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
-		sc, current, err := s.ownedLatestVersion(ctx, tx, actorID, scenarioID)
+		sc, current, err := s.ownedLatestVersion(ctx, tx, actorID, scenarioID, true)
 		if err != nil {
 			return err
 		}
 		if current.ID != versionID {
+			// An older version of this same scenario is a stale client
+			// view (e.g. another tab saved since, even title-only), not a
+			// missing resource.
+			if v, err := s.store.VersionByID(ctx, tx, versionID); err == nil && v.ScenarioID == scenarioID {
+				return ErrStaleDraft
+			}
 			return ErrNotFound
 		}
 		if current.Status != "draft" {

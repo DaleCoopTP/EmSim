@@ -213,6 +213,9 @@ type Store interface {
 	// ErrNotFound when no scenario has this source_key yet.
 	ScenarioByKey(ctx context.Context, tx pgx.Tx, key string) (ScenarioRecord, error)
 	ScenarioByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (ScenarioRecord, error)
+	// ScenarioByIDForUpdate is ScenarioByID with a row lock, serializing
+	// the editor's own writes to one scenario (save/approve).
+	ScenarioByIDForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (ScenarioRecord, error)
 	InsertScenario(ctx context.Context, tx pgx.Tx, s ScenarioRecord) error
 	UpdateScenarioDifficulty(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID, difficulty int) error
 	// UpdateScenarioTitle is 112-7/ADR-027's own write — PUT

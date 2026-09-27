@@ -170,6 +170,10 @@ func (s *Store) ScenarioByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (cont
 	return scanScenario(tx.QueryRow(ctx, `SELECT `+scenarioColumns+` FROM scenarios WHERE id = $1`, id))
 }
 
+func (s *Store) ScenarioByIDForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (content.ScenarioRecord, error) {
+	return scanScenario(tx.QueryRow(ctx, `SELECT `+scenarioColumns+` FROM scenarios WHERE id = $1 FOR UPDATE`, id))
+}
+
 func (s *Store) InsertScenario(ctx context.Context, tx pgx.Tx, rec content.ScenarioRecord) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO scenarios (id, title, target_service, difficulty, origin, ticket_id, status, source_key, created_by)

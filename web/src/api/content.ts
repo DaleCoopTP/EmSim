@@ -184,6 +184,7 @@ export function useCreateScenario() {
 
 export interface SaveScenarioInput {
   scenarioId: string;
+  baseVersionId: string;
   baseDigest: string;
   title?: string;
   difficulty?: number;
@@ -195,6 +196,7 @@ export function useSaveScenario() {
   return useMutation({
     mutationFn: (input: SaveScenarioInput) =>
       api.put<components["schemas"]["ScenarioEditResult"]>(`/scenarios/${encodeURIComponent(input.scenarioId)}`, {
+        base_version_id: input.baseVersionId,
         base_digest: input.baseDigest,
         title: input.title,
         difficulty: input.difficulty,

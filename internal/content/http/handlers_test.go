@@ -499,3 +499,17 @@ func TestStartPreviewRunRejectsBlockingIssuesBeforeStarting(t *testing.T) {
 		t.Fatalf("clean version: status = %d, calls = %d; want 201 and one StartPreview", response.Code, starter.calls)
 	}
 }
+
+// TestSaveDraftRequiresBaseVersionID: base_version_id is required, since
+// base_digest alone does not catch a title-only change made in another
+// tab (review 2026-09-26, item 8).
+func TestSaveDraftRequiresBaseVersionID(t *testing.T) {
+	auth := &fakeAuth{validToken: "tok", principal: instructorPrincipal()}
+	mux := newTestMux(&fakeContentService{}, auth)
+	request := authedRequest(http.MethodPut, "/api/v1/scenarios/"+uuid.New().String(), "tok")
+	request.Body = io.NopCloser(strings.NewReader(`{"base_digest":"00","body":{}}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	wrapped(mux).ServeHTTP(response, request)
+	assertErrorEnvelope(t, response, http.StatusUnprocessableEntity, "validation_failed")
+}

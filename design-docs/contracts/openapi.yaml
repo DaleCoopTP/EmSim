@@ -229,7 +229,7 @@ paths:
     put:
       tags: [content]
       summary: Правка черновика 112 — всегда новой draft-версией
-      description: 'Срез 112-7/ADR-027, только operator112_intake full_case+free_text владельца. base_digest — digest версии, прочитанной клиентом; несовпадение → 409 stale_draft. Каждый PUT создаёт версию N+1 (draft) и переводит прежнюю latest-версию в superseded — без правки на месте (упрощение ADR-027: content не должен знать, ссылается ли training на черновик через предпросмотр). Ответ несёт issues[] (все, включая warning) — сохранение с error-issues разрешено, это просто незаконченный черновик. Для ДДС и для чужого/утверждённого без своего черновика остаётся не реализовано.'
+      description: 'Срез 112-7/ADR-027, только operator112_intake full_case+free_text владельца. base_version_id и base_digest — версия, прочитанная клиентом; несовпадение любого с последней версией → 409 stale_draft (одновременные PUT сериализуются блокировкой сценария). Каждый PUT создаёт версию N+1 (draft) и переводит прежнюю latest-версию в superseded — без правки на месте (упрощение ADR-027: content не должен знать, ссылается ли training на черновик через предпросмотр). Ответ несёт issues[] (все, включая warning) — сохранение с error-issues разрешено, это просто незаконченный черновик. Для ДДС и для чужого/утверждённого без своего черновика остаётся не реализовано.'
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScenarioEdit' } } } }
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ScenarioEditResult' } } } }
@@ -774,9 +774,10 @@ components:
             issues: { type: array, items: { $ref: '#/components/schemas/ValidationIssue' }, description: 'Срез 112-7/ADR-027. Заполняется тем же fallback''ом, что и version_status.' }
     ScenarioEdit:
       type: object
-      required: [base_digest, body]
+      required: [base_version_id, base_digest, body]
       description: Срез 112-7/ADR-027 — PUT /scenarios/{id}'s тело.
       properties:
+        base_version_id: { type: string, format: uuid, description: 'id версии, прочитанной клиентом перед правкой; должен совпадать с последней версией сценария, иначе 409 stale_draft. Нужен вместе с base_digest: digest покрывает только тело, а сохранение одного названия создаёт новую версию с тем же digest (уточнение 27.09.2026 по ревью).' }
         base_digest: { type: string, description: digest версии, прочитанной клиентом перед правкой. }
         title: { type: string, maxLength: 200 }
         difficulty: { type: integer, minimum: 1, maximum: 10 }
