@@ -37,7 +37,7 @@ async function expectDesktopScreenshots(page: Page, name: string, masks: Locator
 	}
 }
 
-test("ARM-112 acceptance: login → queue → card → monitor → call → close", async ({ page }) => {
+test("ARM-112 acceptance: login → queue → card → monitor → call → status pencil → close", async ({ page }) => {
 	test.setTimeout(90_000);
 	const baseURL = process.env.E2E_BASE_URL;
 	if (!baseURL) throw new Error("E2E_BASE_URL must be set by e2e/run.mjs");
@@ -47,7 +47,7 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → clos
 		data: [{ number: workstationNo, label: "E2E browser workstation" }],
 	}));
 	const traineeResponse = await expectOK(await admin.post("/api/v1/admin/users", {
-		data: { login: "e2e-trainee", password, full_name: "E2E Trainee", role: "trainee", service_code: "dds_district" },
+		data: { login: "e2e-trainee", password, full_name: "E2E Trainee", role: "trainee", service_code: "dds_district_chertanovo" },
 	}));
 	const trainee = await traineeResponse.json();
 	await expectOK(await admin.post("/api/v1/admin/users", {
@@ -58,7 +58,7 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → clos
   await login(instructor, "e2e-instructor");
 	const scenariosResponse = await expectOK(await instructor.get("/api/v1/scenarios?status=approved&page=1&page_size=20"));
 	const scenarios = await scenariosResponse.json();
-	const scenarioSummary = scenarios.items.find((candidate: { source_key?: string }) => candidate.source_key === "pilot-phone-01");
+	const scenarioSummary = scenarios.items.find((candidate: { source_key?: string }) => candidate.source_key === "dds-district-tree-cycle-01");
 	expect(scenarioSummary).toBeTruthy();
 	const scenarioResponse = await expectOK(await instructor.get(`/api/v1/scenarios/${scenarioSummary.id}`));
   const scenario = await scenarioResponse.json();
@@ -70,7 +70,6 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → clos
     data: [{ workstation_no: workstationNo, user_id: trainee.id, scenario_version_ids: [scenario.version_id] }],
   }));
 	await expectOK(await instructor.post(`/api/v1/lessons/${lesson.id}/start`));
-	await instructor.dispose();
 	await admin.dispose();
 
 	await page.addInitScript(() => {
@@ -152,7 +151,42 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → clos
 	await expect(page.getByText("Запись готова.")).toBeVisible();
 	expect(uploadAttempts).toBe(2);
 	expect(callEndCommands).toBe(1);
-	await page.getByRole("button", { name: "Принять", exact: true }).click();
-	await page.getByRole("button", { name: "Завершить упражнение" }).click();
+	// ADR-030: the reaction cycle is worked through the service's own
+	// status pencil; the terminal status closes the card by itself.
+	await expect(page.getByRole("button", { name: "Завершить упражнение" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Добавить комментарий" })).toHaveCount(0);
+	const saveStatus = async (label: string, comment: string) => {
+		await page.getByRole("button", { name: "Проставить статус реагирования" }).click();
+		await page.getByLabel("Статус реагирования").selectOption({ label });
+		await page.getByLabel(/^Комментарий/).fill(comment);
+		await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+		await expect(page.locator(".dds-service-block-head > span")).toContainText(label);
+	};
+	await saveStatus("Принята", "Принята, бригада направлена.");
+	await saveStatus("Начало реагирования", "Бригада выехала, прибытие через 15 минут.");
+	await saveStatus("Прибытие", "Бригада на месте.");
+	await saveStatus("Проведение работ", "Распил дерева, вызвана автовышка.");
+	await page.getByRole("button", { name: "Проставить статус реагирования" }).click();
+	await page.getByLabel("Статус реагирования").selectOption({ label: "Работы завершены" });
+	await expect(page.getByText("Сохранение этого статуса закроет карточку для редактирования.", { exact: false })).toBeVisible();
+	await page.getByLabel(/^Комментарий/).fill("Дерево убрано, проезд свободен.");
+	await page.getByRole("button", { name: "Сохранить", exact: true }).click();
 	await expect(page.getByText("Упражнение завершено.")).toBeVisible();
+	await expect(page.getByRole("button", { name: "Проставить статус реагирования" })).toHaveCount(0);
+	await page.getByRole("button", { name: "▾ История статусов" }).click();
+	await expect(page.locator(".dds-service-history li")).toHaveCount(5);
+
+	// The instructor's review shows the same saved statuses with comments.
+	const queueResponse = await expectOK(await instructor.get(`/api/v1/lessons/${lesson.id}/assessments`));
+	const [row] = await queueResponse.json();
+	await instructor.dispose();
+	await page.getByRole("button", { name: "Выйти" }).click();
+	await page.getByLabel("Логин").fill("e2e-instructor");
+	await page.getByLabel("Пароль").fill(password);
+	await page.getByRole("button", { name: "Войти" }).click();
+	await expect(page.getByRole("heading", { name: "Занятия" })).toBeVisible();
+	await page.goto(`${baseURL}/instructor/items/${row.item_id}/review`);
+	await expect(page.getByRole("heading", { name: "Статусы реагирования" })).toBeVisible();
+	await expect(page.getByRole("listitem").filter({ hasText: "Проведение работ — Распил дерева, вызвана автовышка." })).toBeVisible();
+	await expect(page.getByText("Статус карточки: Завершена")).toBeVisible();
 });
