@@ -39,7 +39,7 @@ def load_json(name: str):
 def main() -> int:
     print("JSON")
     schemas = {n: load_json(n) for n in ["scenario.schema.json", "scenario-file.schema.json", "evidence.schema.json", "evidence.operator112.schema.json", "assessment-inputs.schema.json", "rubric.schema.json", "sse-events.schema.json", "tasks.schema.json", "voice-assets-manifest.schema.json"]}
-    examples = {n: load_json(n) for n in ["scenario.example.json", "evidence.example.json", "rubric.default.json", "rubric.operator112.json", "rubric.operator112.v1.json", "rubric.operator112.v3.json", "assessment-inputs.example.json"]}
+    examples = {n: load_json(n) for n in ["scenario.example.json", "evidence.example.json", "rubric.default.json", "rubric.dds.v2.json", "rubric.operator112.json", "rubric.operator112.v1.json", "rubric.operator112.v3.json", "assessment-inputs.example.json"]}
     for n, v in {**schemas, **examples}.items():
         if v is not None:
             ok(n)
@@ -90,7 +90,7 @@ def main() -> int:
             if s is not None:
                 V.check_schema(s)
                 ok(f"{n} is a valid draft 2020-12 schema")
-        pairs = [("scenario.schema.json", "scenario.example.json"), ("evidence.schema.json", "evidence.example.json"), ("rubric.schema.json", "rubric.default.json"), ("rubric.schema.json", "rubric.operator112.json"), ("rubric.schema.json", "rubric.operator112.v1.json"), ("rubric.schema.json", "rubric.operator112.v3.json"), ("assessment-inputs.schema.json", "assessment-inputs.example.json")]
+        pairs = [("scenario.schema.json", "scenario.example.json"), ("evidence.schema.json", "evidence.example.json"), ("rubric.schema.json", "rubric.default.json"), ("rubric.schema.json", "rubric.dds.v2.json"), ("rubric.schema.json", "rubric.operator112.json"), ("rubric.schema.json", "rubric.operator112.v1.json"), ("rubric.schema.json", "rubric.operator112.v3.json"), ("assessment-inputs.schema.json", "assessment-inputs.example.json")]
         for sn, en in pairs:
             if schemas[sn] is None or examples[en] is None:
                 continue
@@ -188,6 +188,22 @@ def main() -> int:
             ok("rubric.default.json scores ADR-017 field corrections")
         else:
             fail("rubric.default.json is missing D_FIELD_CORRECTIONS (ADR-019)")
+
+        # ДДС-3 / ADR-032: rubric.dds.v2.json replaces the pilot-shaped
+        # criteria (card editing, call log content, address wording) the
+        # trainee no longer performs under ADR-030 with T_PROGRESS/
+        # S_SEQUENCE/C_CALLS, which score the crew-report cycle ADR-031
+        # introduced. rubric.default.json (dds/rubric-v1) is untouched.
+        rubric_dds_v2 = examples["rubric.dds.v2.json"]
+        dds_v2_ids = {c["id"] for c in rubric_dds_v2["criteria"]}
+        removed_in_v2 = {"T_COMPLETE", "D_FIELD_CORRECTIONS", "C_CALL_MADE", "C_CALL_CONTENT", "C_CALL_LOG", "C_CALL_LOG_CONTENT", "G_ADDRESS"}
+        total_weight = sum(c["weight"] for c in rubric_dds_v2["criteria"])
+        if (rubric_dds_v2["version"] == "dds/rubric-v2" and rubric_dds_v2["exercise_type"] == "dds_processing"
+                and {"T_PROGRESS", "S_SEQUENCE", "C_CALLS"} <= dds_v2_ids
+                and not (removed_in_v2 & dds_v2_ids) and total_weight == 100):
+            ok("rubric.dds.v2.json adds T_PROGRESS/S_SEQUENCE/C_CALLS and drops the pilot-only criteria (ADR-032)")
+        else:
+            fail("rubric.dds.v2.json must be dds/rubric-v2 with T_PROGRESS/S_SEQUENCE/C_CALLS, no pilot-only criteria, weights summing to 100 (ADR-032)")
 
         # 112-6 / ADR-026: rubric.operator112.json is rubric-v2 with penalty
         # criteria; rubric.operator112.v1.json keeps the old manual-only

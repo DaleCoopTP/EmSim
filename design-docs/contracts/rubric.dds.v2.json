@@ -1,0 +1,82 @@
+{
+  "schema": "emsim/rubric/v1",
+  "id": "dds_default_v2",
+  "version": "dds/rubric-v2",
+  "pass_threshold": 70,
+  "critical_cap": 40,
+  "criteria": [
+    {
+      "id": "T_OPEN",
+      "title": "Открыл карточку в норматив",
+      "weight": 10,
+      "params": {
+        "anchor": "offered_at",
+        "partial_until_s": 60,
+        "limit_key": "open_s"
+      },
+      "kind": "deterministic",
+      "critical": false,
+      "rule": "t_open"
+    },
+    {
+      "id": "T_PRIMARY",
+      "title": "Первичный статус в норматив",
+      "weight": 10,
+      "params": {
+        "anchor": "offered_at",
+        "partial_until_s": 90,
+        "limit_key": "primary_s"
+      },
+      "kind": "deterministic",
+      "critical": false,
+      "rule": "t_primary"
+    },
+    {
+      "id": "D_PRIMARY",
+      "title": "Первичное решение совпадает с эталоном",
+      "weight": 25,
+      "kind": "deterministic",
+      "critical": false,
+      "critical_when": "refused_profile_incident",
+      "rule": "d_primary",
+      "params": {}
+    },
+    {
+      "id": "T_PROGRESS",
+      "title": "Реакция на доклады бригады в норматив",
+      "weight": 20,
+      "kind": "deterministic",
+      "critical": false,
+      "rule": "t_progress",
+      "params": {}
+    },
+    {
+      "id": "S_SEQUENCE",
+      "title": "Статусы отражают доклады с места и ожидаемую цепочку",
+      "weight": 15,
+      "kind": "deterministic",
+      "critical": false,
+      "rule": "s_sequence_reports",
+      "params": {}
+    },
+    {
+      "id": "D_COMMENT_REQUIRED",
+      "title": "Комментарий есть там, где обязателен",
+      "weight": 10,
+      "kind": "deterministic",
+      "critical": false,
+      "rule": "d_comment_required",
+      "params": {}
+    },
+    {
+      "id": "C_CALLS",
+      "title": "Обязательная связь: бригада, отдел контроля, ответ на входящий",
+      "weight": 10,
+      "kind": "deterministic",
+      "critical": false,
+      "rule": "c_calls",
+      "params": {}
+    }
+  ],
+  "exercise_type": "dds_processing"
+}
