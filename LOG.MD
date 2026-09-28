@@ -3578,3 +3578,20 @@ Validation:
 ## 2026-09-28 — 112: кейс 8, версия 2
 
 После проверки пользователем в кейс `112-injury-eye-playground-01` добавлены ФИО пострадавшего ребёнка (Морозов Артём Дмитриевич) и дата рождения (12.05.2020): новый факт, вопрос к описанию и строка в `case_description`. Счётчики импорта в `content_import_test`: 36 версий. Validation: `go test ./internal/content/`, `TestContentImportSeedEndToEnd`, `TestAPIProcessContentCatalogAccess`; импортировано в локальный стек.
+
+## 2026-09-28 — ДДС-4: коммит-план
+
+Status: plan only, кода нет.
+
+- `slice-dds-4-plan.md`: c1–c10 (ADR-034 → контракты `rubric.dds.v3.json` → выбор версии по `ASSESSMENT_JUDGE` → `SemanticPreparer` ДДС → пакет `internal/assessment/dds/commentjudge` → сид отказа с `comment_must_mention` → отчёт и CSV/PDF → UI разбора → интеграционный тест → документация).
+- Решения, принятые исполнителем по поручению пользователя («делай что хочешь»), будут зафиксированы в ADR-034:
+  - `G_GRAMMAR` в балле с весом 5, число ошибок в отчёте;
+  - вопросы строятся backend'ом из `comment_must_mention`/`comment_facts` плюс стандартный вопрос о противоречии статусу;
+  - каждый вопрос проверяется по комментарию своего статуса, один вызов модели на критерий карточки;
+  - вопросов нет → `not_applicable`, как у v1 (в отличие от 112).
+- ДДС-4 отвязан от протокола классификации (`slice-planning-dds.md`).
+- Снимок «WIP: uncommitted changes» с правкой `web/src/components/IncidentCard.tsx` (фиксированные «Префектура ЮАО»/«Департамент ППиООС») отброшен по решению пользователя; smoke e2e снова должен совпадать с эталонным скриншотом.
+
+Validation: не требуется (только документы).
+
+Next: c1 — ADR-034.
