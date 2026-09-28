@@ -3407,3 +3407,29 @@ Status: in progress. `design-docs/adr/032-dds-rubric-v2.md` (веса, прав�
 Validation: `python3 design-docs/contracts/check.py` (без изменений контрактов — пройдёт как раньше).
 
 Next: c2 — `rubric.dds.v2.json`, `reference.required_contacts` в scenario.schema.json/scenario-file.schema.json, embed.go, check.py.
+
+## 2026-09-28 — ДДС-3: рубрика v2 завершена (коммиты c1–c9)
+
+Status: completed. `slice-dds-3-plan.md` коммиты c1–c9 в ветке `dds-2` (продолжение после ДДС-2), [ADR-032](design-docs/adr/032-dds-rubric-v2.md).
+
+**Контракты (c2).** `design-docs/contracts/rubric.dds.v2.json` — 7 критериев (`T_OPEN`/`T_PRIMARY`/`D_PRIMARY`/`T_PROGRESS`/`S_SEQUENCE`/`D_COMMENT_REQUIRED`/`C_CALLS`), веса 10/10/25/20/15/10/10, порог 70, critical_cap 40; без `T_COMPLETE`/`D_FIELD_CORRECTIONS`/`C_CALL_LOG*`/`G_ADDRESS`/`C_CALL_CONTENT`/`G_GRAMMAR` (нет ни одного `kind: llm`). `rubric.default.json` (v1) не менялся. `scenario.schema.json`/`scenario-file.schema.json`: `reference.required_contacts: string[]`. `openapi.yaml`: `call_end.accepted_by`/`summary` описаны как допустимо пустые на службах с непустым `terminal`. `embed.go`/`check.py` знают новый рубрик-файл; `check.py` проверяет состав критериев v2 и сумму весов.
+
+**Content (c3).** `content.RubricVersionFor(dds_processing)` теперь замораживает `dds/rubric-v2` в каждое новое занятие ДДС; занятие, уже зафиксированное на `dds/rubric-v1`, не пересчитывается. `Reference.RequiredContacts`, `validateRequiredContacts` (ключи существуют в `contacts[]`).
+
+**Assessment (c4).** `internal/assessment/dds/progress.go` — общий разбор «доклад → момент, когда его услышали» над `training.EvidenceBody` (без импорта `training/dds`, чтобы не создавать цикл через `training`), даёт `t_progress`/`s_sequence_reports`/`c_calls`. `evaluateCriterion` получил три новые ветки; `critical_when=refused_profile_incident` теперь срабатывает и для `completed_without_team` (03 без бригады). `LoadRubric(dds_processing, "dds/rubric-v2")`/`LoadDefaultFor(dds_processing)` — новый `loadedDDSv2`.
+
+**Training (c5).** `training/dds.decideCallEnd`: на исходящем звонке `accepted_by`/`summary` допустимо пустые, если снимок workflow карточки (`terminal`) непуст — диспетчер ДДС не ведёт письменный журнал звонка (ADR-030). Старые службы (`terminal: []`) не затронуты.
+
+**Reporting (c6) + web (c7).** Подписи `T_PROGRESS`/`C_CALLS` в `internal/reporting/domain.go`; статус карточки — колонка в строках отчёта/CSV/PDF (миграция `00019`). `ItemReview.tsx`'s `CriteriaTable` берёт название критерия из `rubric_effective`, а не из голого id, — работает для обеих рубрик ДДС и обеих версий 112. `LessonReport.tsx` — колонка статуса карточки. `Workplace.tsx`: «Кто принял»/«Суть сообщения» необязательны на службах с финальными статусами.
+
+**Тесты (c8).** Новый `test/integration/dds_rubric_v2_test.go` (`TestDDSRubricV2ThroughAPIAndWorker`) через реальные api/worker: новое занятие ДДС получает `dds/rubric-v2` и реальные `met`/`partial` по `T_PROGRESS`/`S_SEQUENCE`/`C_CALLS`; занятие, принудительно зафиксированное на `dds/rubric-v1` прямым UPDATE (имитация «уже идущего до среза» занятия), продолжает оцениваться по v1. Заморозка v2 по умолчанию обнажила реальное изменение поведения существующих тестов конвейера оценки: `dds/rubric-v1` всегда содержал `G_GRAMMAR` (llm), безусловно `unavailable` при `JUDGE=off`, поэтому любая авто-оценка v1 была `needs_review` «по построению»; `dds/rubric-v2` не содержит ни одного llm-критерия, поэтому пилотная карточка без докладов/звонков (все специфичные для ДДС-2/3 критерии `not_applicable`) закономерно получает `ready` с полным баллом, а карточка, прерванная до открытия, — `ready` со всеми критериями `not_applicable` (включая `D_PRIMARY`: решение не было должно быть принято). Обновлены без ослабления проверок: `TestAssessmentPipelineThroughAPIAndWorker`, `TestAssessmentAutoPipelineEndToEnd`, `TestAssessmentFinalizerRecordsAutoOnExhaustion` (по-прежнему проверяет ровно одну атомарно записанную auto при исчерпании попыток, теперь ready вместо needs_review), `TestAssessmentExpertRevisionAfterAutoRecordsTrainingExamples` (несогласие эксперта теперь строится на `D_PRIMARY`, не на несуществующем в v2 `G_GRAMMAR`), `TestAssessmentInputPreparationFailureAllowsManualAssessment` (ручные критерии строятся из `LoadDefaultFor(dds_processing)`, а не из фиксированного v1 `LoadDefault()`), `TestWorkerProcessDrivesLessonCloseThroughRealQueue`.
+
+Validation: `go build`/`go vet -tags=integration ./test/integration/...`; `make verify` (все Go-пакеты, включая `go vet`/`staticcheck`); `python3 design-docs/contracts/check.py` (JSON/OpenAPI-часть — `ok`; `jsonschema`-валидация и DDL пропущены — в этом окружении нет пакета `jsonschema`/`DATABASE_URL`, это ограничение окружения, не регрессия); `go test -tags=integration -count=1 ./test/integration/...` — полный набор зелёный (локальный PostgreSQL 16 через `TEST_DATABASE_URL`, Docker в этом окружении недоступен). `make verify-web`/browser e2e не запускались — c8/c9 не меняли веб-код сверх уже провалидированного в c7.
+
+Решения и отклонения от плана: без отклонений от `slice-dds-3-plan.md`.
+
+Риски и открытые вопросы:
+- `make verify-web`/`npm run test:e2e` для сквозной проверки ДДС-3 стоит прогнать в CI/на среде с Docker — здесь недоступно.
+- `design-docs/contracts/check.py`'s JSON Schema и DDL проверки не выполнялись в этом окружении (нет `pip install jsonschema`, нет `DATABASE_URL`) — стоит перепроверить там, где они доступны.
+
+Next: ДДС-4 — ИИ-судья ДДС (`dds/rubric-v3` = v2 + `D_COMMENT_CONTENT` + `G_GRAMMAR`, паттерн ADR-028).
