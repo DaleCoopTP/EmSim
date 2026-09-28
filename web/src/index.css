@@ -408,6 +408,9 @@ dd { margin: 0; }
   .dds-work-area { grid-template-columns: 1fr; }
 }
 
+.monitor-comms { display: grid; gap: 2px; font-size: 12px; }
+.monitor-comms-alarm { color: var(--arm-danger); font-weight: 600; }
+
 /* C5: browser phone simulator keeps all call evidence in the card context. */
 .phone-panel { padding: 0; overflow: hidden; color: #fff; background: #2b3941; border: 1px solid #1e2b32; box-shadow: var(--arm-shadow); }
 .phone-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 13px; background: #202e36; border-bottom: 1px solid #596a72; }

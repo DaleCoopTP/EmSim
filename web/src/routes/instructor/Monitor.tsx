@@ -29,6 +29,8 @@ const commandLabels: Record<string, string> = {
   mark_no_contact: "Закрыл: нет контакта",
   mark_call_dropped: "Закрыл: срыв звонка",
   send_caller_message: "Сообщение заявителю",
+  call_start: "Начал звонок",
+  call_end: "Завершил звонок",
 };
 
 // RFC-001 §7.7's monitor: SSE (lessons/{id}/stream) is an invalidation
@@ -62,16 +64,16 @@ export function MonitorRoute() {
       ) : (
         <div className="arm-table-wrap"><table className="monitor-table">
           <thead>
-            <tr><th>РМ</th><th>Обучаемый</th><th>Онлайн</th><th>Открытые карточки</th><th>Осталось</th><th>Готово</th><th>Последнее действие</th></tr>
+            <tr><th>РМ</th><th>Обучаемый</th><th>Онлайн</th><th>Открытые карточки</th><th>Связь</th><th>Осталось</th><th>Готово</th><th>Последнее действие</th></tr>
           </thead>
-          <tbody>{data.rows.map((row) => <MonitorRowView key={row.run_id} row={row} />)}</tbody>
+          <tbody>{data.rows.map((row) => <MonitorRowView key={row.run_id} row={row} serverTime={data.server_time} />)}</tbody>
         </table></div>
       )}
     </section>
   );
 }
 
-function MonitorRowView({ row }: { row: MonitorRow }) {
+function MonitorRowView({ row, serverTime }: { row: MonitorRow; serverTime: string }) {
   return (
     <tr className={row.online ? "monitor-online" : "monitor-offline"}>
       <td>№ {row.workstation_no}</td>
@@ -86,9 +88,47 @@ function MonitorRowView({ row }: { row: MonitorRow }) {
           </div>
         ))}
       </td>
+      <td><MonitorComms reports={row.reports ?? []} serverTime={serverTime} /></td>
       <td>{row.queue_left}</td>
       <td>{row.done}</td>
       <td>{row.last_action ? `${commandLabels[row.last_action.type] ?? row.last_action.type} · ${formatDateTime(row.last_action.server_at)}` : "—"}</td>
     </tr>
+  );
+}
+
+type MonitorReport = NonNullable<MonitorRow["reports"]>[number];
+
+function seconds(from: string, to: string): number {
+  return Math.max(0, Math.round((new Date(to).getTime() - new Date(from).getTime()) / 1_000));
+}
+
+// MonitorComms is ADR-031's crew-report view: the latest report on the
+// trainee's open cards and how long the trainee took to react to it (the
+// first saved status after it reached them), plus missed incoming calls.
+// It shows the actual delay only; judging it is the rubric's job.
+function MonitorComms({ reports, serverTime }: { reports: MonitorReport[]; serverTime: string }) {
+  if (reports.length === 0) return <>—</>;
+  const last = reports.reduce((a, b) => new Date(b.delivered_at) > new Date(a.delivered_at) ? b : a);
+  const missed = reports.filter((report) => report.missed).length;
+  const kind = last.delivery === "phone_incoming" ? "звонок" : "доклад";
+  const start = last.answered_at ?? last.delivered_at;
+  let reaction: string;
+  let alarm = false;
+  if (last.missed) {
+    reaction = "звонок пропущен";
+    alarm = true;
+  } else if (last.delivery === "phone_incoming" && !last.answered_at) {
+    reaction = "звонит";
+  } else if (last.reaction_at) {
+    reaction = `реакция через ${seconds(start, last.reaction_at)} с`;
+  } else {
+    reaction = `нет реакции ${seconds(start, serverTime)} с`;
+  }
+  return (
+    <div className="monitor-comms">
+      <div>{last.from_label}: {kind} {seconds(last.delivered_at, serverTime)} с назад</div>
+      <div className={alarm ? "monitor-comms-alarm" : undefined}>{reaction}</div>
+      {missed > 0 && <div className="monitor-comms-alarm">пропущено звонков: {missed}</div>}
+    </div>
   );
 }

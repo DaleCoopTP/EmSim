@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { assessmentQueryKey, createAssessmentRevision, useAssessment, type CriterionResult } from "../../api/assessment";
 import { ApiError, api } from "../../api/client";
@@ -69,6 +69,7 @@ export function ItemReviewRoute() {
 		<details><summary>Эталон сценария</summary><pre>{JSON.stringify(item.data.reference ?? {}, null, 2)}</pre></details>
 		{item.data.card_status ? <p>Статус карточки: {cardStatusLabel(item.data.card_status)}</p> : null}
 		<DDSStatusHistory actions={(evidence.actions ?? []) as DDSReviewAction[]} />
+		<DDSCommsReview item={item.data} />
 		<h2>Автоматическая проверка</h2>
 		<CriteriaTable criteria={autoCriteria} />
 	</>}
@@ -76,7 +77,7 @@ export function ItemReviewRoute() {
     <ul>{evidence.actions?.map((action) => <li key={action.action_id}>{formatDateTime(action.server_at)} · {action.type} · {action.accepted ? "принято" : "отклонено"}</li>)}</ul>
     {evidence.comments?.length ? <><h3>Комментарии</h3><ul>{evidence.comments.map((comment) => <li key={comment.seq}>{comment.text}</li>)}</ul></> : null}
     {evidence.events?.length ? <><h3>События</h3><ul>{evidence.events.map((event) => <li key={event.key}>{event.key}: {event.state}{event.late ? " (поздно)" : ""}</li>)}</ul></> : null}
-	{!isIntake && (evidence.calls?.length ? <><h3>Звонки</h3>{evidence.calls.map((call) => <div key={call.call_id}><p>{call.contact_key}: {call.accepted_by ?? "не завершён"} — {call.summary ?? ""}</p>{call.recording_sha256 && <audio controls src={`/api/v1/items/${encodeURIComponent(itemId)}/calls/${encodeURIComponent(call.call_id)}/recording`} />}</div>)}</> : <p>Звонков нет.</p>)}
+	{!isIntake && (evidence.calls?.length ? <><h3>Звонки</h3>{evidence.calls.map((call) => <div key={call.call_id}><p>{call.contact_key}{(call as { direction?: string }).direction === "incoming" ? " (входящий)" : ""}: {call.accepted_by ?? "не завершён"} — {call.summary ?? ""}</p>{call.recording_sha256 && <audio controls src={`/api/v1/items/${encodeURIComponent(itemId)}/calls/${encodeURIComponent(call.call_id)}/recording`} />}</div>)}</> : <p>Звонков нет.</p>)}
     <h2>История ревизий</h2>
     <ol>{detail.revisions.map((revision) => <li key={revision.id}>rev {revision.revision} · {revision.kind} · {revision.status} · {formatDateTime(revision.created_at)}{revision.reason ? ` — ${revision.reason}` : ""}</li>)}</ol>
     <form className="lesson-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
@@ -297,5 +298,44 @@ function DDSStatusHistory({ actions }: { actions: DDSReviewAction[] }) {
   return <>
     <h2>Статусы реагирования</h2>
     <ol>{saved.map((action) => <li key={action.action_id}>{formatDateTime(action.server_at)} · <strong>{reactionLabel(action.payload?.status)}</strong>{action.payload?.comment ? ` — ${action.payload.comment}` : ""}</li>)}</ol>
+  </>;
+}
+
+// DDSCommsReview is ADR-031's communication log for the instructor: every
+// delivered crew report or incoming call with its text, whether an
+// incoming call was answered or missed, the first saved status after it
+// reached the trainee, and the trainee's own outgoing calls — in time
+// order. It reads the instructor's item view (texts are never hidden
+// here); the rubric judges the delays, this only shows them.
+function DDSCommsReview({ item }: { item: Item }) {
+  const card = item.card as { contacts?: { key: string; label: string }[] };
+  const label = (key?: string | null) => card.contacts?.find((contact) => contact.key === key)?.label ?? key ?? "";
+  const statuses = item.actions.filter((action) => action.accepted && action.type === "set_status");
+  const firstStatusAfter = (at: string) => statuses.find((action) => new Date(action.server_at) >= new Date(at));
+  const gap = (from: string, to: string) => Math.round((new Date(to).getTime() - new Date(from).getTime()) / 1_000);
+  type Row = { key: string; at: string; text: ReactNode };
+  const rows: Row[] = [];
+  for (const event of item.events) {
+    if (event.delivery !== "notice" && event.delivery !== "phone_incoming") continue;
+    const answer = event.delivery === "phone_incoming" ? item.calls.find((call) => call.event_key === event.key) : undefined;
+    const start = event.delivery === "phone_incoming" ? answer?.started_at : event.delivered_at;
+    const reaction = start ? firstStatusAfter(start) : undefined;
+    const payload = (reaction?.payload ?? {}) as { status?: components["schemas"]["ReactionStatus"] };
+    rows.push({ key: `e-${event.key}`, at: event.delivered_at, text: <>
+      <strong>{event.delivery === "phone_incoming" ? "Входящий звонок" : "Доклад"}</strong> · {label(event.from)} · {formatDateTime(event.delivered_at)}{event.late ? " (с опозданием)" : ""}
+      {event.delivery === "phone_incoming" && (answer ? ` · принят через ${gap(event.delivered_at, answer.started_at)} с` : <span className="monitor-comms-alarm"> · не принят</span>)}
+      {" · "}{reaction ? `реакция: ${reactionLabel(payload.status)} через ${gap(start!, reaction.server_at)} с` : "реакции (статуса) нет"}
+      <br />«{event.text}»
+    </> });
+  }
+  for (const call of item.calls) {
+    if (call.direction === "incoming") continue;
+    rows.push({ key: `c-${call.id}`, at: call.started_at, text: <><strong>Исходящий звонок</strong> · {label(call.contact_key)} · {formatDateTime(call.started_at)}{call.ended_at ? "" : " · не завершён"}</> });
+  }
+  if (rows.length === 0) return null;
+  rows.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+  return <>
+    <h2>Связь с бригадой</h2>
+    <ol>{rows.map((row) => <li key={row.key}>{row.text}</li>)}</ol>
   </>;
 }
