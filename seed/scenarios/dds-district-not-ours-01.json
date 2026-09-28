@@ -1,0 +1,90 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "dds-district-not-ours-01",
+  "version": 1,
+  "title": "ДДС района: дерево на чужой территории — «Не принята» с комментарием",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "target_service": "dds_district_chertanovo",
+    "card": {
+      "number": "882344",
+      "registered_at_offset_s": -25,
+      "applicant": {
+        "name": "Орлова, жительница",
+        "phone": "+77495129055",
+        "status": "witness"
+      },
+      "address": {
+        "country": "Россия",
+        "city": "Москва",
+        "okrug": "СЗАО",
+        "district": "Митино",
+        "street": "Пятницкое шоссе",
+        "house": "18",
+        "building": "1",
+        "text": "Россия, Москва, (СЗАО, Митино), Пятницкое шоссе, 18, к. 1"
+      },
+      "incident": {
+        "type_code": "14080106",
+        "type_name": "Дерево упало во дворе",
+        "features": {
+          "объект": "Дерево",
+          "состояние": "Упало, сломано",
+          "место": "Дворовый проезд"
+        },
+        "description": "Упавшее дерево перекрыло дворовый проезд, машины не могут выехать со двора. Пострадавших нет.",
+        "victims": 0
+      },
+      "notification_list": [
+        {
+          "service": "dds_district_chertanovo",
+          "status": "added",
+          "mine": true
+        }
+      ],
+      "phones": {
+        "aon": "+77495129055",
+        "provided": "+7 (749) 512-90-55"
+      }
+    },
+    "contacts": [
+      {
+        "key": "control",
+        "role": "control_112",
+        "label": "Отдел контроля реагирования 112",
+        "number": "0112",
+        "voice": "female_calm",
+        "phrases": {
+          "greeting": "Отдел контроля реагирования Службы 112, слушаю.",
+          "ack": "Информацию приняли, спасибо."
+        }
+      }
+    ],
+    "events": [],
+    "reference": {
+      "primary_decision": {
+        "status": "not_accepted",
+        "reason_tags": [
+          "territory"
+        ],
+        "comment_required": true,
+        "comment_must_mention": [
+          "не наша территория",
+          "передано в ДДС Северного"
+        ]
+      },
+      "expected_chain": [],
+      "call": {
+        "required": false
+      },
+      "field_corrections": [],
+      "guide_refs": [
+        "Памятка ДДС, стр. 24–25: «Не принята» — комментарий обязателен; стр. 28–29: карточка чужой территории"
+      ],
+      "notes": "Адрес в Митине (СЗАО) — не территория района Чертаново Южное. Верное решение: «Не принята» с комментарием, что территория не наша и карточка передана в ДДС Северного. Комментарий проверяет ИИ-судья (dds/rubric-v3, ADR-034): причина и куда передано. «Не принята» не финальный статус, поэтому карточка остаётся открытой до остановки занятия."
+    },
+    "difficulty": 1,
+    "exercise_type": "dds_processing"
+  }
+}

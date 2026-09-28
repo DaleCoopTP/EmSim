@@ -161,15 +161,17 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	// hides them from the default catalogue without changing their versions.
 	// The eleven 112 cases with full references (2026-09-28: gas smell ×3,
 	// fire ×6, injury ×2) bring it to 29 scenarios/35 versions; case 8 gained a version 2 (the child's full name and birth date) — 36 versions.
-	if scenarioResult.NewScenarios != 29 || scenarioResult.NewVersions != 36 || scenarioResult.Unchanged != 0 || scenarioResult.StatusChanged != 12 {
-		t.Fatalf("ImportScenarios = %+v, want NewScenarios=29 NewVersions=36 Unchanged=0 StatusChanged=12", scenarioResult)
+	// ДДС-4 (ADR-034) added dds-district-not-ours-01, the first DDS case
+	// with comment_must_mention: 30 scenarios/37 versions, 18 in the catalogue.
+	if scenarioResult.NewScenarios != 30 || scenarioResult.NewVersions != 37 || scenarioResult.Unchanged != 0 || scenarioResult.StatusChanged != 12 {
+		t.Fatalf("ImportScenarios = %+v, want NewScenarios=30 NewVersions=37 Unchanged=0 StatusChanged=12", scenarioResult)
 	}
 	scenarioResult2, err := svc.ImportScenarios(ctx, openScenarioDir(t, "../../seed/scenarios"), actorID, actorRole, "req-6")
 	if err != nil {
 		t.Fatalf("ImportScenarios (replay): %v", err)
 	}
-	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 36 || scenarioResult2.StatusChanged != 0 {
-		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=36", scenarioResult2)
+	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 37 || scenarioResult2.StatusChanged != 0 {
+		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=37", scenarioResult2)
 	}
 
 	// --- read side ---
@@ -177,8 +179,8 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListScenarios: %v", err)
 	}
-	if total != 17 || len(items) != 17 {
-		t.Fatalf("ListScenarios: total=%d len=%d, want 14 AI-caller 112 and 3 DDS scenarios", total, len(items))
+	if total != 18 || len(items) != 18 {
+		t.Fatalf("ListScenarios: total=%d len=%d, want 14 AI-caller 112 and 4 DDS scenarios", total, len(items))
 	}
 	archivedItems, archivedTotal, err := svc.ListScenarios(ctx, content.ScenarioFilter{Status: "archived"})
 	if err != nil || archivedTotal != 12 || len(archivedItems) != 12 {

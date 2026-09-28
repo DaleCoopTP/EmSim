@@ -3648,3 +3648,13 @@ Status: c5 выполнен.
 - `testdata/comments.json` (42 вопроса к комментариям, 16 комментариев для грамматики) и `live_test.go` под тегом `llmlive` (как у `descjudge`, а не переменной окружения, как было написано в плане). Живой прогон — в c10.
 
 Validation: `go test ./internal/assessment/... ./cmd/emsim/`, `go vet -tags llmlive`.
+
+## 2026-09-28 — ДДС-4 c6: сценарий отказа с обязательным содержанием комментария
+
+Status: c6 выполнен.
+
+- `seed/scenarios/dds-district-not-ours-01.json`: «Не принята» + `comment_must_mention: ["не наша территория", "передано в ДДС Северного"]`, `reason_tags: ["territory"]`, без событий и звонков. Счётчики импорта: 30 сценариев / 37 версий, в каталоге 18 (`content_import_test`, `api_process_test`); `seed/README.md`.
+- Известное ограничение (не новое): «Не принята» не финальный статус у `dds_district_chertanovo`, поэтому карточка этого сценария остаётся открытой до остановки занятия. Закрытие карточки после «Не принята» — вопрос к workflow ДДС-1/ADR-030, здесь не менялся; нужно уточнить у заказчика, что должно происходить после «Не принята».
+- Среда: для интеграционных тестов в песочнице нет Docker, но есть PostgreSQL 16 — поднят локально (`pg_ctlcluster 16 main start`, `TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/emsim_test?sslmode=disable`).
+
+Validation: `go test ./internal/content/`, `go test -tags=integration -run 'TestContentImportSeedEndToEnd|TestAPIProcessContentCatalogAccess' ./test/integration/`.

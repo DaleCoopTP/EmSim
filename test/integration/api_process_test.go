@@ -476,7 +476,7 @@ func TestAPIProcessContentCatalogAccess(t *testing.T) {
 	// Fourteen AI-caller 112 scenarios (three pilots and eleven cases with
 	// full references) and three DDS scenarios make up the default
 	// catalogue; assert that the full offline seed loaded.
-	if response.StatusCode != http.StatusOK || scenarioList.Total != 17 || len(scenarioList.Items) != 17 {
+	if response.StatusCode != http.StatusOK || scenarioList.Total != 18 || len(scenarioList.Items) != 18 {
 		t.Fatalf("instructor GET /scenarios status = %d, body = %+v", response.StatusCode, scenarioList)
 	}
 	// Four DDS pilots and eight non-AI 112 cases are archived: listed
