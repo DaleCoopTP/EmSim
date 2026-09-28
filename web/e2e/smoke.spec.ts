@@ -37,8 +37,11 @@ async function expectDesktopScreenshots(page: Page, name: string, masks: Locator
 	}
 }
 
-test("ARM-112 acceptance: login → queue → card → monitor → call → status pencil → close", async ({ page }) => {
-	test.setTimeout(90_000);
+test("ARM-112 acceptance: login → queue → card → monitor → call → crew reports → incoming call → status pencil → close", async ({ page }) => {
+	// ДДС-2 (ADR-031): crew reports arrive in real scenario time after the
+	// call to the crew leader — the notice after 15 s, the incoming call
+	// after 35 s.
+	test.setTimeout(150_000);
 	const baseURL = process.env.E2E_BASE_URL;
 	if (!baseURL) throw new Error("E2E_BASE_URL must be set by e2e/run.mjs");
 	const admin = await apiRequest.newContext({ baseURL });
@@ -155,6 +158,11 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → stat
 	// status pencil; the terminal status closes the card by itself.
 	await expect(page.getByRole("button", { name: "Завершить упражнение" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Добавить комментарий" })).toHaveCount(0);
+	// ADR-031: the phone groups contacts by role; crew reports are anchored
+	// on the call that just ended, not on the trainee's statuses.
+	const comms = page.getByRole("complementary", { name: "Связь с бригадой" });
+	await expect(comms.getByRole("group", { name: "Отдел контроля 112" })).toBeVisible();
+	await expect(comms.getByRole("group", { name: "Заявитель" })).toBeVisible();
 	const saveStatus = async (label: string, comment: string) => {
 		await page.getByRole("button", { name: "Проставить статус реагирования" }).click();
 		await page.getByLabel("Статус реагирования").selectOption({ label });
@@ -163,7 +171,28 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → stat
 		await expect(page.locator(".dds-service-block-head > span")).toContainText(label);
 	};
 	await saveStatus("Принята", "Принята, бригада направлена.");
+	await expect(comms.getByText("Бригада выехала, будем на месте через 15 минут.")).toBeVisible({ timeout: 30_000 });
+	// The instructor's monitor sees the delivered report without a reaction yet.
+	const monitorResponse = await expectOK(await instructor.get(`/api/v1/lessons/${lesson.id}/monitor`));
+	const monitor = await monitorResponse.json();
+	expect(monitor.rows[0].reports).toEqual([expect.objectContaining({ event_key: "e1", from_label: "Руководитель аварийной бригады", reaction_at: null, missed: false })]);
 	await saveStatus("Начало реагирования", "Бригада выехала, прибытие через 15 минут.");
+	// The incoming call rings: who calls is shown, their words only after answering.
+	const incoming = comms.getByRole("alert");
+	await expect(incoming).toContainText("Руководитель аварийной бригады", { timeout: 40_000 });
+	await expect(comms.getByText("Мы на месте", { exact: false })).toHaveCount(0);
+	await incoming.getByRole("button", { name: "Ответить" }).click();
+	await expect(comms.getByText("«Диспетчер, это бригада. Мы на месте, дерево лежит поперёк проезда.»")).toBeVisible();
+	await expect(page.getByRole("button", { name: "Вызов" })).toBeDisabled();
+	await expectDesktopScreenshots(page, "dds-comms", [
+		page.locator(".layout-clock"),
+		page.locator(".dds-card-registration"),
+		page.locator(".dds-item-status"),
+		page.locator(".dds-service-block-head"),
+		page.locator(".dds-comms-meta"),
+	]);
+	await comms.getByRole("button", { name: "Завершить разговор" }).click();
+	await expect(comms.locator(".dds-comms-meta").filter({ hasText: /Входящий звонок.*принят/ })).toBeVisible();
 	await saveStatus("Прибытие", "Бригада на месте.");
 	await saveStatus("Проведение работ", "Распил дерева, вызвана автовышка.");
 	await page.getByRole("button", { name: "Проставить статус реагирования" }).click();
