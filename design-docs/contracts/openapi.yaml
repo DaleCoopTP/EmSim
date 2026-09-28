@@ -2376,6 +2376,24 @@ components:
         expected:
           type: string
           nullable: true
+        errors:
+          type: array
+          description: 'ДДС-4/ADR-034 — только у строк G_GRAMMAR: найденные в комментарии ошибки. Это не эталон, обучаемый видит их в своём результате.'
+          items:
+            $ref: '#/components/schemas/GrammarError'
+
+    GrammarError:
+      type: object
+      required: [fragment, correction, kind]
+      properties:
+        fragment:
+          type: string
+          description: Фрагмент комментария обучаемого с ошибкой (подстрока его текста).
+        correction:
+          type: string
+        kind:
+          type: string
+          enum: [spelling, grammar, punctuation]
 
     AssessmentRevision:
       type: object

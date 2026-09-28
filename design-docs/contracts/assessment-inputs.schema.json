@@ -155,7 +155,7 @@
     },
     "semantic_input": {
       "type": "object",
-      "description": "Точный подготовленный JSON входа judge; повтор использует те же данные, а не живые calls."
+      "description": "Точный подготовленный JSON входа judge; повтор использует те же данные, а не живые calls. Ключ — id критерия. Формы: DESCRIPTION_CONTENT (112, ADR-028) {description, questions:[{id,question}]}; D_COMMENT_CONTENT (ДДС, ADR-034) {comments:[{id,status,text}], questions:[{id,comment_id,question}]}; G_GRAMMAR (ДДС, ADR-034) {comments:[{id,text}]}."
     },
     "exercise_type": {
       "type": "string",

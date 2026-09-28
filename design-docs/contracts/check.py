@@ -39,7 +39,7 @@ def load_json(name: str):
 def main() -> int:
     print("JSON")
     schemas = {n: load_json(n) for n in ["scenario.schema.json", "scenario-file.schema.json", "evidence.schema.json", "evidence.operator112.schema.json", "assessment-inputs.schema.json", "rubric.schema.json", "sse-events.schema.json", "tasks.schema.json", "voice-assets-manifest.schema.json"]}
-    examples = {n: load_json(n) for n in ["scenario.example.json", "evidence.example.json", "rubric.default.json", "rubric.dds.v2.json", "rubric.operator112.json", "rubric.operator112.v1.json", "rubric.operator112.v3.json", "assessment-inputs.example.json"]}
+    examples = {n: load_json(n) for n in ["scenario.example.json", "evidence.example.json", "rubric.default.json", "rubric.dds.v2.json", "rubric.dds.v3.json", "rubric.operator112.json", "rubric.operator112.v1.json", "rubric.operator112.v3.json", "assessment-inputs.example.json"]}
     for n, v in {**schemas, **examples}.items():
         if v is not None:
             ok(n)
@@ -90,7 +90,7 @@ def main() -> int:
             if s is not None:
                 V.check_schema(s)
                 ok(f"{n} is a valid draft 2020-12 schema")
-        pairs = [("scenario.schema.json", "scenario.example.json"), ("evidence.schema.json", "evidence.example.json"), ("rubric.schema.json", "rubric.default.json"), ("rubric.schema.json", "rubric.dds.v2.json"), ("rubric.schema.json", "rubric.operator112.json"), ("rubric.schema.json", "rubric.operator112.v1.json"), ("rubric.schema.json", "rubric.operator112.v3.json"), ("assessment-inputs.schema.json", "assessment-inputs.example.json")]
+        pairs = [("scenario.schema.json", "scenario.example.json"), ("evidence.schema.json", "evidence.example.json"), ("rubric.schema.json", "rubric.default.json"), ("rubric.schema.json", "rubric.dds.v2.json"), ("rubric.schema.json", "rubric.dds.v3.json"), ("rubric.schema.json", "rubric.operator112.json"), ("rubric.schema.json", "rubric.operator112.v1.json"), ("rubric.schema.json", "rubric.operator112.v3.json"), ("assessment-inputs.schema.json", "assessment-inputs.example.json")]
         for sn, en in pairs:
             if schemas[sn] is None or examples[en] is None:
                 continue
@@ -204,6 +204,20 @@ def main() -> int:
             ok("rubric.dds.v2.json adds T_PROGRESS/S_SEQUENCE/C_CALLS and drops the pilot-only criteria (ADR-032)")
         else:
             fail("rubric.dds.v2.json must be dds/rubric-v2 with T_PROGRESS/S_SEQUENCE/C_CALLS, no pilot-only criteria, weights summing to 100 (ADR-032)")
+
+        # ДДС-4 / ADR-034: rubric.dds.v3.json is v2 plus the two LLM criteria
+        # (D_COMMENT_CONTENT/G_GRAMMAR); every criterion of v2 stays, every
+        # llm criterion names a prompt, weights still sum to 100.
+        rubric_dds_v3 = examples["rubric.dds.v3.json"]
+        dds_v3_ids = {c["id"] for c in rubric_dds_v3["criteria"]}
+        llm_v3 = {c["id"]: c for c in rubric_dds_v3["criteria"] if c["kind"] == "llm"}
+        if (rubric_dds_v3["version"] == "dds/rubric-v3" and rubric_dds_v3["exercise_type"] == "dds_processing"
+                and dds_v2_ids <= dds_v3_ids and set(llm_v3) == {"D_COMMENT_CONTENT", "G_GRAMMAR"}
+                and all(c.get("prompt") for c in llm_v3.values())
+                and sum(c["weight"] for c in rubric_dds_v3["criteria"]) == 100):
+            ok("rubric.dds.v3.json is v2 plus D_COMMENT_CONTENT/G_GRAMMAR with prompts, weights sum to 100 (ADR-034)")
+        else:
+            fail("rubric.dds.v3.json must be dds/rubric-v3: all v2 criteria plus llm D_COMMENT_CONTENT/G_GRAMMAR with prompts, weights summing to 100 (ADR-034)")
 
         # 112-6 / ADR-026: rubric.operator112.json is rubric-v2 with penalty
         # criteria; rubric.operator112.v1.json keeps the old manual-only

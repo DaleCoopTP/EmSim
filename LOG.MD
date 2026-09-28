@@ -3606,3 +3606,13 @@ Status: c1 выполнен.
 Validation: `python3 design-docs/contracts/check.py` (потребовалось `pip install jsonschema` — без него проверка схем не выполняется).
 
 Next: c2 — контракты (`rubric.dds.v3.json`).
+
+## 2026-09-28 — ДДС-4 c2: контракты
+
+Status: c2 выполнен.
+
+- `design-docs/contracts/rubric.dds.v3.json` (`dds/rubric-v3`, 9 критериев, сумма 100), `embed.go`, `check.py` (v3 ⊇ v2, два llm-критерия с `prompt`, сумма весов).
+- `openapi.yaml`: `CriterionDetail.errors[]` (`GrammarError`) — только у строк `G_GRAMMAR`. Формулировка вопроса к комментарию идёт в `expected` (его вырезает `StripExpected` для обучаемого), а не в `label`.
+- `assessment-inputs.schema.json`: описание форм `semantic_input` для ДДС.
+
+Validation: `python3 design-docs/contracts/check.py` — all checks passed; `go build ./design-docs/contracts/`.

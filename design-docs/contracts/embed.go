@@ -11,9 +11,11 @@
 // rubric.dds.v2.json (ADR-032, ДДС-3) is dds_processing's own second
 // rubric version — rubric.default.json (dds/rubric-v1) stays embedded
 // unchanged for the same reason.
+// rubric.dds.v3.json (ADR-034, ДДС-4) adds the two LLM criteria
+// D_COMMENT_CONTENT/G_GRAMMAR on top of v2; v2 stays embedded unchanged.
 package contracts
 
 import "embed"
 
-//go:embed scenario.schema.json scenario-file.schema.json rubric.default.json rubric.dds.v2.json rubric.operator112.json rubric.operator112.v1.json rubric.operator112.v3.json
+//go:embed scenario.schema.json scenario-file.schema.json rubric.default.json rubric.dds.v2.json rubric.dds.v3.json rubric.operator112.json rubric.operator112.v1.json rubric.operator112.v3.json
 var Files embed.FS
