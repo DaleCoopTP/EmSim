@@ -35,6 +35,7 @@ type contentService interface {
 	ScenarioDetail(ctx context.Context, id uuid.UUID) (content.ScenarioDetail, error)
 	ScenarioVersions(ctx context.Context, actorID, id uuid.UUID) ([]content.VersionSummary, error)
 	ScenarioPreview(ctx context.Context, id uuid.UUID) (content.ScenarioPreview, error)
+	ScenarioCategories(ctx context.Context, targetService string) ([]content.CategorySummary, error)
 
 	// The methods below back the 112-7/ADR-027 scenario editor
 	// (editor_handlers.go) — declared here alongside the read-only
@@ -98,6 +99,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/services", servicesGroup(h.listServices))
 	mux.Handle("GET /api/v1/scenarios", contentGroup(h.listScenarios))
 	mux.Handle("POST /api/v1/scenarios", contentGroup(h.createScenario))
+	mux.Handle("GET /api/v1/scenarios/categories", contentGroup(h.scenarioCategories))
 	mux.Handle("GET /api/v1/scenarios/{scenarioId}", contentGroup(h.scenarioDetail))
 	mux.Handle("PUT /api/v1/scenarios/{scenarioId}", contentGroup(h.saveDraft))
 	mux.Handle("GET /api/v1/scenarios/{scenarioId}/versions", contentGroup(h.scenarioVersions))
@@ -120,6 +122,33 @@ func (h *Handlers) listServices(w http.ResponseWriter, r *http.Request) {
 		items[i] = toServiceJSON(s)
 	}
 	writeJSON(w, r, http.StatusOK, items)
+}
+
+type scenarioCategoryJSON struct {
+	Code         string   `json:"code"`
+	TypeNames    []string `json:"type_names"`
+	CountByLevel struct {
+		Easy   int `json:"easy"`
+		Medium int `json:"medium"`
+		Hard   int `json:"hard"`
+	} `json:"count_by_level"`
+}
+
+// scenarioCategories is ДДС-6/ADR-035's GET /scenarios/categories: the
+// classifier sections the random queue fill can draw from.
+func (h *Handlers) scenarioCategories(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.content.ScenarioCategories(r.Context(), r.URL.Query().Get("service"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to list scenario categories", nil)
+		return
+	}
+	out := make([]scenarioCategoryJSON, len(rows))
+	for i, row := range rows {
+		out[i].Code = row.Code
+		out[i].TypeNames = row.TypeNames
+		out[i].CountByLevel.Easy, out[i].CountByLevel.Medium, out[i].CountByLevel.Hard = row.CountByLevel.Easy, row.CountByLevel.Medium, row.CountByLevel.Hard
+	}
+	writeJSON(w, r, http.StatusOK, out)
 }
 
 func (h *Handlers) listScenarios(w http.ResponseWriter, r *http.Request) {

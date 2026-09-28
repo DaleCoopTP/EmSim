@@ -231,6 +231,11 @@ type Store interface {
 	// scope — slice-112-7-plan.md §8).
 	UpdateScenarioStatus(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID, status string) error
 	ListScenarios(ctx context.Context, tx pgx.Tx, filter ScenarioFilter) ([]ScenarioSummary, int, error)
+	// ListApprovedDDSVersions is ДДС-6/ADR-035's source for the random
+	// queue fill and the category summary: the approved version of every
+	// non-archived dds_processing scenario, optionally of one target
+	// service (empty = every service).
+	ListApprovedDDSVersions(ctx context.Context, tx pgx.Tx, targetService string) ([]ScenarioVersionRecord, error)
 
 	// MaxVersion returns 0 (not ErrNotFound) when the scenario has no
 	// version yet — a scenario row and its first version are always

@@ -58,6 +58,9 @@ type fakeContentService struct {
 	previewResult content.ScenarioPreview
 	previewErr    error
 
+	categoriesResult    []content.CategorySummary
+	lastCategoryService string
+
 	createResult content.EditorScenario
 	createErr    error
 
@@ -145,6 +148,11 @@ func (f *fakeContentService) ScenarioPreview(context.Context, uuid.UUID) (conten
 	return f.previewResult, f.previewErr
 }
 
+func (f *fakeContentService) ScenarioCategories(_ context.Context, targetService string) ([]content.CategorySummary, error) {
+	f.lastCategoryService = targetService
+	return f.categoriesResult, nil
+}
+
 func adminPrincipal() auth.Principal { return auth.Principal{UserID: uuid.New(), Role: auth.RoleAdmin} }
 func instructorPrincipal() auth.Principal {
 	return auth.Principal{UserID: uuid.New(), Role: auth.RoleInstructor}
@@ -190,6 +198,7 @@ func assertErrorEnvelope(t *testing.T, response *httptest.ResponseRecorder, want
 var allRoutes = []struct{ method, path string }{
 	{http.MethodGet, "/api/v1/services"},
 	{http.MethodGet, "/api/v1/scenarios"},
+	{http.MethodGet, "/api/v1/scenarios/categories"},
 	{http.MethodGet, "/api/v1/scenarios/" + uuid.Nil.String()},
 	{http.MethodGet, "/api/v1/scenarios/" + uuid.Nil.String() + "/versions"},
 	{http.MethodGet, "/api/v1/scenarios/" + uuid.Nil.String() + "/preview"},
@@ -266,6 +275,31 @@ func TestListScenariosReturnsItemsAndAppliesFilters(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if body.Total != 1 || len(body.Items) != 1 || *body.Items[0].SourceKey != "pilot-tree-01" || body.Items[0].HasVoice {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+}
+
+func TestScenarioCategoriesRouteIsNotShadowedByScenarioID(t *testing.T) {
+	svc := &fakeContentService{categoriesResult: []content.CategorySummary{
+		{Code: "14", TypeNames: []string{"Дерево упало во дворе"}, CountByLevel: content.LevelCounts{Easy: 2, Hard: 1}},
+	}}
+	mux := newTestMux(svc, &fakeAuth{validToken: "tok", principal: instructorPrincipal()})
+	response := httptest.NewRecorder()
+	wrapped(mux).ServeHTTP(response, authedRequest(http.MethodGet, "/api/v1/scenarios/categories?service=dds_district_chertanovo", "tok"))
+	if response.Code != http.StatusOK || svc.lastCategoryService != "dds_district_chertanovo" {
+		t.Fatalf("status=%d service=%q body=%s", response.Code, svc.lastCategoryService, response.Body.String())
+	}
+	var body []struct {
+		Code         string   `json:"code"`
+		TypeNames    []string `json:"type_names"`
+		CountByLevel struct {
+			Easy, Medium, Hard int
+		} `json:"count_by_level"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body) != 1 || body[0].Code != "14" || body[0].CountByLevel.Easy != 2 || body[0].CountByLevel.Hard != 1 || body[0].TypeNames[0] != "Дерево упало во дворе" {
 		t.Fatalf("unexpected body: %+v", body)
 	}
 }

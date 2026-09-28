@@ -55,6 +55,8 @@ type fakeTraining struct {
 	lastCreate      training.LessonCreate
 	lastAssignments []training.AssignmentInput
 	lastPatch       training.LessonSettingsPatch
+	lastDraw        training.DrawInput
+	drawn           []training.Assignment
 }
 
 func (f *fakeTraining) CreateLesson(_ context.Context, _ auth.Principal, in training.LessonCreate, _ string) (training.Lesson, error) {
@@ -64,6 +66,10 @@ func (f *fakeTraining) CreateLesson(_ context.Context, _ auth.Principal, in trai
 func (f *fakeTraining) UpdateLessonSettings(_ context.Context, _ auth.Principal, _ uuid.UUID, patch training.LessonSettingsPatch, _ string) (training.Lesson, error) {
 	f.lastPatch = patch
 	return f.lesson, f.readErr
+}
+func (f *fakeTraining) DrawAssignments(_ context.Context, _ auth.Principal, _ uuid.UUID, in training.DrawInput) ([]training.Assignment, error) {
+	f.lastDraw = in
+	return f.drawn, f.readErr
 }
 func (f *fakeTraining) ReplaceAssignments(_ context.Context, _ auth.Principal, _ uuid.UUID, in []training.AssignmentInput, _ string) (training.Lesson, error) {
 	f.lastAssignments = in
@@ -175,7 +181,7 @@ func requireError(t *testing.T, response *httptest.ResponseRecorder, status int,
 
 func TestRoutesRequireAuthenticationAndCorrectRoles(t *testing.T) {
 	id := uuid.New().String()
-	lessonRoutes := []struct{ method, path string }{{"GET", "/api/v1/lessons"}, {"POST", "/api/v1/lessons"}, {"GET", "/api/v1/lessons/options"}, {"GET", "/api/v1/lessons/" + id}, {"PATCH", "/api/v1/lessons/" + id}, {"PUT", "/api/v1/lessons/" + id + "/assignments"}, {"POST", "/api/v1/lessons/" + id + "/start"}, {"GET", "/api/v1/lessons/" + id + "/runs/" + id + "/actions"}}
+	lessonRoutes := []struct{ method, path string }{{"GET", "/api/v1/lessons"}, {"POST", "/api/v1/lessons"}, {"GET", "/api/v1/lessons/options"}, {"GET", "/api/v1/lessons/" + id}, {"PATCH", "/api/v1/lessons/" + id}, {"PUT", "/api/v1/lessons/" + id + "/assignments"}, {"POST", "/api/v1/lessons/" + id + "/assignments/draw"}, {"POST", "/api/v1/lessons/" + id + "/start"}, {"GET", "/api/v1/lessons/" + id + "/runs/" + id + "/actions"}}
 	// traineeRoutes are trainee-only (unlike POST .../actions below,
 	// 112-7/ADR-027 gives no instructor exception here).
 	traineeRoutes := []struct{ method, path string }{{"GET", "/api/v1/my/run"}, {"GET", "/api/v1/my/items"}}
@@ -278,6 +284,39 @@ func TestUpdateLessonSettingsScoringAbsentNullAndSet(t *testing.T) {
 	bad := trainingFixture()
 	trainingMux(bad, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("PATCH", path(bad), []byte(`{"scoring":{"pass_threshold":80}}`), true))
 	requireError(t, response, 400, "invalid_request")
+}
+
+func TestDrawAssignmentsPassesRowsAndMapsNotEnoughScenarios(t *testing.T) {
+	svc := trainingFixture()
+	userID := uuid.New()
+	version := uuid.New()
+	svc.drawn = []training.Assignment{{WorkstationNo: 3, UserID: userID, ScenarioVersionIDs: []uuid.UUID{version}}}
+	path := "/api/v1/lessons/" + svc.lesson.ID.String() + "/assignments/draw"
+	body := `{"categories":["14","22"],"count":1,"rows":[{"workstation_no":3,"user_id":"` + userID.String() + `"}]}`
+	response := httptest.NewRecorder()
+	trainingMux(svc, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("POST", path, []byte(body), true))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if got := svc.lastDraw; got.Count != 1 || len(got.Categories) != 2 || len(got.Rows) != 1 || got.Rows[0].WorkstationNo != 3 || got.Rows[0].UserID != userID {
+		t.Fatalf("draw input not passed through: %+v", got)
+	}
+	if !strings.Contains(response.Body.String(), version.String()) {
+		t.Fatalf("drawn queue missing from response: %s", response.Body.String())
+	}
+
+	svc.readErr = &training.NotEnoughScenariosError{WorkstationNo: 3, Available: 1, Requested: 4}
+	response = httptest.NewRecorder()
+	trainingMux(svc, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("POST", path, []byte(body), true))
+	raw := response.Body.String() // requireError consumes the recorder's body
+	requireError(t, response, 422, "not_enough_scenarios")
+	if !strings.Contains(raw, `"available":1`) {
+		t.Fatalf("details.available missing: %s", raw)
+	}
+
+	response = httptest.NewRecorder()
+	trainingMux(svc, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("POST", path, []byte(`{"categories":["14"],"count":1,"rows":[{"workstation_no":3,"user_id":"nope"}]}`), true))
+	requireError(t, response, 422, "validation_failed")
 }
 
 func TestOwnershipAndWorkstationErrors(t *testing.T) {

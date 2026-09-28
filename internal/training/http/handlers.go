@@ -45,6 +45,7 @@ import (
 // convention.
 type trainingService interface {
 	CreateLesson(ctx context.Context, actor auth.Principal, in training.LessonCreate, requestID string) (training.Lesson, error)
+	DrawAssignments(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, in training.DrawInput) ([]training.Assignment, error)
 	UpdateLessonSettings(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, patch training.LessonSettingsPatch, requestID string) (training.Lesson, error)
 	ReplaceAssignments(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, inputs []training.AssignmentInput, requestID string) (training.Lesson, error)
 	Start(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, requestID string) (training.Lesson, error)
@@ -115,6 +116,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/lessons/{lessonId}", lessons(h.getLesson))
 	mux.Handle("PATCH /api/v1/lessons/{lessonId}", lessons(h.updateLessonSettings))
 	mux.Handle("PUT /api/v1/lessons/{lessonId}/assignments", lessons(h.replaceAssignments))
+	mux.Handle("POST /api/v1/lessons/{lessonId}/assignments/draw", lessons(h.drawAssignments))
 	mux.Handle("POST /api/v1/lessons/{lessonId}/start", lessons(h.startLesson))
 	mux.Handle("POST /api/v1/lessons/{lessonId}/stop", lessons(h.stopLesson))
 	mux.Handle("GET /api/v1/lessons/{lessonId}/monitor", lessons(h.getMonitor))
@@ -391,6 +393,50 @@ func (h *Handlers) updateLessonSettings(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, r, http.StatusOK, toLessonJSON(lesson, nil))
+}
+
+type drawRequest struct {
+	Categories []string `json:"categories"`
+	Count      int      `json:"count"`
+	Rows       []struct {
+		WorkstationNo int    `json:"workstation_no"`
+		UserID        string `json:"user_id"`
+	} `json:"rows"`
+}
+
+// drawAssignments is ДДС-6/ADR-035's POST .../assignments/draw: a random
+// queue proposal per row, saved by nothing until the instructor PUTs it.
+func (h *Handlers) drawAssignments(w http.ResponseWriter, r *http.Request) {
+	principal, _ := authhttp.PrincipalFromContext(r.Context())
+	lessonID, err := uuid.Parse(r.PathValue("lessonId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "lesson not found", nil)
+		return
+	}
+	var body drawRequest
+	if err := httpapi.DecodeJSON(r, 0, &body); err != nil {
+		writeDecodeError(w, r, err)
+		return
+	}
+	in := training.DrawInput{Categories: body.Categories, Count: body.Count}
+	for _, row := range body.Rows {
+		userID, err := uuid.Parse(row.UserID)
+		if err != nil {
+			httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "invalid user_id", map[string]any{"field": "user_id"})
+			return
+		}
+		in.Rows = append(in.Rows, training.DrawRow{WorkstationNo: row.WorkstationNo, UserID: userID})
+	}
+	drawn, err := h.training.DrawAssignments(r.Context(), principal, lessonID, in)
+	if err != nil {
+		writeTrainingError(w, r, err)
+		return
+	}
+	out := make([]assignmentJSON, len(drawn))
+	for i, a := range drawn {
+		out[i] = toAssignmentJSON(a)
+	}
+	writeJSON(w, r, http.StatusOK, out)
 }
 
 type assignmentRequest struct {
@@ -695,7 +741,11 @@ func writeExecuteError(w http.ResponseWriter, r *http.Request, err error) {
 // protect here).
 func writeTrainingError(w http.ResponseWriter, r *http.Request, err error) {
 	var ve *training.ValidationError
+	var notEnough *training.NotEnoughScenariosError
 	switch {
+	case errors.As(err, &notEnough):
+		httpapi.WriteError(w, r, httpapi.CodeNotEnoughScenarios, "not enough suitable scenarios", map[string]any{
+			"workstation_no": notEnough.WorkstationNo, "available": notEnough.Available, "requested": notEnough.Requested})
 	case errors.Is(err, training.ErrNotFound):
 		httpapi.WriteError(w, r, httpapi.CodeNotFound, "not found", nil)
 	case errors.Is(err, training.ErrWorkstationMismatch):

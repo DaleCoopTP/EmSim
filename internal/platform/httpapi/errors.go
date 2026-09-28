@@ -38,6 +38,9 @@ const (
 	CodeStaleDraft           ErrorCode = "stale_draft"
 	CodeHasBlockingIssues    ErrorCode = "has_blocking_issues"
 	CodeUnsupportedForEditor ErrorCode = "unsupported_for_editor"
+	// CodeNotEnoughScenarios is ДДС-6/ADR-035's random queue fill finding
+	// fewer suitable scenarios than requested.
+	CodeNotEnoughScenarios ErrorCode = "not_enough_scenarios"
 )
 
 // statusFor is the fixed HTTP status each code carries. Five of them —
@@ -71,6 +74,7 @@ var statusFor = map[ErrorCode]int{
 	CodeStaleDraft:              http.StatusConflict,
 	CodeHasBlockingIssues:       http.StatusUnprocessableEntity,
 	CodeUnsupportedForEditor:    http.StatusUnprocessableEntity,
+	CodeNotEnoughScenarios:      http.StatusUnprocessableEntity,
 }
 
 // StatusFor returns the HTTP status WriteError sends for code, or 500 for

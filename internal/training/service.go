@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -80,6 +81,9 @@ type Service struct {
 	// (worker-only), a deliberately separate setting so the two
 	// processes' configuration cannot accidentally collapse into one.
 	judgeEnabled bool
+	// shuffle orders a drawn queue (ДДС-6/ADR-035); rand.Shuffle unless a
+	// test pins it.
+	shuffle func(n int, swap func(i, j int))
 	// callerTiming is ADR-029's api-side caller settings: which prompt-
 	// cache warm-ups recordDecision enqueues and how long the first
 	// reply (the no-model opening) is held back. Zero value: no warm-ups,
@@ -108,7 +112,7 @@ func NewService(store Store, users UserDirectory, workstations WorkstationDirect
 	return &Service{
 		store: store, users: users, workstations: workstations,
 		scenarios: scenarios, services: services, tasks: taskEnqueuer, exerciseTypes: exerciseTypes,
-		judgeEnabled: judgeEnabled,
+		judgeEnabled: judgeEnabled, shuffle: rand.Shuffle,
 	}
 }
 
@@ -355,6 +359,42 @@ func (s *Service) CreateLesson(ctx context.Context, actor auth.Principal, in Les
 	return created, nil
 }
 
+// loadAssignee resolves and validates one assignment row's workstation and
+// trainee, shared by ReplaceAssignments and DrawAssignments so a drawn plan
+// is accepted by the very same checks when the instructor saves it. The
+// returned service code is "" for a trainee without one (112).
+func (s *Service) loadAssignee(ctx context.Context, tx pgx.Tx, exerciseType content.ExerciseType, workstationNo int, userID uuid.UUID) (auth.Workstation, auth.User, string, error) {
+	ws, err := s.workstations.WorkstationByNumber(ctx, tx, workstationNo)
+	if errors.Is(err, auth.ErrNotFound) {
+		return auth.Workstation{}, auth.User{}, "", validationErr("workstation_no", "unknown")
+	} else if err != nil {
+		return auth.Workstation{}, auth.User{}, "", err
+	}
+	if !ws.Active {
+		return auth.Workstation{}, auth.User{}, "", validationErr("workstation_no", "inactive")
+	}
+	trainee, err := s.users.UserByID(ctx, tx, userID)
+	if errors.Is(err, auth.ErrNotFound) {
+		return auth.Workstation{}, auth.User{}, "", validationErr("user_id", "unknown")
+	} else if err != nil {
+		return auth.Workstation{}, auth.User{}, "", err
+	}
+	if trainee.Role != auth.RoleTrainee {
+		return auth.Workstation{}, auth.User{}, "", validationErr("user_id", "must be a trainee")
+	}
+	if !trainee.Active {
+		return auth.Workstation{}, auth.User{}, "", validationErr("user_id", "inactive")
+	}
+	if exerciseType == content.ExerciseTypeDDSProcessing && trainee.ServiceCode == nil {
+		return auth.Workstation{}, auth.User{}, "", validationErr("user_id", "trainee has no service_code")
+	}
+	serviceCode := ""
+	if trainee.ServiceCode != nil {
+		serviceCode = *trainee.ServiceCode
+	}
+	return ws, trainee, serviceCode, nil
+}
+
 // ReplaceAssignments replaces the full group plan while a lesson remains a
 // draft. Each workstation/user pair owns one ordered nonempty queue; a
 // user and a workstation may each occur only once in the plan.
@@ -397,33 +437,9 @@ func (s *Service) ReplaceAssignments(ctx context.Context, actor auth.Principal, 
 				return validationErr("timing.spawn_every_s", "is required for a hard queue with multiple scenarios")
 			}
 
-			ws, err := s.workstations.WorkstationByNumber(ctx, tx, in.WorkstationNo)
-			if errors.Is(err, auth.ErrNotFound) {
-				return validationErr("workstation_no", "unknown")
-			} else if err != nil {
+			ws, trainee, traineeServiceCode, err := s.loadAssignee(ctx, tx, lesson.ExerciseType, in.WorkstationNo, in.UserID)
+			if err != nil {
 				return err
-			}
-			if !ws.Active {
-				return validationErr("workstation_no", "inactive")
-			}
-			trainee, err := s.users.UserByID(ctx, tx, in.UserID)
-			if errors.Is(err, auth.ErrNotFound) {
-				return validationErr("user_id", "unknown")
-			} else if err != nil {
-				return err
-			}
-			if trainee.Role != auth.RoleTrainee {
-				return validationErr("user_id", "must be a trainee")
-			}
-			if !trainee.Active {
-				return validationErr("user_id", "inactive")
-			}
-			if lesson.ExerciseType == content.ExerciseTypeDDSProcessing && trainee.ServiceCode == nil {
-				return validationErr("user_id", "trainee has no service_code")
-			}
-			traineeServiceCode := ""
-			if trainee.ServiceCode != nil {
-				traineeServiceCode = *trainee.ServiceCode
 			}
 			for _, versionID := range in.ScenarioVersionIDs {
 				version, err := s.scenarios.VersionByID(ctx, tx, versionID)

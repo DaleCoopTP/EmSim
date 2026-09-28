@@ -400,6 +400,35 @@ func (s *Store) ApprovedVersion(ctx context.Context, tx pgx.Tx, scenarioID uuid.
 		scenarioID))
 }
 
+func (s *Store) ListApprovedDDSVersions(ctx context.Context, tx pgx.Tx, targetService string) ([]content.ScenarioVersionRecord, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT `+scenarioVersionColumns+`
+		FROM scenario_versions
+		WHERE status = 'approved' AND exercise_type = 'dds_processing'
+		  AND scenario_id IN (
+		      SELECT id FROM scenarios
+		      WHERE status <> 'archived' AND ($1::text IS NULL OR target_service = $1)
+		  )
+		ORDER BY created_at, id
+	`, nullableString(targetService))
+	if err != nil {
+		return nil, content.ErrStorage
+	}
+	defer rows.Close()
+	var out []content.ScenarioVersionRecord
+	for rows.Next() {
+		v, err := scanScenarioVersion(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, content.ErrStorage
+	}
+	return out, nil
+}
+
 func (s *Store) ListVersions(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID) ([]content.VersionSummary, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT id, version, status, digest, difficulty, created_by, created_at, approved_by, approved_at

@@ -53,6 +53,8 @@ type ScenarioReader interface {
 	VersionByNumber(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUID, version int) (content.ScenarioVersionRecord, error)
 	LatestIntakeCatalog(ctx context.Context, tx pgx.Tx) (content.IntakeCatalog, error)
 	IntakeCatalogByVersion(ctx context.Context, tx pgx.Tx, version int) (content.IntakeCatalog, error)
+	// ListApprovedDDSVersions is ДДС-6/ADR-035's random queue fill source.
+	ListApprovedDDSVersions(ctx context.Context, tx pgx.Tx, targetService string) ([]content.ScenarioVersionRecord, error)
 }
 
 // ServiceReader is training's read of content's service workflow
