@@ -365,6 +365,8 @@ CREATE TABLE calls (
     id          uuid PRIMARY KEY,
     item_id     uuid NOT NULL REFERENCES items(id) ON DELETE CASCADE,
     contact_key text NOT NULL,                         -- crew_leader | shift_chief | line_112 | uk_dispatch ...
+    direction   text NOT NULL DEFAULT 'outgoing' CHECK (direction IN ('outgoing','incoming')), -- ADR-031
+    event_key   text,                                  -- ADR-031: phone_incoming, на который ответил входящий звонок
     started_at  timestamptz NOT NULL,
     ended_at    timestamptz,
     reaction_at_call text NOT NULL,
@@ -386,6 +388,7 @@ CREATE TABLE calls (
 );
 CREATE INDEX calls_item_idx ON calls (item_id);
 CREATE UNIQUE INDEX calls_one_active_per_item_idx ON calls (item_id) WHERE ended_at IS NULL;
+CREATE UNIQUE INDEX calls_event_key_idx ON calls (item_id, event_key) WHERE event_key IS NOT NULL;
 
 -- Снимок карточки при закрытии. Основной неизменяемый вход; правила и STT фиксируются в одном assessment_inputs (ADR-006/016). Формат: contracts/evidence.schema.json.
 CREATE TABLE evidence (

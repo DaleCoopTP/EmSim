@@ -551,6 +551,12 @@
           "type": "string",
           "description": "Ключ голоса: male_calm | female_urgent | ... → TTS-модель и параметры"
         },
+        "role": {
+          "type": "string",
+          "enum": ["crew", "control_112", "applicant", "other"],
+          "default": "other",
+          "description": "ADR-031: роль контакта ДДС — бригада, отдел контроля 112, заявитель, прочие; не секретна."
+        },
         "phrases": {
           "type": "object",
           "required": [
@@ -598,9 +604,14 @@
             "accepted",
             "responding",
             "arrived",
-            "working"
+            "working",
+            "call_ended"
           ],
-          "description": "Первое достижение anchor; событие планируется тогда, независимо от status_in. Повторный переход anchor не меняет."
+          "description": "Первое достижение anchor; событие планируется тогда, независимо от status_in. Повторный переход anchor не меняет. call_ended (ADR-031, ДДС) — завершение первого исходящего звонка контакту since_contact."
+        },
+        "since_contact": {
+          "type": "string",
+          "description": "contact.key; обязателен при since=call_ended и запрещён при других since (ADR-031)."
         },
         "status_in": {
           "type": "array",
@@ -678,10 +689,24 @@
                 "refuse_duplicate",
                 "none"
               ]
+            },
+            "comment_facts": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "ADR-031: факты, которые должны попасть в комментарий к статусу, поставленному в ответ на событие. Эталон, обучаемому не отдаётся; оценивает ИИ-судья ДДС-4."
             }
           }
         }
-      }
+      },
+      "if": {
+        "required": ["since"],
+        "properties": {"since": {"const": "call_ended"}}
+      },
+      "then": {"required": ["since_contact"]},
+      "else": {"not": {"required": ["since_contact"]}}
     },
     "reference": {
       "type": "object",

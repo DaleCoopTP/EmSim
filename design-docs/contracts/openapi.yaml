@@ -469,7 +469,7 @@ paths:
           description: stale_seq | lesson_stopped | item_closed — Receipt; command_id_conflict — Error
           content: { application/json: { schema: { oneOf: [{ $ref: '#/components/schemas/Receipt' }, { $ref: '#/components/schemas/Error' }] } } }
         '422':
-          description: transition_not_allowed | comment_required | invalid_payload | call_required | call_in_progress | call_not_active
+          description: transition_not_allowed | comment_required | invalid_payload | call_required | call_in_progress | call_not_active | call_missed
           content: { application/json: { schema: { $ref: '#/components/schemas/Receipt' } } }
   /items/{itemId}/calls/{callId}/recording:
     parameters: [ { $ref: '#/components/parameters/ItemId' }, { name: callId, in: path, required: true, schema: { type: string, format: uuid } } ]
@@ -664,7 +664,7 @@ components:
           properties:
             code:
               type: string
-              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, call_required, call_in_progress, call_not_active, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation, stale_draft, has_blocking_issues, unsupported_for_editor]
+              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, call_required, call_in_progress, call_not_active, call_missed, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation, stale_draft, has_blocking_issues, unsupported_for_editor]
             message: { type: string }
             details: { type: object, additionalProperties: true }
         request_id: { type: string }
@@ -743,6 +743,16 @@ components:
         label: { type: string }
         number: { type: string, description: Что набирает обучаемый }
         voice: { type: string, description: Ключ голоса (пол/интонация) }
+        role:
+          type: string
+          enum: [crew, control_112, applicant, other]
+          description: 'ADR-031: роль контакта ДДС (бригада, отдел контроля 112, заявитель, прочие); не секретна, по умолчанию other.'
+        phrases:
+          type: object
+          description: 'ADR-031: тексты подготовленных фраз контакта (не эталон); показываются, если WAV нет.'
+          properties:
+            greeting: { type: string }
+            ack: { type: string }
 
     ScenarioSummary:
       type: object
@@ -1476,6 +1486,24 @@ components:
               queue_left: { type: integer }
               done: { type: integer }
               last_action: { $ref: '#/components/schemas/Action' }
+              reports:
+                type: array
+                description: 'Только dds_processing (ADR-031): доставленные notice/phone_incoming активных карточек и фактическая реакция — первый применённый set_status после доставки (для входящего — после ответа). Эталон expects не используется.'
+                items: { $ref: '#/components/schemas/MonitorReport' }
+
+    MonitorReport:
+      type: object
+      required: [item_id, event_key, delivery, from, from_label, delivered_at, answered_at, missed, reaction_at]
+      properties:
+        item_id: { type: string, format: uuid }
+        event_key: { type: string }
+        delivery: { type: string, enum: [notice, phone_incoming] }
+        from: { type: string, description: contact.key }
+        from_label: { type: string }
+        delivered_at: { type: string, format: date-time }
+        answered_at: { type: [string, 'null'], format: date-time, description: Только phone_incoming }
+        missed: { type: boolean, description: 'phone_incoming не принят за 30 с' }
+        reaction_at: { type: [string, 'null'], format: date-time }
 
     MyRun:
       type: object
@@ -1638,6 +1666,11 @@ components:
               type: array
               items: { $ref: '#/components/schemas/ReactionStatus' }
               description: 'Статусы, разрешённые set_status из текущего reaction по снимку workflow этой карточки (item.workflow, срез 3); клиент строит кнопки по этому списку, а не по общему справочнику служб.'
+            incoming_call:
+              oneOf:
+                - { $ref: '#/components/schemas/IncomingCall' }
+                - { type: 'null' }
+              description: 'Только dds_processing (ADR-031): доставленный phone_incoming, который ещё звонит — не принят и не старше 30 с по серверному времени. Иначе null.'
             actions: { type: array, items: { $ref: '#/components/schemas/Action' } }
             events: { type: array, items: { $ref: '#/components/schemas/DeliveredEvent' } }
             calls: { type: array, items: { $ref: '#/components/schemas/Call' } }
@@ -1818,6 +1851,9 @@ components:
                       - audio/webm
                       - audio/ogg
                       - audio/wav
+        description: 'Завершение активного звонка. Для исходящего accepted_by и summary должны быть непустыми, иначе
+          invalid_payload. Для входящего звонка ДДС (ADR-031) поля присутствуют, но могут быть пустыми строками,
+          а recording должен быть null.'
       - properties:
           type:
             const: control_report
@@ -1833,7 +1869,14 @@ components:
 
       - properties:
           type: { const: answer_incoming }
-          payload: { type: object, additionalProperties: false }
+          payload:
+            type: object
+            additionalProperties: false
+            properties:
+              event_key: { type: string, description: 'Только dds_processing (ADR-031): ключ доставленного события phone_incoming.' }
+        description: 'operator112_intake — ответ на входящий вызов заявителя, тело пустое. dds_processing (ADR-031) —
+          ответ на звонящий phone_incoming {event_key}: создаёт звонок direction=incoming; после 30 с от доставки —
+          call_missed, при активном звонке — call_in_progress, повторный ответ — transition_not_allowed. Завершается call_end.'
       - properties:
           type: { const: end_incoming }
           payload: { type: object, additionalProperties: false }
@@ -1995,6 +2038,14 @@ components:
           type: integer
           minimum: 1
 
+    IncomingCall:
+      type: object
+      required: [event_key, from, delivered_at, ring_until]
+      properties:
+        event_key: { type: string }
+        from: { type: string, description: contact.key звонящего }
+        delivered_at: { type: string, format: date-time }
+        ring_until: { type: string, format: date-time, description: 'delivered_at + 30 с; позже ответ даёт call_missed.' }
     DeliveredEvent:
       type: object
       required: [key, delivery, text, delivered_at, late]
@@ -2002,7 +2053,8 @@ components:
         key: { type: string }
         delivery: { type: string, enum: [notice, phone_incoming, spawn_card] }
         from: { type: string }
-        text: { type: string }
+        text: { type: string, description: 'Для phone_incoming ДДС (ADR-031) обучаемому пусто, пока звонок не принят (answered=false).' }
+        answered: { type: boolean, description: 'Только phone_incoming ДДС: на звонок ответили (есть звонок с этим event_key).' }
         voice_url: { type: string, nullable: true }
         delivered_at: { type: string, format: date-time }
         late: { type: boolean }
@@ -2018,6 +2070,13 @@ components:
           format: uuid
         contact_key:
           type: string
+        direction:
+          type: string
+          enum: [outgoing, incoming]
+          description: 'ADR-031: incoming — ответ на phone_incoming; обязательный звонок засчитывается только outgoing.'
+        event_key:
+          type: [string, 'null']
+          description: 'ADR-031: событие phone_incoming, на которое ответили; null для исходящего.'
         started_at:
           type: string
           format: date-time

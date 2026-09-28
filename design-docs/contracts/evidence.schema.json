@@ -339,6 +339,15 @@
           "contact_key": {
             "type": "string"
           },
+          "direction": {
+            "type": "string",
+            "enum": ["outgoing", "incoming"],
+            "description": "ADR-031: отсутствие поля (снимки до ДДС-2) означает outgoing."
+          },
+          "event_key": {
+            "type": "string",
+            "description": "ADR-031: событие phone_incoming, на которое ответил входящий звонок."
+          },
           "started_at": {
             "type": "string",
             "format": "date-time"
