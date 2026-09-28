@@ -90,7 +90,7 @@ func addressCheckTexts(ev training.EvidenceBody, params map[string]any) []string
 	}
 	if includeCallSummary {
 		for _, call := range ev.Calls {
-			if call.Summary != nil {
+			if call.Outgoing() && call.Summary != nil {
 				texts = append(texts, *call.Summary)
 			}
 		}

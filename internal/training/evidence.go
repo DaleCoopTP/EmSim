@@ -108,6 +108,8 @@ type EvidenceComment struct {
 type EvidenceCall struct {
 	CallID                    uuid.UUID        `json:"call_id"`
 	ContactKey                string           `json:"contact_key"`
+	Direction                 CallDirection    `json:"direction,omitempty"`
+	EventKey                  string           `json:"event_key,omitempty"`
 	StartedAt                 time.Time        `json:"started_at"`
 	EndedAt                   *time.Time       `json:"ended_at"`
 	ReactionAtCall            content.Reaction `json:"reaction_at_call"`
@@ -118,6 +120,10 @@ type EvidenceCall struct {
 	RecordingMIME             *string          `json:"recording_mime"`
 	RecordingUploadDeadlineAt *time.Time       `json:"recording_upload_deadline_at"`
 }
+
+// Outgoing reports whether the trainee placed the call; evidence sealed
+// before ДДС-2 has no direction and holds outgoing calls only (ADR-031).
+func (c EvidenceCall) Outgoing() bool { return c.Direction != CallIncoming }
 
 // EvidenceDerived is the item's actual server-measured intervals,
 // without pause compensation (RFC-001 §7.2/§8: interruption makes the

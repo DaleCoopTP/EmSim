@@ -384,6 +384,15 @@ func TestCallRules(t *testing.T) {
 		}
 	})
 
+	t.Run("an incoming call from the required contact is not the required call (ADR-031)", func(t *testing.T) {
+		ev := requiredCallEvidence(strPtr("дежурный"), strPtr("адрес передан"))
+		ev.Calls[0].Direction, ev.Calls[0].EventKey = training.CallIncoming, "e2"
+		results := evaluate(t, ev, requiredCallReference(), rubric)
+		if r := findResult(t, results, "C_CALL_MADE"); r.Status != assessment.CriterionNotMet {
+			t.Fatalf("C_CALL_MADE = %+v, want not_met", r)
+		}
+	})
+
 	t.Run("completed but log incomplete is met for made, not_met for log", func(t *testing.T) {
 		ev := requiredCallEvidence(strPtr("дежурный"), nil)
 		results := evaluate(t, ev, requiredCallReference(), rubric)

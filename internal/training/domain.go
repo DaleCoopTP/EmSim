@@ -218,9 +218,14 @@ type RecordingManifest struct {
 // completing/uploading the declared recording; evidence copies its close-time
 // projection and is immutable.
 type Call struct {
-	ID                        uuid.UUID
-	ItemID                    uuid.UUID
-	ContactKey                string
+	ID         uuid.UUID
+	ItemID     uuid.UUID
+	ContactKey string
+	// Direction and EventKey (ADR-031): an incoming call is the answer to
+	// the delivered phone_incoming event EventKey; outgoing calls (and
+	// every call recorded before ДДС-2) have no event.
+	Direction                 CallDirection
+	EventKey                  string
 	StartedAt                 time.Time
 	EndedAt                   *time.Time
 	ReactionAtCall            content.Reaction
@@ -232,6 +237,18 @@ type Call struct {
 	RecordingUploadDeadlineAt *time.Time
 	RecordingReceivedAt       *time.Time
 }
+
+// CallDirection is calls.direction (ADR-031).
+type CallDirection string
+
+const (
+	CallOutgoing CallDirection = "outgoing"
+	CallIncoming CallDirection = "incoming"
+)
+
+// Outgoing reports whether the call was placed by the trainee; an empty
+// direction (a call value built before ДДС-2) is outgoing.
+func (c Call) Outgoing() bool { return c.Direction != CallIncoming }
 
 type Blob struct {
 	ID        uuid.UUID

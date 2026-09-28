@@ -373,7 +373,8 @@ func activeCall(item training.Item) *training.Call {
 }
 func requiredCallFinished(item training.Item) bool {
 	for _, c := range item.Calls {
-		if c.ContactKey == item.CallPolicy.To && c.EndedAt != nil {
+		// ADR-031: an incoming call from the same contact does not count.
+		if c.Outgoing() && c.ContactKey == item.CallPolicy.To && c.EndedAt != nil {
 			return true
 		}
 	}

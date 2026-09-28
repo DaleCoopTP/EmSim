@@ -72,10 +72,19 @@ func (exercise) Evidence(item training.Item, actions []training.Action, events [
 	return training.SealEvidence(body)
 }
 
+// callDirection is c's direction with the pre-ДДС-2 default applied, so a
+// sealed snapshot always names it explicitly.
+func callDirection(c training.Call) training.CallDirection {
+	if c.Direction == "" {
+		return training.CallOutgoing
+	}
+	return c.Direction
+}
+
 func buildEvidenceCalls(calls []training.Call) []training.EvidenceCall {
 	out := make([]training.EvidenceCall, 0, len(calls))
 	for _, c := range calls {
-		e := training.EvidenceCall{CallID: c.ID, ContactKey: c.ContactKey, StartedAt: c.StartedAt, EndedAt: c.EndedAt, ReactionAtCall: c.ReactionAtCall, AcceptedBy: c.AcceptedBy, Summary: c.Summary, RecordingUploadDeadlineAt: c.RecordingUploadDeadlineAt}
+		e := training.EvidenceCall{CallID: c.ID, ContactKey: c.ContactKey, Direction: callDirection(c), EventKey: c.EventKey, StartedAt: c.StartedAt, EndedAt: c.EndedAt, ReactionAtCall: c.ReactionAtCall, AcceptedBy: c.AcceptedBy, Summary: c.Summary, RecordingUploadDeadlineAt: c.RecordingUploadDeadlineAt}
 		if c.Recording != nil {
 			hash := hex.EncodeToString(c.Recording.SHA256[:])
 			size := c.Recording.Size

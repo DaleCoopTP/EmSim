@@ -216,6 +216,41 @@ func TestEvidencePreservesStartedActiveCallOnStop(t *testing.T) {
 	}
 }
 
+// ADR-031: a sealed call names its direction; an incoming call keeps the
+// phone_incoming event it answered. A call value from before ДДС-2 (no
+// direction) is sealed as outgoing.
+func TestEvidenceCarriesCallDirection(t *testing.T) {
+	item := baseItem(t, "ЮАО")
+	closedAt := item.OfferedAt.Add(60 * time.Second)
+	interrupted := training.CloseInterrupted
+	item.State = training.ItemInterrupted
+	item.CloseReason = &interrupted
+	outEnd, inEnd := item.OfferedAt.Add(15*time.Second), item.OfferedAt.Add(40*time.Second)
+	item.Calls = []training.Call{
+		{ID: uuid.New(), ItemID: item.ID, ContactKey: "crew_leader", StartedAt: item.OfferedAt.Add(5 * time.Second), EndedAt: &outEnd,
+			ReactionAtCall: content.ReactionAccepted, RecordingState: training.RecordingAbsent},
+		{ID: uuid.New(), ItemID: item.ID, ContactKey: "crew_leader", Direction: training.CallIncoming, EventKey: "e2",
+			StartedAt: item.OfferedAt.Add(30 * time.Second), EndedAt: &inEnd, ReactionAtCall: content.ReactionResponding, RecordingState: training.RecordingAbsent},
+	}
+
+	evidence, err := Exercise.Evidence(item, nil, nil, 0, closedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := evidenceValidator(t).Validate(asCanonicalTree(t, evidence.Body)); err != nil {
+		t.Fatalf("evidence does not validate against evidence.schema.json: %v\nbody: %s", err, evidence.Body)
+	}
+	var body training.EvidenceBody
+	if err := json.Unmarshal(evidence.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Calls) != 2 ||
+		body.Calls[0].Direction != training.CallOutgoing || body.Calls[0].EventKey != "" ||
+		body.Calls[1].Direction != training.CallIncoming || body.Calls[1].EventKey != "e2" {
+		t.Fatalf("calls = %+v, want outgoing then incoming e2", body.Calls)
+	}
+}
+
 // TestEvidenceProjectsEventsAndInterruptions is C6's own coverage: a
 // closed item that accumulated a delivered event, a skipped one and a
 // restart-recovery marker must carry all three into the sealed evidence,

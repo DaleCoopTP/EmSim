@@ -477,6 +477,14 @@ func TestPhoneCallRulesRequireFinishedTargetCallAndAllowNullRecording(t *testing
 	}
 	call := *decision.StartCall
 	call.ID = uuid.New()
+	// ADR-031: a finished incoming call from the same contact does not
+	// satisfy the required call.
+	answered := item.OfferedAt
+	item.Calls = []training.Call{{ID: uuid.New(), ContactKey: "crew_leader", Direction: training.CallIncoming, EventKey: "e1", StartedAt: answered, EndedAt: &answered}}
+	decision, err = Exercise.Decide(item, training.Command{Type: training.CommandSetStatus, Payload: mustJSON(t, map[string]string{"status": "accepted"})}, item.OfferedAt)
+	if err != nil || decision.Rejection != training.RejectCallRequired {
+		t.Fatalf("accept after only an incoming call = %+v, %v", decision, err)
+	}
 	item.Calls = []training.Call{call}
 	decision, err = Exercise.Decide(item, training.Command{Type: training.CommandClose, Payload: []byte(`{}`)}, item.OfferedAt)
 	if err != nil || decision.Rejection != training.RejectCallInProgress {

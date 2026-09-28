@@ -1012,6 +1012,8 @@ type itemJSON struct {
 type callJSON struct {
 	ID                        string  `json:"id"`
 	ContactKey                string  `json:"contact_key"`
+	Direction                 string  `json:"direction"`
+	EventKey                  *string `json:"event_key"`
 	StartedAt                 string  `json:"started_at"`
 	EndedAt                   *string `json:"ended_at"`
 	AcceptedBy                *string `json:"accepted_by"`
@@ -1037,7 +1039,14 @@ func toCallsJSON(calls []training.Call, now time.Time) []callJSON {
 		if state == training.RecordingAwaiting && c.RecordingUploadDeadlineAt != nil && now.After(*c.RecordingUploadDeadlineAt) {
 			state = training.RecordingExpired
 		}
-		out = append(out, callJSON{ID: c.ID.String(), ContactKey: c.ContactKey, StartedAt: formatTime(c.StartedAt), EndedAt: ended, AcceptedBy: c.AcceptedBy, Summary: c.Summary, HasRecording: c.Recording != nil, RecordingState: string(state), RecordingUploadDeadlineAt: deadline})
+		direction := training.CallOutgoing
+		var eventKey *string
+		if !c.Outgoing() {
+			direction = training.CallIncoming
+			key := c.EventKey
+			eventKey = &key
+		}
+		out = append(out, callJSON{ID: c.ID.String(), ContactKey: c.ContactKey, Direction: string(direction), EventKey: eventKey, StartedAt: formatTime(c.StartedAt), EndedAt: ended, AcceptedBy: c.AcceptedBy, Summary: c.Summary, HasRecording: c.Recording != nil, RecordingState: string(state), RecordingUploadDeadlineAt: deadline})
 	}
 	return out
 }

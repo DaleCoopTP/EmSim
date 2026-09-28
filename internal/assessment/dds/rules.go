@@ -322,7 +322,9 @@ func callLogRule(ev training.EvidenceBody, ref content.Reference, c assessment.R
 func completedRequiredCall(ev training.EvidenceBody, ref content.Reference) *training.EvidenceCall {
 	for i := range ev.Calls {
 		call := &ev.Calls[i]
-		if call.ContactKey == ref.Call.To && call.EndedAt != nil {
+		// ADR-031: only a call the trainee placed fulfils the required
+		// call; an incoming call from the same contact does not.
+		if call.Outgoing() && call.ContactKey == ref.Call.To && call.EndedAt != nil {
 			return call
 		}
 	}

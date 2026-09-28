@@ -762,15 +762,19 @@ func (s *Store) InsertVoiceAsset(ctx context.Context, tx pgx.Tx, asset training.
 	return asset, nil
 }
 
-const callColumns = `id, item_id, contact_key, started_at, ended_at, reaction_at_call, blob_id, accepted_by, summary, recording_sha256, recording_size, recording_mime, recording_state, recording_upload_deadline_at, recording_received_at`
+const callColumns = `id, item_id, contact_key, direction, event_key, started_at, ended_at, reaction_at_call, blob_id, accepted_by, summary, recording_sha256, recording_size, recording_mime, recording_state, recording_upload_deadline_at, recording_received_at`
 
 func scanCall(row pgx.Row) (training.Call, error) {
 	var c training.Call
 	var digest []byte
 	var size *int64
 	var mime *string
-	if err := row.Scan(&c.ID, &c.ItemID, &c.ContactKey, &c.StartedAt, &c.EndedAt, &c.ReactionAtCall, &c.BlobID, &c.AcceptedBy, &c.Summary, &digest, &size, &mime, &c.RecordingState, &c.RecordingUploadDeadlineAt, &c.RecordingReceivedAt); err != nil {
+	var eventKey *string
+	if err := row.Scan(&c.ID, &c.ItemID, &c.ContactKey, &c.Direction, &eventKey, &c.StartedAt, &c.EndedAt, &c.ReactionAtCall, &c.BlobID, &c.AcceptedBy, &c.Summary, &digest, &size, &mime, &c.RecordingState, &c.RecordingUploadDeadlineAt, &c.RecordingReceivedAt); err != nil {
 		return training.Call{}, mapErr(err)
+	}
+	if eventKey != nil {
+		c.EventKey = *eventKey
 	}
 	if len(digest) > 0 {
 		if len(digest) != 32 || size == nil || mime == nil {
@@ -786,8 +790,16 @@ func scanCall(row pgx.Row) (training.Call, error) {
 }
 
 func (s *Store) InsertCall(ctx context.Context, tx pgx.Tx, call training.Call) (training.Call, error) {
-	returned := tx.QueryRow(ctx, `INSERT INTO calls (id,item_id,contact_key,started_at,reaction_at_call) VALUES ($1,$2,$3,$4,$5) RETURNING `+callColumns,
-		call.ID, call.ItemID, call.ContactKey, call.StartedAt, call.ReactionAtCall)
+	direction := call.Direction
+	if direction == "" {
+		direction = training.CallOutgoing
+	}
+	var eventKey *string
+	if call.EventKey != "" {
+		eventKey = &call.EventKey
+	}
+	returned := tx.QueryRow(ctx, `INSERT INTO calls (id,item_id,contact_key,direction,event_key,started_at,reaction_at_call) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING `+callColumns,
+		call.ID, call.ItemID, call.ContactKey, direction, eventKey, call.StartedAt, call.ReactionAtCall)
 	return scanCall(returned)
 }
 
