@@ -218,7 +218,14 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.
 		principal, ok := authhttp.PrincipalFromContext(ctx)
 		return principal.UserID, string(principal.Role), ok
 	}
-	status.NewHandlers(pool, mustTaskEnqueuer(pool), kindBackupRun, os.Getenv("BLOB_ROOT"), pgstore.ExpectedSchemaVersion, sessionActor).
+	// Admin retry guards (ADR-033): an assessment is never evaluated twice
+	// and a caller turn's reply or warm-up has no meaning later.
+	retryGuards := map[tasks.Kind]tasks.RetryGuard{
+		training.KindAssessmentEvaluate: assessmentService,
+		training.KindCallerReply:        tasks.NeverRetry{},
+		training.KindCallerWarmup:       tasks.NeverRetry{},
+	}
+	status.NewHandlers(pool, mustTaskEnqueuer(pool), retryGuards, kindBackupRun, os.Getenv("BLOB_ROOT"), pgstore.ExpectedSchemaVersion, sessionActor).
 		Register(apiMux, adminOnly)
 
 	root := http.NewServeMux()

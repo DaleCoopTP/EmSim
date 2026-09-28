@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -16,10 +17,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Enqueuer is what POST /admin/backup needs from the queue; *tasks.Store
-// satisfies it.
-type Enqueuer interface {
+// Queue is what the admin endpoints need from the task queue;
+// *tasks.Store satisfies it.
+type Queue interface {
 	EnqueueTx(context.Context, pgx.Tx, tasks.EnqueueRequest) (uuid.UUID, bool, error)
+	RetryTx(context.Context, pgx.Tx, uuid.UUID, map[tasks.Kind]tasks.RetryGuard) (tasks.RetryCandidate, tasks.RetryTarget, error)
 }
 
 // Actor names who made a request (the admin's session), for audit.
@@ -31,20 +33,24 @@ type Actor func(context.Context) (userID uuid.UUID, role string, ok bool)
 type Handlers struct {
 	pool           *pgxpool.Pool
 	store          *Store
-	queue          Enqueuer
+	queue          Queue
+	retryGuards    map[tasks.Kind]tasks.RetryGuard
 	backupKind     tasks.Kind
 	blobRoot       string
 	expectedSchema int64
 	actor          Actor
 }
 
-func NewHandlers(pool *pgxpool.Pool, queue Enqueuer, backupKind tasks.Kind, blobRoot string, expectedSchema int64, actor Actor) *Handlers {
-	return &Handlers{pool: pool, store: NewStore(pool), queue: queue, backupKind: backupKind, blobRoot: blobRoot, expectedSchema: expectedSchema, actor: actor}
+// NewHandlers: retryGuards are the per-kind checks an admin retry must
+// pass (a kind without one is simply retried).
+func NewHandlers(pool *pgxpool.Pool, queue Queue, retryGuards map[tasks.Kind]tasks.RetryGuard, backupKind tasks.Kind, blobRoot string, expectedSchema int64, actor Actor) *Handlers {
+	return &Handlers{pool: pool, store: NewStore(pool), queue: queue, retryGuards: retryGuards, backupKind: backupKind, blobRoot: blobRoot, expectedSchema: expectedSchema, actor: actor}
 }
 
 func (h *Handlers) Register(mux *http.ServeMux, protect func(http.HandlerFunc) http.Handler) {
 	mux.Handle("GET /api/v1/admin/status", protect(h.getStatus))
 	mux.Handle("POST /api/v1/admin/backup", protect(h.startBackup))
+	mux.Handle("POST /api/v1/admin/tasks/{taskId}/retry", protect(h.retryTask))
 }
 
 type backupCopyJSON struct {
@@ -199,6 +205,59 @@ func (h *Handlers) startBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"task_id": id})
+}
+
+// retryTask continues a failed or dead_letter task (ADR-033): same id,
+// one more attempt in its budget. Refused (409 not_retryable) for any
+// other status and wherever the kind's guard says a repeat would be wrong.
+func (h *Handlers) retryTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	taskID, err := uuid.Parse(r.PathValue("taskId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "task not found", nil)
+		return
+	}
+	actorID, role, ok := h.actor(ctx)
+	if !ok {
+		httpapi.WriteError(w, r, httpapi.CodeUnauthorized, "authentication required", nil)
+		return
+	}
+	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to retry task", nil)
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	task, target, err := h.queue.RetryTx(ctx, tx, taskID, h.retryGuards)
+	switch {
+	case errors.Is(err, tasks.ErrNotFound):
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "task not found", nil)
+		return
+	case errors.Is(err, tasks.ErrNotRetryable):
+		httpapi.WriteError(w, r, httpapi.CodeConflict, "this task cannot be retried", map[string]any{"reason": "not_retryable"})
+		return
+	case err != nil:
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to retry task", nil)
+		return
+	}
+	if err := audit.Record(ctx, tx, audit.Entry{
+		ActorID: &actorID, ActorRole: role, Action: "admin.task.retry", ResourceType: "task", ResourceID: &task.ID,
+		Outcome: audit.OutcomeOK, RequestID: httpapi.RequestIDFromContext(ctx),
+		Details: map[string]any{"kind": string(task.Kind), "from": string(task.Status), "to": string(target)},
+	}); err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to retry task", nil)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to retry task", nil)
+		return
+	}
+	retried, err := h.store.tasks(ctx, `WHERE id = $1`, taskID)
+	if err != nil || len(retried) != 1 {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to read task", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, taskJSON(retried[0]))
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

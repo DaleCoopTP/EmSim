@@ -30,8 +30,8 @@ type adminService interface {
 }
 
 // AdminHandlers owns RFC-001 §5's "admin" route group's user and
-// workstation management (the rest of /admin/* — import, backup, status,
-// task retry — belongs to later slices/modules).
+// workstation management (backup, status and task retry are served by
+// internal/platform/status, ADR-033; import is still CLI-only).
 type AdminHandlers struct {
 	service      adminService
 	cookieSecure bool

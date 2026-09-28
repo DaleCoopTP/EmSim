@@ -62,12 +62,12 @@ const (
 	GroupItemActions Group = "item_actions"
 	// GroupTasks is GET /tasks/{id} — polling status of a background task
 	// (scenario generation, import, report build) the caller itself
-	// started. openapi.yaml tags it "tasks", distinct from "admin", even
-	// though /admin/tasks/{id}/retry shares the tag; RFC-001 §5 does not
-	// give this group its own row. Until the tasks-polling endpoint is
-	// actually built, admin and instructor are the two roles that ever
-	// start a task, so both are allowed here — this is a placeholder to
-	// revisit against the real handler, not a contract-derived rule.
+	// started. RFC-001 §5 does not give this group its own row. Until the
+	// tasks-polling endpoint is actually built, admin and instructor are
+	// the two roles that ever start a task, so both are allowed here —
+	// this is a placeholder to revisit against the real handler, not a
+	// contract-derived rule. POST /admin/tasks/{id}/retry is not part of
+	// it: that route is GroupAdmin only (ADR-033).
 	GroupTasks Group = "tasks"
 )
 

@@ -664,3 +664,102 @@ func databaseTime(ctx context.Context, tx pgx.Tx) (time.Time, error) {
 	}
 	return now, nil
 }
+
+// ErrNotRetryable refuses an admin retry (ADR-033): the task is not
+// failed/dead_letter, or its kind's RetryGuard says a repeat would be
+// wrong (e.g. an assessment that already has a result).
+var ErrNotRetryable = errors.New("task is not retryable")
+
+// RetryTarget is where a retried task goes: pending to be claimed again,
+// or waiting for its coordinator (a task that never got a sealed input).
+type RetryTarget string
+
+const (
+	RetryPending RetryTarget = "pending"
+	RetryWaiting RetryTarget = "waiting"
+)
+
+// RetryCandidate is the locked failed task a RetryGuard judges.
+type RetryCandidate struct {
+	ID        uuid.UUID
+	Kind      Kind
+	ScopeType string
+	ScopeID   *uuid.UUID
+	Payload   []byte
+	Status    TaskStatus
+	Attempts  int
+}
+
+// RetryGuard lets a kind's owner refuse or redirect an admin retry, inside
+// the same transaction that holds the task row. Return ErrNotRetryable to
+// refuse.
+type RetryGuard interface {
+	RetryTarget(ctx context.Context, tx pgx.Tx, task RetryCandidate) (RetryTarget, error)
+}
+
+// NeverRetry refuses every retry of its kind.
+type NeverRetry struct{}
+
+func (NeverRetry) RetryTarget(context.Context, pgx.Tx, RetryCandidate) (RetryTarget, error) {
+	return "", ErrNotRetryable
+}
+
+// RetryTx continues a failed or dead_letter task under the same id,
+// dedup_key and lease token (ADR-033, openapi POST /admin/tasks/{id}/
+// retry): one more attempt is added to its budget and it goes back to
+// pending — or to waiting, if its kind's guard says so and it was never
+// claimed. A kind without a guard is retried as pending. Returns
+// ErrNotFound when the task does not exist.
+func (s *Store) RetryTx(ctx context.Context, tx pgx.Tx, taskID uuid.UUID, guards map[Kind]RetryGuard) (RetryCandidate, RetryTarget, error) {
+	if tx == nil || taskID == uuid.Nil {
+		return RetryCandidate{}, "", ErrInvalidRequest
+	}
+	var task RetryCandidate
+	var kind, status string
+	err := tx.QueryRow(ctx, `SELECT id, kind, scope_type, scope_id, payload, status, attempts FROM tasks WHERE id = $1 FOR UPDATE`, taskID).
+		Scan(&task.ID, &kind, &task.ScopeType, &task.ScopeID, &task.Payload, &status, &task.Attempts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RetryCandidate{}, "", ErrNotFound
+	}
+	if err != nil {
+		return RetryCandidate{}, "", ErrStorage
+	}
+	task.Kind, task.Status = Kind(kind), TaskStatus(status)
+	if task.Status != TaskFailed && task.Status != TaskDeadLetter {
+		return task, "", ErrNotRetryable
+	}
+	target := RetryPending
+	if guard, ok := guards[task.Kind]; ok {
+		if target, err = guard.RetryTarget(ctx, tx, task); err != nil {
+			return task, "", err
+		}
+	}
+	now, err := databaseTime(ctx, tx)
+	if err != nil {
+		return task, "", err
+	}
+	switch target {
+	case RetryPending:
+		_, err = tx.Exec(ctx, `
+			UPDATE tasks
+			SET status = 'pending', max_attempts = GREATEST(max_attempts, attempts + 1),
+				terminal_worker = NULL, terminal_at = NULL, next_attempt_at = $2, updated_at = $2
+			WHERE id = $1`, taskID, now)
+	case RetryWaiting:
+		// waiting requires a never-claimed task (tasks_state_shape).
+		if task.Attempts != 0 {
+			return task, "", ErrNotRetryable
+		}
+		_, err = tx.Exec(ctx, `
+			UPDATE tasks
+			SET status = 'waiting', max_attempts = GREATEST(max_attempts, 1), last_error_code = NULL,
+				terminal_worker = NULL, terminal_at = NULL, wait_until = $2, wait_reason = 'admin_retry', updated_at = $2
+			WHERE id = $1`, taskID, now)
+	default:
+		return task, "", ErrNotRetryable
+	}
+	if err != nil {
+		return task, "", ErrStorage
+	}
+	return task, target, nil
+}

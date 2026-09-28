@@ -620,11 +620,15 @@ paths:
   /admin/tasks/{taskId}/retry:
     parameters: [ { name: taskId, in: path, required: true, schema: { type: string, format: uuid } } ]
     post:
-      tags: [tasks]
-      summary: Продолжить failed/dead_letter задачу с тем же id
-      description: Повтор запрещён для done/cancelled и оценок с уже существующей auto/expert. Для failed/dead_letter без оценки сохранить id/dedup/token; при sealed input увеличить бюджет и вернуть pending, при ошибке подготовки без input вернуть waiting. Нового автопересчёта нет.
+      tags: [admin]
+      summary: Продолжить failed/dead_letter задачу с тем же id (ADR-033, только администратор)
+      description: Повтор запрещён для done/cancelled, для оценок с уже существующей auto/expert и для хода заявителя (caller.reply/caller.warmup) — 409 с details.reason=not_retryable. Для failed/dead_letter сохраняются id/dedup/token, бюджет увеличивается на одну попытку; при sealed input (или для задач без проверки) задача возвращается в pending, оценка с ошибкой подготовки без input — в waiting. Нового автопересчёта нет.
       responses:
-        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminTaskSummary' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
 components:
   securitySchemes:

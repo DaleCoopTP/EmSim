@@ -164,6 +164,31 @@ func TestAdminStatusAndManualBackupThroughProcesses(t *testing.T) {
 		t.Fatalf("failed task in status body: %s", raw)
 	}
 
+	// The admin retries the dead-lettered task; the running worker then
+	// completes it. A done task cannot be retried, nor can an instructor
+	// retry anything.
+	var failedID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM tasks WHERE dedup_key = 'status:failed'`).Scan(&failedID); err != nil {
+		t.Fatal(err)
+	}
+	if response := jsonRequest(t, ctx, instructor, baseURL, http.MethodPost, "/api/v1/admin/tasks/"+failedID+"/retry", nil, nil); response.StatusCode != http.StatusForbidden {
+		t.Fatalf("instructor retry = %d, want 403", response.StatusCode)
+	}
+	var retried struct {
+		Status      string `json:"status"`
+		MaxAttempts int    `json:"max_attempts"`
+	}
+	if response := jsonRequest(t, ctx, admin, baseURL, http.MethodPost, "/api/v1/admin/tasks/"+failedID+"/retry", nil, &retried); response.StatusCode != http.StatusOK || retried.MaxAttempts != 2 {
+		t.Fatalf("admin retry = %d %+v", response.StatusCode, retried)
+	}
+	waitStatus("retried task done", func(b adminStatusResponse) bool {
+		return len(b.FailedTasks) == 0 && b.Tasks["system.noop"]["done"] == 1
+	})
+	refused.Error.Details = nil
+	if response := jsonRequest(t, ctx, admin, baseURL, http.MethodPost, "/api/v1/admin/tasks/"+failedID+"/retry", nil, &refused); response.StatusCode != http.StatusConflict || refused.Error.Details["reason"] != "not_retryable" {
+		t.Fatalf("retry of done task = %d %+v", response.StatusCode, refused)
+	}
+
 	// The scheduler's backup for today runs first; the manual one waits
 	// for it to finish.
 	waitStatus("scheduled backup done", func(b adminStatusResponse) bool {
