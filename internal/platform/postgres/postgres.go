@@ -29,7 +29,7 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-const ExpectedSchemaVersion int64 = 19
+const ExpectedSchemaVersion int64 = 20
 
 // applicationTables lists the platform tables Ready() requires to exist,
 // alongside the expected goose version — a version match alone would not
@@ -40,7 +40,7 @@ var applicationTables = []string{
 	"lessons", "assignments", "runs", "items", "actions", "evidence", "item_events", "control_reports",
 	"blobs", "voice_assets", "calls",
 	"trainee_assessment_state", "assessment_inputs", "assessments", "training_examples",
-	"report_files", "intake_catalog_versions",
+	"report_files", "intake_catalog_versions", "platform_heartbeats",
 }
 
 var (

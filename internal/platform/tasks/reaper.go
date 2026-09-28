@@ -57,6 +57,11 @@ func (r *Reaper) Run(ctx context.Context) error {
 				return nil
 			}
 			if _, err := r.store.ReapExpired(ctx); err != nil {
+				// A stop that lands mid-reap cancels the query; that is a
+				// graceful shutdown, not an operational failure.
+				if ctx.Err() != nil {
+					return nil
+				}
 				return ErrReaperOperational
 			}
 		}

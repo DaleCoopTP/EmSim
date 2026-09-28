@@ -207,6 +207,16 @@ CREATE TABLE audit_log (
 );
 CREATE INDEX audit_log_resource_idx ON audit_log (resource_type, resource_id, at);
 CREATE INDEX audit_log_actor_idx ON audit_log (actor_id, at);
+CREATE INDEX audit_log_at_brin_idx ON audit_log USING brin (at);  -- audit.prune (ADR-033)
+
+-- ADR-033: last state a worker observed for a component the api cannot
+-- reach itself (model health, backup directory free space).
+CREATE TABLE platform_heartbeats (
+    component  text PRIMARY KEY CHECK (component ~ '^[a-z][a-z0-9_.-]{0,63}$'),
+    status     text NOT NULL CHECK (status IN ('ok', 'unavailable')),
+    detail     jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(detail) = 'object'),
+    checked_at timestamptz NOT NULL
+);
 
 -- ============================================================ training
 

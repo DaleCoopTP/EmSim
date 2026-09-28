@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata" // SCHEDULE_TZ in a runtime image without a zoneinfo database
 	"unicode/utf8"
 
 	llmclient "emsim/internal/platform/llm"
@@ -41,6 +42,14 @@ const (
 const (
 	defaultJudgeTimeout   = 120 * time.Second
 	defaultJudgeMaxTokens = 1024
+)
+
+// Maintenance schedule defaults (ADR-033): daily slots in Moscow time,
+// audit kept six months (RFC-001 §9).
+const (
+	defaultScheduleTZ         = "Europe/Moscow"
+	defaultAuditRetentionDays = 183
+	defaultAuditPruneAt       = "04:00"
 )
 
 // Caller generation defaults mirror the local MVP's own tuned values
@@ -145,11 +154,20 @@ type Worker struct {
 	// falling back to the shared LLM_API_KEY. Never logged.
 	CallerLLMAPIKey string
 	JudgeLLMAPIKey  string
-	// LLMDialect (ADR-033, LLM_DIALECT) is llmclient.DialectLlama (default:
+	// LLMDialect (ADR-033, LLM_DIALECT) is llm.DialectLlama (default:
 	// llama-server, Ollama) or llm.DialectOpenAI (a strict remote API,
 	// sent only standard request fields). Shared by caller and judge.
-	LLMDialect      llmclient.Dialect
-	LocalTestPolicy string
+	LLMDialect llmclient.Dialect
+	// ScheduleLocation (ADR-033, SCHEDULE_TZ, default Europe/Moscow) is
+	// the time zone the maintenance scheduler's daily slots are in.
+	ScheduleLocation *time.Location
+	// AuditRetentionDays (AUDIT_RETENTION_DAYS, default 183 — RFC-001 §9's
+	// six months) is how old an audit_log row gets before audit.prune
+	// deletes it; AuditPruneAt (AUDIT_PRUNE_AT, "HH:MM", default 04:00)
+	// is when that runs each day.
+	AuditRetentionDays int
+	AuditPruneAt       time.Duration
+	LocalTestPolicy    string
 }
 
 func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker, error) {
@@ -228,6 +246,22 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 	if err != nil {
 		return Worker{}, ErrInvalidWorkerConfiguration
 	}
+	scheduleTZ := strings.TrimSpace(lookup("SCHEDULE_TZ"))
+	if scheduleTZ == "" {
+		scheduleTZ = defaultScheduleTZ
+	}
+	scheduleLocation, err := time.LoadLocation(scheduleTZ)
+	if err != nil {
+		return Worker{}, fmt.Errorf("%w: SCHEDULE_TZ is not a known time zone", ErrInvalidWorkerConfiguration)
+	}
+	auditRetentionDays, err := parseIntOrDefault(lookup("AUDIT_RETENTION_DAYS"), defaultAuditRetentionDays)
+	if err != nil {
+		return Worker{}, ErrInvalidWorkerConfiguration
+	}
+	auditPruneAt, err := parseTimeOfDayOrDefault(lookup("AUDIT_PRUNE_AT"), defaultAuditPruneAt)
+	if err != nil {
+		return Worker{}, fmt.Errorf("%w: AUDIT_PRUNE_AT must be HH:MM", ErrInvalidWorkerConfiguration)
+	}
 	sharedAPIKey := strings.TrimSpace(lookup("LLM_API_KEY"))
 	llmDialect := llmclient.Dialect(strings.TrimSpace(lookup("LLM_DIALECT")))
 	if llmDialect == "" {
@@ -247,15 +281,24 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 		AssessmentJudge:    assessmentJudge, JudgeLLMURL: strings.TrimSpace(lookup("JUDGE_LLM_URL")),
 		JudgeLLMModel: strings.TrimSpace(lookup("JUDGE_LLM_MODEL")),
 		JudgeTimeout:  judgeTimeout, JudgeMaxTokens: judgeMaxTokens,
-		CallerLLMAPIKey: firstNonEmpty(strings.TrimSpace(lookup("CALLER_LLM_API_KEY")), sharedAPIKey),
-		JudgeLLMAPIKey:  firstNonEmpty(strings.TrimSpace(lookup("JUDGE_LLM_API_KEY")), sharedAPIKey),
-		LLMDialect:      llmDialect,
+		CallerLLMAPIKey:  firstNonEmpty(strings.TrimSpace(lookup("CALLER_LLM_API_KEY")), sharedAPIKey),
+		JudgeLLMAPIKey:   firstNonEmpty(strings.TrimSpace(lookup("JUDGE_LLM_API_KEY")), sharedAPIKey),
+		LLMDialect:       llmDialect,
+		ScheduleLocation: scheduleLocation, AuditRetentionDays: auditRetentionDays, AuditPruneAt: auditPruneAt,
 		LocalTestPolicy: strings.TrimSpace(lookup("WORKER_LOCAL_TEST_POLICY")),
 	}
 	if err := config.Validate(); err != nil {
 		return Worker{}, err
 	}
 	return config, nil
+}
+
+func parseTimeOfDayOrDefault(raw, fallback string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = fallback
+	}
+	return tasks.ParseTimeOfDay(raw)
 }
 
 func firstNonEmpty(values ...string) string {
@@ -320,6 +363,9 @@ func (c Worker) Validate() error {
 		return fmt.Errorf("%w: ASSESSMENT_JUDGE=llm (the default) needs JUDGE_LLM_URL and JUDGE_LLM_MODEL; set ASSESSMENT_JUDGE=off to run without a model", ErrInvalidWorkerConfiguration)
 	}
 	if c.JudgeTimeout <= 0 || c.JudgeMaxTokens < 1 {
+		return ErrInvalidWorkerConfiguration
+	}
+	if c.ScheduleLocation == nil || c.AuditRetentionDays < 0 || c.AuditPruneAt < 0 || c.AuditPruneAt >= 24*time.Hour {
 		return ErrInvalidWorkerConfiguration
 	}
 	if !llmclient.ValidDialect(c.LLMDialect) {

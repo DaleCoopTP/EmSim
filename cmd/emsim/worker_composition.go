@@ -14,12 +14,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"emsim/internal/assessment"
 	"emsim/internal/assessment/operator112/descjudge"
 	"emsim/internal/content"
+	"emsim/internal/platform/audit"
 	"emsim/internal/platform/config"
 	"emsim/internal/platform/llm"
 	"emsim/internal/platform/observability"
@@ -40,6 +43,13 @@ import (
 // through a real database before any domain module exists (RFC-001 §13,
 // W0: "задача noop проходит очередь").
 const kindSystemNoop tasks.Kind = "system.noop"
+
+// kindAuditPrune (ADR-033) deletes audit_log rows older than
+// AUDIT_RETENTION_DAYS once a day; the maintenance scheduler enqueues it.
+const kindAuditPrune tasks.Kind = "audit.prune"
+
+// auditPruneBatch bounds one DELETE statement of audit.prune.
+const auditPruneBatch = 5000
 
 // registerKinds is the single place every task kind's Spec is declared
 // (docs/technical-discovery.md §6), shared by both processes that touch
@@ -101,6 +111,14 @@ func registerKinds(registry *tasks.Registry) error {
 	}); err != nil {
 		return err
 	}
+	// ADR-033: daily audit cleanup, short pool, low priority — it never
+	// competes with lesson.close. Lease covers a large first cleanup.
+	if err := registry.Register(tasks.Spec{
+		Name: kindAuditPrune, Pool: "short", MaxAttempts: 3,
+		Lease: 10 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 5,
+	}); err != nil {
+		return err
+	}
 	// ADR-029: best-effort prompt-cache warm-up, same "caller" pool but a
 	// lower priority, so a real reply waiting for a free worker is always
 	// claimed first. One attempt: a failed warm-up only means the next
@@ -128,6 +146,47 @@ func noopHandler(pool *pgxpool.Pool, store *tasks.Store) tasks.Handler {
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return errors.New("noop commit failed")
+		}
+		return nil
+	})
+}
+
+// auditPruneHandler is kindAuditPrune's worker side (ADR-033). The
+// batched delete commits as it goes (audit.Prune); the prune's own audit
+// row and the task's terminal state commit together afterwards. A retry
+// after a failure only finds what is left, so partial progress is safe.
+func auditPruneHandler(pool *pgxpool.Pool, store *tasks.Store, retentionDays int) tasks.Handler {
+	return tasks.HandlerFunc(func(ctx context.Context, lease tasks.Lease) error {
+		deleted, err := audit.Prune(ctx, pool, retentionDays, auditPruneBatch)
+		if err != nil {
+			failure, ferr := tasks.NewHandlerFailure(tasks.Retryable, "audit_prune_failed")
+			if ferr != nil {
+				return ferr
+			}
+			return failure
+		}
+		tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+		if err != nil {
+			return errors.New("audit.prune transaction failed")
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		details := map[string]any{"deleted": deleted, "retention_days": retentionDays}
+		if err := audit.Record(ctx, tx, audit.Entry{
+			ActorRole: "system", Action: "audit.prune", ResourceType: "audit_log", Outcome: audit.OutcomeOK, Details: details,
+		}); err != nil {
+			return errors.New("audit.prune record failed")
+		}
+		result, err := json.Marshal(details)
+		if err != nil {
+			return errors.New("audit.prune result encoding failed")
+		}
+		if _, err := store.Terminal(ctx, tx, tasks.TerminalRequest{
+			Lease: lease, Now: time.Now().UTC(), Outcome: tasks.Done(result),
+		}); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return errors.New("audit.prune commit failed")
 		}
 		return nil
 	})
@@ -488,7 +547,7 @@ func compose(processConfig config.Worker, pool *pgxpool.Pool, metrics *observabi
 		}
 	}
 	if processConfig.Role == tasks.RoleMaintenance || processConfig.Role == tasks.RoleAll {
-		components.Maintenance, err = composeMaintenance(policy, pool, recoveryStore, metrics, logger)
+		components.Maintenance, err = composeMaintenance(processConfig, policy, pool, store, recoveryStore, metrics, logger)
 		if err != nil {
 			return tasks.Components{}, err
 		}
@@ -506,6 +565,9 @@ func composePools(
 		return nil, errors.New("handler configuration is invalid")
 	}
 	if err := handlers.Register(training.KindLessonClose, lessonCloseHandler(pool, store, trainingService)); err != nil {
+		return nil, errors.New("handler configuration is invalid")
+	}
+	if err := handlers.Register(kindAuditPrune, auditPruneHandler(pool, store, processConfig.AuditRetentionDays)); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
 	if err := handlers.Register(training.KindAssessmentEvaluate, assessmentService); err != nil {
@@ -602,7 +664,8 @@ func composePools(
 }
 
 func composeMaintenance(
-	policy tasks.Policy, pool *pgxpool.Pool, recoveryStore *tasks.Recovery, metrics *observability.Metrics, logger observability.Logger,
+	processConfig config.Worker, policy tasks.Policy, pool *pgxpool.Pool, store *tasks.Store,
+	recoveryStore *tasks.Recovery, metrics *observability.Metrics, logger observability.Logger,
 ) (tasks.Supervisor, error) {
 	reaper, err := tasks.NewReaper(policy, tasks.SystemTickerFactory{}, recoveryStore)
 	if err != nil {
@@ -614,7 +677,23 @@ func composeMaintenance(
 	if err != nil {
 		return nil, errors.New("maintenance configuration is invalid")
 	}
-	return tasks.Composite(reaper, sampler)
+	// ADR-033: daily maintenance tasks. A failed enqueue is logged and
+	// retried on the next tick; it never stops the process.
+	scheduler, err := tasks.NewScheduler(maintenanceSchedules(processConfig), processConfig.ScheduleLocation, time.Minute,
+		tasks.SystemClock{}, tasks.SystemTickerFactory{}, store,
+		func(ctx context.Context, kind tasks.Kind, _ error) {
+			logger.Operation(ctx, slog.LevelWarn, "task_schedule", "failed", "", "enqueue_failed_"+strings.ReplaceAll(string(kind), ".", "_"))
+		})
+	if err != nil {
+		return nil, errors.New("maintenance configuration is invalid")
+	}
+	return tasks.Composite(reaper, sampler, scheduler)
+}
+
+// maintenanceSchedules lists the daily tasks the maintenance scheduler
+// enqueues (ADR-033).
+func maintenanceSchedules(processConfig config.Worker) []tasks.Schedule {
+	return []tasks.Schedule{{Kind: kindAuditPrune, At: processConfig.AuditPruneAt}}
 }
 
 func e2eRecoveryPolicy() tasks.Policy {

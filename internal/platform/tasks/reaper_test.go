@@ -53,3 +53,38 @@ func (r *reaperFakeStore) ReapExpired(context.Context) (ReapSummary, error) {
 	r.called <- struct{}{}
 	return ReapSummary{}, nil
 }
+
+// TestReaperStopDuringReapIsGraceful: a stop that cancels an in-flight
+// ReapExpired is a clean shutdown; the same error without a stop is still
+// an operational failure.
+func TestReaperStopDuringReapIsGraceful(t *testing.T) {
+	for _, stopped := range []bool{true, false} {
+		ticker := &reaperFakeTicker{ticks: make(chan time.Time, 1), stopped: make(chan struct{})}
+		ctx, cancel := context.WithCancel(context.Background())
+		store := reaperFailingStore{cancel: func() {
+			if stopped {
+				cancel()
+			}
+		}}
+		reaper, err := NewReaper(DefaultPolicy(), reaperTickerFactory{ticker: ticker}, store)
+		if err != nil {
+			t.Fatalf("NewReaper: %v", err)
+		}
+		ticker.ticks <- time.Now()
+		err = reaper.Run(ctx)
+		cancel()
+		if stopped && err != nil {
+			t.Fatalf("stop during reap: %v", err)
+		}
+		if !stopped && err != ErrReaperOperational {
+			t.Fatalf("reap failure without stop: %v", err)
+		}
+	}
+}
+
+type reaperFailingStore struct{ cancel func() }
+
+func (r reaperFailingStore) ReapExpired(context.Context) (ReapSummary, error) {
+	r.cancel()
+	return ReapSummary{}, context.Canceled
+}
