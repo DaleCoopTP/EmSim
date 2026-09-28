@@ -3338,3 +3338,62 @@ Changed: `design-docs/adr/{031-dds-crew-communication.md,README.md}`, `design-do
 Validation: `python3 design-docs/contracts/check.py`.
 
 Next: c2 — контракты.
+
+## 2026-09-28 — ДДС-2: связь с бригадой (ADR-031)
+
+Status: completed. Коммиты c1–c13 из `slice-dds-2-plan.md` в ветке `dds-2` (от `main`).
+
+**Контракты.**
+- `scenario.schema.json`: `since: call_ended` + `since_contact` (обязателен при `call_ended`, иначе запрещён), `expects.comment_facts`, `contact.role`.
+- `evidence.schema.json`: `calls[].direction`/`event_key`, необязательные; старые снимки валидны.
+- `schema.sql`: столбцы `calls.direction`/`event_key`, уникальность `(item_id, event_key)`.
+- `openapi.yaml`:
+  - `answer_incoming {event_key}` для ДДС, отказ `call_missed`;
+  - `Item.incoming_call`, `DeliveredEvent.answered`, `Call.direction`/`event_key`;
+  - `Contact.role`/`phrases`, `Monitor.rows[].reports` (`MonitorReport`).
+
+**Content.**
+- `Event.SinceContact`, `EventExpects.CommentFacts`, `Contact.Role` (`omitempty`: digest старых тел не меняется).
+- Проверки импорта для всех трёх полей.
+- `ProjectContacts` отдаёт роль и тексты фраз. Решение ADR-031: это не эталон, поэтому прежний тест «фразы скрыты» заменён.
+
+**Training.**
+- Миграция `00018`, `ExpectedSchemaVersion = 18`.
+- `ddsEventAnchor`/`eventAnchor.matches`: исходящий `call_end` планирует события `call_ended` своего контакта.
+- `dds/incoming.go`: `answer_incoming`, окно звонка 30 с, `RingingCall`, `call_end` входящего без журнала звонка и записи.
+- `Execute` загружает доставленные `phone_incoming` в `Item.IncomingRings` под блокировкой item.
+- Обязательный звонок засчитывается только исходящим, в том числе в `assessment/dds` (`C_CALL*`, тексты для `G_ADDRESS`).
+- Монитор: `ItemComms`, `dds.ReportReactions` в HTTP-слое.
+
+**Seed.**
+- `dds-district-tree-cycle-01-v2`, `dds-ambulance-cycle-01-v2`: контакты с ролями, доклады после звонка, входящие звонки, `comment_facts`.
+- Новый `dds-district-pipe-burst-01`: отдел контроля звонит при отсутствии первичного статуса и с повторными обращениями.
+- Классификатор: `14020300` (строка 681 XLSX).
+- Манифест: WAV `crew_leader` для новых версий.
+
+**Web.**
+- `CrewCommsPanel` («Связь с бригадой»): баннер входящего звонка с отсчётом, разговор, телефон с контактами по ролям и текстом фраз, журнал связи.
+- Колонка «Связь» в мониторе, `DDSCommsReview` в разборе.
+- Старые карточки (пустой `terminal_statuses`) сохраняют список «Сообщения».
+
+Решения и отклонения от плана:
+- `call_end` для входящего не меняет контракт: `accepted_by`/`summary` остаются в теле и могут быть пустыми строками. Отрицательные проверки `check.py` («call_end без accepted_by/summary») сохранены, общая необязательность — ДДС-3.
+- Импорт запрещает менять заголовок сценария между версиями (`title_changed`): v2 сохраняют заголовки v1.
+- Правило плана «`phone_incoming` с `call_ended` на свой же контакт запрещён» не введено: в сценариях бригада перезванивает после звонка ей, это нормальный случай.
+- Отдельный `dds-comms.spec.ts` не заведён: доклад, входящий звонок и `reports` монитора (через API) покрывает `smoke.spec.ts`. Пропущенный звонок в браузере не проверяется (окно 30 с), он покрыт интеграционным тестом и тестами проекций.
+- Порог «красной» задержки в мониторе не введён: монитор показывает фактическую задержку без норматива (ADR-031).
+
+Validation:
+- `make verify` после каждого коммита с кодом;
+- `python3 design-docs/contracts/check.py`;
+- `make test-integration` — полный набор, включая новый `TestDDSCrewCommunicationThroughAPIAndWorker` и `TestDDSResponseCycleThroughAPIAndWorker`;
+- `make verify-web`, `npm run lint` (только старые предупреждения).
+
+Browser e2e: `npm run test:e2e` через compose не запускался — `docker pull` по-прежнему не завершается из Docker Desktop (сеть хоста). Поэтому Playwright прогнан против локального стека: Postgres 16 в контейнере, `emsim migrate/bootstrap-admin/import seed/api/worker` из исходников с env как в `compose.no-llm.yaml`. Прошли все 7 спеков. Эталоны `live-monitor` (колонка «Связь») обновлены, новые `dds-comms` добавлены, всё просмотрено. Экраны панели, монитора и разбора проверены вручную во встроенном браузере.
+
+Риски и открытые вопросы:
+- CI job `web-e2e` должен подтвердить эталоны в своём окружении. `smoke` стал длиннее примерно на 35 с: реальное время доклада и входящего звонка.
+- Озвучки текста событий (TTS) нет: входящий звонок показывает текст. У `control`/`applicant` нет WAV.
+- Задержки реакции пока не оцениваются, `comment_facts` не проверяются — это ДДС-3 и ДДС-4.
+
+Next: ДДС-3 — `dds/rubric-v2` (`T_PROGRESS` по докладам и `within_s`, `S_SEQUENCE`, `C_CALLS` с пропущенными входящими, необязательные `accepted_by`/`summary`).

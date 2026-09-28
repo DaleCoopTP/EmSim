@@ -32,6 +32,21 @@ with comments. The old accept/reject/comment/close buttons and the okrug
 form stay only for items whose `terminal_statuses` is empty (the archived
 slice 2–7 pilots).
 
+ДДС-2 (ADR-031) puts `CrewCommsPanel` («Связь с бригадой») beside the card
+for those items. It holds:
+- the ringing `incoming_call` banner with a countdown and «Ответить»
+  (`answer_incoming`);
+- the answered call's words and «Завершить разговор» (`call_end` without a
+  call log);
+- the phone, its contacts grouped by `role`, showing a phrase's text when
+  there is no recording;
+- one time-ordered log of reports and calls, with missed calls in red.
+
+The instructor monitor's «Связь» column reads `rows[].reports`: the latest
+report, its age and the actual reaction delay. The review screen
+(`DDSCommsReview`) lists every report and call with its text, answer and
+reaction times.
+
 The operator 112 intake has its own trainee workspace and instructor review
 screens. Prepared questions now reveal only their spoken answers; hold and
 resume preserve the server-side dialogue across reloads. The pre-slice

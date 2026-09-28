@@ -37,6 +37,19 @@
   «Начала реагирования», доклады бригады (`notice`-события с `expects`) и
   `expected_chain` до «Работы завершены». Голосовые фразы — те же WAV, что у
   `pilot-phone-01` (`voice-assets/manifest.json`).
+- `scenarios/dds-district-tree-cycle-01-v2.json`, `scenarios/dds-ambulance-cycle-01-v2.json`
+  (ДДС-2, ADR-031) — вторые версии тех же сценариев. Контакты с ролями:
+  `crew_leader` (`crew`), `control` (`control_112`), `applicant`
+  (`applicant`). Доклады бригады — `since: call_ended`, `since_contact:
+  crew_leader`, часть из них входящие звонки (`phone_incoming`), в
+  `expects.comment_facts` — факты для комментария (оценка — ДДС-4). Заголовок
+  совпадает с версией 1: импорт не позволяет менять заголовок сценария.
+- `scenarios/dds-district-pipe-burst-01.json` (ДДС-2) — прорыв трубы в
+  подъезде: отдел контроля 112 звонит через 40 с, если нет первичного статуса
+  (`status_in: [received]`), и ещё раз с повторными обращениями о заливе кв. 12.
+  Тип `14020300` «Течь (прорыв трубы) в квартире (подъезде подвале)»
+  добавлен в `classifier.json` из строки 681 XLSX. WAV есть только у
+  `crew_leader`; у `control`/`applicant` телефон показывает текст фразы.
 - Пилоты срезов 2–7 (`pilot-tree-01/02`, `pilot-phone-01`, `pilot-z-events-01`)
   помечены `"archived": true`: импорт переводит их в `scenarios.status=archived`,
   каталог по умолчанию их не показывает; тела и версии не меняются.
