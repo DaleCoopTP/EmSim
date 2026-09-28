@@ -37,6 +37,27 @@ func TestScoreUnavailableForcesNeedsReviewWithNilScore(t *testing.T) {
 	}
 }
 
+// A zero-weight criterion is informational (ДДС-4/ADR-034 amended,
+// dds/rubric-v3's G_GRAMMAR): unavailable, it must not force needs_review
+// or move the score; a critical one is never informational.
+func TestScoreZeroWeightUnavailableIsInformational(t *testing.T) {
+	effective := Rubric{PassThreshold: 70, CriticalCap: 40}
+	got := Score([]CriterionResult{
+		{ID: "A", Status: CriterionMet, Weight: 100},
+		{ID: "G", Status: CriterionUnavailable, Weight: 0},
+	}, effective)
+	if got.Status != StatusReady || got.Score == nil || *got.Score != 100 {
+		t.Fatalf("got %+v, want ready 100 (zero-weight unavailable ignored)", got)
+	}
+	got = Score([]CriterionResult{
+		{ID: "A", Status: CriterionMet, Weight: 100},
+		{ID: "G", Status: CriterionUnavailable, Weight: 0, Critical: true},
+	}, effective)
+	if got.Status != StatusNeedsReview {
+		t.Fatalf("status = %q, want needs_review for a critical zero-weight criterion", got.Status)
+	}
+}
+
 func TestScoreCriticalNotMetCapsScoreAndFails(t *testing.T) {
 	effective := Rubric{PassThreshold: 50, CriticalCap: 40}
 	results := []CriterionResult{

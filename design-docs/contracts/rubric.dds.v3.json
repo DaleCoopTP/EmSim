@@ -71,7 +71,7 @@
     {
       "id": "D_COMMENT_CONTENT",
       "title": "Комментарии к статусам содержат нужные сведения",
-      "weight": 15,
+      "weight": 20,
       "kind": "llm",
       "critical": false,
       "prompt": "dds-comment-facts-v1",
@@ -93,8 +93,8 @@
     },
     {
       "id": "G_GRAMMAR",
-      "title": "Грамотность письменных комментариев",
-      "weight": 5,
+      "title": "Грамотность письменных комментариев (справочно, без баллов)",
+      "weight": 0,
       "kind": "llm",
       "critical": false,
       "prompt": "dds-grammar-v1",

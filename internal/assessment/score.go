@@ -70,6 +70,14 @@ func Score(results []CriterionResult, effective Rubric) ScoreResult {
 		case CriterionNotApplicable:
 			continue
 		case CriterionUnavailable:
+			// ДДС-4/ADR-034 (amended): a zero-weight criterion is
+			// informational (dds/rubric-v3's G_GRAMMAR) — it is shown
+			// but can never decide the score, so it cannot force
+			// needs_review either. A critical criterion is never
+			// informational.
+			if r.Weight == 0 && !r.Critical {
+				continue
+			}
 			unavailable = true
 			continue
 		}

@@ -248,16 +248,16 @@ func TestCommentContentAllYesIsMet(t *testing.T) {
 	if r.Status != assessment.CriterionMet || r.Score == nil || *r.Score != 1 {
 		t.Fatalf("D_COMMENT_CONTENT = %+v, want met with score 1", r)
 	}
-	// 3 fact questions + 1 aggregate contradiction question share weight 15.
+	// 3 fact questions + 1 aggregate contradiction question share weight 20.
 	var points float64
 	for _, d := range r.Details {
 		points += d.Points
-		if d.MaxPoints != 15.0/4 {
-			t.Fatalf("detail %s max_points = %v, want 3.75", d.Key, d.MaxPoints)
+		if d.MaxPoints != 20.0/4 {
+			t.Fatalf("detail %s max_points = %v, want 5", d.Key, d.MaxPoints)
 		}
 	}
-	if points != 15 || len(r.Details) != 4 {
-		t.Fatalf("details points = %v over %d rows, want 15 over 4", points, len(r.Details))
+	if points != 20 || len(r.Details) != 4 {
+		t.Fatalf("details points = %v over %d rows, want 20 over 4", points, len(r.Details))
 	}
 }
 

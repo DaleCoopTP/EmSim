@@ -65,9 +65,9 @@
 | `T_PROGRESS` | 20 | 15 | deterministic |
 | `S_SEQUENCE` | 15 | 15 | deterministic |
 | `D_COMMENT_REQUIRED` | 10 | 5 | deterministic |
-| `D_COMMENT_CONTENT` | — | 15 | llm, `dds-comment-facts-v1` |
+| `D_COMMENT_CONTENT` | — | 20 (было 15, поправка 29.09) | llm, `dds-comment-facts-v1` |
 | `C_CALLS` | 10 | 5 | deterministic |
-| `G_GRAMMAR` | — | 5 | llm, `dds-grammar-v1` |
+| `G_GRAMMAR` | — | 0 (было 5, поправка 29.09: справочный) | llm, `dds-grammar-v1` |
 
 Порог и `critical_cap` — как в v2 (70 / 40).
 
