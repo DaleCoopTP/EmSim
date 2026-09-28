@@ -11,6 +11,7 @@ import (
 	"emsim/internal/platform/httpapi"
 	"emsim/internal/platform/realtime"
 	"emsim/internal/training"
+	"emsim/internal/training/dds"
 
 	"github.com/google/uuid"
 )
@@ -76,6 +77,35 @@ type monitorRowJSON struct {
 	QueueLeft     int               `json:"queue_left"`
 	Done          int               `json:"done"`
 	LastAction    *actionJSON       `json:"last_action,omitempty"`
+	// Reports (ADR-031) is present for DDS lessons only.
+	Reports []monitorReportJSON `json:"reports,omitempty"`
+}
+
+// monitorReportJSON is openapi.yaml's MonitorReport.
+type monitorReportJSON struct {
+	ItemID      string  `json:"item_id"`
+	EventKey    string  `json:"event_key"`
+	Delivery    string  `json:"delivery"`
+	From        string  `json:"from"`
+	FromLabel   string  `json:"from_label"`
+	DeliveredAt string  `json:"delivered_at"`
+	AnsweredAt  *string `json:"answered_at"`
+	Missed      bool    `json:"missed"`
+	ReactionAt  *string `json:"reaction_at"`
+}
+
+func toMonitorReportsJSON(comms []training.ItemComms, now time.Time) []monitorReportJSON {
+	var out []monitorReportJSON
+	for _, c := range comms {
+		for _, r := range dds.ReportReactions(c.Item, c.Events, c.Actions, now) {
+			out = append(out, monitorReportJSON{
+				ItemID: r.ItemID.String(), EventKey: r.EventKey, Delivery: r.Delivery, From: r.From, FromLabel: r.FromLabel,
+				DeliveredAt: formatTime(r.DeliveredAt), AnsweredAt: formatTimePtr(r.AnsweredAt), Missed: r.Missed,
+				ReactionAt: formatTimePtr(r.ReactionAt),
+			})
+		}
+	}
+	return out
 }
 
 type monitorJSON struct {
@@ -105,6 +135,7 @@ func (h *Handlers) toMonitorJSON(result training.MonitorResult, now time.Time) m
 			action := toActionJSON(*row.LastAction)
 			rowJSON.LastAction = &action
 		}
+		rowJSON.Reports = toMonitorReportsJSON(row.Comms, now)
 		rows[i] = rowJSON
 	}
 	return monitorJSON{

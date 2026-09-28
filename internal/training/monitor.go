@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"emsim/internal/auth"
+	"emsim/internal/content"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -29,6 +30,19 @@ type MonitorRow struct {
 	// LastAction is nil until the trainee's run has at least one action
 	// across any of its items.
 	LastAction *Action
+	// Comms (ADR-031, DDS only) is, per active item, what the monitor's
+	// crew-report view is computed from.
+	Comms []ItemComms
+}
+
+// ItemComms is one active DDS item's communication record for the
+// monitor: the item with Calls and Contacts loaded, its delivered events
+// and its action log. The HTTP layer derives the report view from it
+// (dds.ReportReactions) — training itself never imports exercise rules.
+type ItemComms struct {
+	Item    Item
+	Events  []DeliveredEvent
+	Actions []Action
 }
 
 // MonitorResult is Service.Monitor's read — everything openapi.yaml's
@@ -92,6 +106,15 @@ func (s *Service) Monitor(ctx context.Context, actor auth.Principal, lessonID uu
 					row.ActiveItems = append(row.ActiveItems, it)
 				}
 			}
+			if lesson.ExerciseType == content.ExerciseTypeDDSProcessing {
+				for _, it := range row.ActiveItems {
+					comms, err := s.itemComms(ctx, tx, it)
+					if err != nil {
+						return err
+					}
+					row.Comms = append(row.Comms, comms)
+				}
+			}
 			row.QueueLeft = len(a.ScenarioVersionIDs) - run.QueueCursor
 			if row.QueueLeft < 0 {
 				row.QueueLeft = 0
@@ -113,4 +136,25 @@ func (s *Service) Monitor(ctx context.Context, actor auth.Principal, lessonID uu
 		return MonitorResult{}, err
 	}
 	return result, nil
+}
+
+func (s *Service) itemComms(ctx context.Context, tx pgx.Tx, item Item) (ItemComms, error) {
+	var err error
+	if item.Calls, err = s.store.CallsByItem(ctx, tx, item.ID); err != nil {
+		return ItemComms{}, err
+	}
+	version, err := s.scenarios.VersionByID(ctx, tx, item.ScenarioVersionID)
+	if err != nil {
+		return ItemComms{}, err
+	}
+	item.Contacts = version.Body.Contacts
+	events, err := s.deliveredEventsForItem(ctx, tx, item.ID, item.ScenarioVersionID)
+	if err != nil {
+		return ItemComms{}, err
+	}
+	actions, err := s.store.ActionsByItem(ctx, tx, item.ID)
+	if err != nil {
+		return ItemComms{}, err
+	}
+	return ItemComms{Item: item, Events: events, Actions: actions}, nil
 }

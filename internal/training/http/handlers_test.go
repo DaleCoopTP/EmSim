@@ -562,3 +562,45 @@ func TestIncomingCallProjection(t *testing.T) {
 		t.Fatalf("missed call = %+v / %+v", missed.IncomingCall, missed.Events[2])
 	}
 }
+
+// ADR-031: a DDS monitor row carries its active items' crew reports with
+// the actual reaction time.
+func TestMonitorReports(t *testing.T) {
+	svc := trainingFixture()
+	item := svc.item
+	item.Contacts = []content.Contact{{Key: "crew_leader", Label: "Руководитель бригады"}}
+	delivered := svc.now.Add(-60 * time.Second)
+	svc.monitor = training.MonitorResult{Lesson: svc.lesson, Rows: []training.MonitorRow{{
+		WorkstationNo: 7, RunID: svc.run.ID, ActiveItems: []training.Item{item},
+		Comms: []training.ItemComms{{
+			Item:    item,
+			Events:  []training.DeliveredEvent{{Key: "e1", Delivery: "notice", From: "crew_leader", Text: "Выехали", DeliveredAt: delivered}},
+			Actions: []training.Action{{Type: training.CommandSetStatus, Accepted: true, ServerAt: delivered.Add(12 * time.Second)}},
+		}},
+	}}}
+	response := httptest.NewRecorder()
+	trainingMux(svc, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("GET", "/api/v1/lessons/"+svc.lesson.ID.String()+"/monitor", nil, true))
+	if response.Code != 200 {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var got struct {
+		Rows []struct {
+			Reports []map[string]any `json:"reports"`
+		} `json:"rows"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Rows) != 1 || len(got.Rows[0].Reports) != 1 {
+		t.Fatalf("rows = %+v", got.Rows)
+	}
+	r := got.Rows[0].Reports[0]
+	if r["item_id"] != item.ID.String() || r["event_key"] != "e1" || r["from_label"] != "Руководитель бригады" ||
+		r["delivered_at"] != formatTime(delivered) || r["reaction_at"] != formatTime(delivered.Add(12*time.Second)) ||
+		r["answered_at"] != nil || r["missed"] != false {
+		t.Fatalf("report = %+v", r)
+	}
+	if _, leaked := r["text"]; leaked {
+		t.Fatalf("report carries event text: %+v", r)
+	}
+}
