@@ -1,0 +1,346 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "112-fire-alarm-hotel-kosmos-01",
+  "version": 1,
+  "title": "Сработала пожарная сигнализация на 9 этаже гостиницы «Космос»",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "exercise_type": "operator112_intake",
+    "difficulty": 3,
+    "intake112": {
+      "mode": "full_case",
+      "caller_mode": "free_text",
+      "call": {
+        "aon": "+74952340012",
+        "local_time": "15:32",
+        "time_zone": "Europe/Moscow"
+      },
+      "dialogue": {
+        "caller": {
+          "persona": "Ты — Алина Руслановна Гаврилова, 24 года, администратор на ресепшене гостиницы «Космос». На пульте сработала пожарная сигнализация 9 этажа. Ты взволнована, но стараешься говорить чётко и по инструкции.",
+          "opening": {
+            "id": "opening",
+            "text": "Здравствуйте, гостиница «Космос», у нас сработала пожарная сигнализация на девятом этаже.",
+            "reveals": [
+              "complaint",
+              "hotel",
+              "floor"
+            ]
+          }
+        },
+        "facts": [
+          {
+            "id": "complaint",
+            "label": "Суть обращения",
+            "card_path": "/complaint",
+            "knowledge": "initial",
+            "value": "сработала пожарная сигнализация на 9 этаже гостиницы",
+            "statement": "У нас сработала пожарная сигнализация на девятом этаже.",
+            "disclosure_patterns": [
+              "сигнализац"
+            ]
+          },
+          {
+            "id": "hotel",
+            "label": "Объект",
+            "card_path": "/address/object",
+            "knowledge": "initial",
+            "value": "гостиница «Космос»",
+            "statement": "Это гостиница «Космос».",
+            "disclosure_patterns": [
+              "космос"
+            ]
+          },
+          {
+            "id": "floor",
+            "label": "Этаж",
+            "card_path": "/address/floor",
+            "knowledge": "initial",
+            "value": "9",
+            "statement": "Сработала на девятом этаже.",
+            "disclosure_patterns": [
+              "девят",
+              "9 этаж"
+            ]
+          },
+          {
+            "id": "applicant_status",
+            "label": "Статус заявителя",
+            "card_path": "/applicant_status",
+            "knowledge": "on_question",
+            "value": "witness",
+            "statement": "Я администратор на ресепшене, звоню с рабочего места.",
+            "ask_patterns": [
+              "кто (вы|звонит)",
+              "кем (вы )?являетесь",
+              "вы (сотрудник|администратор)",
+              "где вы (сейчас )?находитесь"
+            ],
+            "disclosure_patterns": [
+              "администратор",
+              "ресепшен"
+            ]
+          },
+          {
+            "id": "smoke_unknown",
+            "label": "Есть ли дым или огонь",
+            "knowledge": "unknown",
+            "ask_patterns": [
+              "дым",
+              "огонь",
+              "пламя",
+              "горит",
+              "запах гари",
+              "видно"
+            ]
+          },
+          {
+            "id": "security_check",
+            "label": "Проверка",
+            "knowledge": "on_question",
+            "value": "охранник пошёл на 9 этаж проверять, пока не перезвонил",
+            "statement": "Охранник пошёл на девятый этаж проверить, пока ничего не сообщил.",
+            "ask_patterns": [
+              "провер",
+              "кто (пошел|пошёл|пошли)",
+              "охран",
+              "что (там|известно)"
+            ]
+          },
+          {
+            "id": "guests",
+            "label": "Люди на этаже",
+            "knowledge": "on_question",
+            "value": "на 9 этаже заселены номера, гости в номерах",
+            "statement": "На девятом этаже заселены номера, гости там есть.",
+            "ask_patterns": [
+              "люд",
+              "гост",
+              "постоял",
+              "кто (на этаже|там)"
+            ]
+          },
+          {
+            "id": "evacuation_unknown",
+            "label": "Начата ли эвакуация",
+            "knowledge": "unknown",
+            "ask_patterns": [
+              "эвакуа",
+              "выводите",
+              "выводят"
+            ]
+          },
+          {
+            "id": "victims_unknown",
+            "label": "Пострадавшие",
+            "knowledge": "unknown",
+            "ask_patterns": [
+              "пострадавш",
+              "кто-(то|нибудь) пострадал",
+              "есть ли постра",
+              "травм",
+              "кому.*плохо",
+              "плохо кому"
+            ]
+          },
+          {
+            "id": "address_city",
+            "label": "Населённый пункт",
+            "card_path": "/address/city",
+            "knowledge": "on_question",
+            "value": "Москва",
+            "statement": "Москва.",
+            "ask_patterns": [
+              "адрес",
+              "где (вы |ты )?(находитесь|находишься|сейчас|живете|живёте)",
+              "какая улица",
+              "назовите.*(дом|улиц)",
+              "куда (ехать|выезжать)"
+            ],
+            "ask_exclude_patterns": [
+              "ориентир"
+            ]
+          },
+          {
+            "id": "address_region",
+            "label": "Субъект",
+            "card_path": "/address/region",
+            "knowledge": "on_question",
+            "value": "Москва",
+            "statement": "Город Москва.",
+            "ask_patterns": [
+              "адрес",
+              "где (вы |ты )?(находитесь|находишься|сейчас|живете|живёте)",
+              "какая улица",
+              "назовите.*(дом|улиц)",
+              "куда (ехать|выезжать)"
+            ],
+            "ask_exclude_patterns": [
+              "ориентир"
+            ]
+          },
+          {
+            "id": "address_street",
+            "label": "Улица",
+            "card_path": "/address/street",
+            "knowledge": "on_question",
+            "value": "проспект Мира",
+            "statement": "Проспект Мира.",
+            "ask_patterns": [
+              "адрес",
+              "где (вы |ты )?(находитесь|находишься|сейчас|живете|живёте)",
+              "какая улица",
+              "назовите.*(дом|улиц)",
+              "куда (ехать|выезжать)"
+            ],
+            "ask_exclude_patterns": [
+              "ориентир"
+            ]
+          },
+          {
+            "id": "address_house",
+            "label": "Дом",
+            "card_path": "/address/house",
+            "knowledge": "on_question",
+            "value": "150",
+            "statement": "Дом сто пятьдесят.",
+            "ask_patterns": [
+              "адрес",
+              "где (вы |ты )?(находитесь|находишься|сейчас|живете|живёте)",
+              "какая улица",
+              "назовите.*(дом|улиц)",
+              "куда (ехать|выезжать)"
+            ],
+            "ask_exclude_patterns": [
+              "ориентир"
+            ]
+          },
+          {
+            "id": "applicant_name",
+            "label": "ФИО заявителя",
+            "card_path": "/applicant_name",
+            "knowledge": "on_question",
+            "value": "Гаврилова Алина Руслановна",
+            "statement": "Меня зовут Гаврилова Алина Руслановна.",
+            "ask_patterns": [
+              "как вас зовут",
+              "представьтесь",
+              "ваше имя",
+              "назовите.*(ваше )?(имя|фамили|фио)",
+              "как к вам обращаться",
+              "ваши фамилия"
+            ],
+            "disclosure_patterns": [
+              "гаврилова"
+            ]
+          },
+          {
+            "id": "applicant_age",
+            "label": "Возраст заявителя",
+            "card_path": "/age",
+            "knowledge": "on_question",
+            "value": "24",
+            "statement": "Мне 24 года.",
+            "ask_patterns": [
+              "сколько вам лет",
+              "ваш возраст",
+              "назовите.*возраст"
+            ],
+            "disclosure_patterns": [
+              "24 года",
+              "двадцать четыре"
+            ]
+          },
+          {
+            "id": "provided_phone",
+            "label": "Телефон для связи",
+            "card_path": "/provided_phone",
+            "knowledge": "on_question",
+            "value": "+74952340012",
+            "statement": "Это городской номер ресепшена, я на нём.",
+            "ask_patterns": [
+              "номер телефона",
+              "ваш (номер|телефон)",
+              "номер для связи",
+              "перезвонить",
+              "контактный номер",
+              "с какого (номера|телефона)"
+            ]
+          }
+        ]
+      },
+      "reference": {
+        "expected_types": [
+          "fire"
+        ],
+        "case_description": "Администратор ресепшена гостиницы «Космос» (пр-т Мира, 150), 24 года: на пульте сработала пожарная сигнализация 9 этажа, охранник ушёл проверять, про дым, огонь, пострадавших и эвакуацию пока неизвестно. Карта 101 (ветка «Здание / объект»), служба 101. Ветка «Здание / объект» карты 101 собрана без скриншота реального АРМ-112 (признаки и перечень объектов — предположение команды). Эталон учебный, составлен командой EmSim по уточнению пользователя от 28.09.2026; профильной экспертизой не подтверждён.",
+        "expected_services": [
+          "pilot_fire_101"
+        ],
+        "expected_card": {
+          "applicant_status": "witness",
+          "applicant_name": "Гаврилова Алина Руслановна",
+          "age": 24,
+          "complaint": "сработала пожарная сигнализация на 9 этаже гостиницы",
+          "address": {
+            "region": "Москва",
+            "city": "Москва",
+            "street": "проспект Мира",
+            "house": "150",
+            "floor": "9"
+          }
+        },
+        "alternatives": {
+          "expected_card.address.street": [
+            "Мира"
+          ],
+          "expected_card.address.region": [
+            "г. Москва",
+            "город Москва"
+          ],
+          "expected_card.address.city": [
+            "г. Москва",
+            "город Москва"
+          ]
+        },
+        "expected_profiles": {
+          "101": {
+            "location": "Здание / объект",
+            "fire_sign_building": [
+              "Сработала пожарная сигнализация"
+            ],
+            "building_object": [
+              "Гостиница"
+            ],
+            "threat_to_people": "Да",
+            "medical_help": {
+              "state": "unknown"
+            },
+            "evacuation": {
+              "state": "unknown"
+            }
+          }
+        },
+        "description_questions": [
+          {
+            "id": "alarm",
+            "question": "Указано ли, что сработала пожарная сигнализация?"
+          },
+          {
+            "id": "floor",
+            "question": "Указано ли, что сигнализация сработала на 9 этаже?"
+          },
+          {
+            "id": "hotel",
+            "question": "Указано ли, что это гостиница «Космос»?"
+          },
+          {
+            "id": "check",
+            "question": "Указано ли, что охранник (сотрудник) пошёл проверять этаж?"
+          }
+        ]
+      }
+    }
+  }
+}

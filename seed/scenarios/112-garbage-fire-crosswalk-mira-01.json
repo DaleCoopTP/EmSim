@@ -1,0 +1,331 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "112-garbage-fire-crosswalk-mira-01",
+  "version": 1,
+  "title": "Горит урна у пешеходного перехода на проспекте Мира",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "exercise_type": "operator112_intake",
+    "difficulty": 2,
+    "intake112": {
+      "mode": "full_case",
+      "caller_mode": "free_text",
+      "call": {
+        "aon": "+79260884512",
+        "local_time": "14:10",
+        "time_zone": "Europe/Moscow"
+      },
+      "dialogue": {
+        "caller": {
+          "persona": "Ты — Никита Сергеевич Орешкин, 30 лет, прохожий. Идёшь по проспекту Мира и видишь, что у пешеходного перехода горит мусорная урна. Говоришь спокойно, чуть торопливо — спешишь по делам.",
+          "opening": {
+            "id": "opening",
+            "text": "Здравствуйте, тут у пешеходного перехода на проспекте Мира урна горит.",
+            "reveals": [
+              "complaint",
+              "crosswalk"
+            ]
+          }
+        },
+        "facts": [
+          {
+            "id": "complaint",
+            "label": "Суть обращения",
+            "card_path": "/complaint",
+            "knowledge": "initial",
+            "value": "горит мусорная урна у пешеходного перехода",
+            "statement": "У пешеходного перехода горит мусорная урна.",
+            "disclosure_patterns": [
+              "урна",
+              "мусор"
+            ]
+          },
+          {
+            "id": "crosswalk",
+            "label": "Место",
+            "knowledge": "initial",
+            "value": "у пешеходного перехода",
+            "statement": "Это у пешеходного перехода.",
+            "disclosure_patterns": [
+              "переход"
+            ]
+          },
+          {
+            "id": "flame",
+            "label": "Пламя",
+            "knowledge": "on_question",
+            "value": "открытое пламя и едкий дым, огонь около полуметра",
+            "statement": "Горит открытым огнём, примерно на полметра, дым едкий.",
+            "ask_patterns": [
+              "(сильн|большой|как) (огонь|пламя|горит)",
+              "пламя",
+              "дым",
+              "что (именно )?горит"
+            ],
+            "disclosure_patterns": [
+              "полметра",
+              "едкий"
+            ]
+          },
+          {
+            "id": "people",
+            "label": "Люди рядом",
+            "card_path": "/victims_present",
+            "knowledge": "on_question",
+            "value": "люди проходят мимо, никто не пострадал",
+            "statement": "Люди мимо проходят, никто не пострадал.",
+            "ask_patterns": [
+              "пострадавш",
+              "кто-(то|нибудь) пострадал",
+              "есть ли постра",
+              "травм",
+              "кому.*плохо",
+              "плохо кому",
+              "люди рядом",
+              "угроз",
+              "опасн"
+            ],
+            "disclosure_patterns": [
+              "никто не пострадал"
+            ]
+          },
+          {
+            "id": "near_house",
+            "label": "Ближайший дом",
+            "card_path": "/address/house",
+            "knowledge": "on_question",
+            "value": "102",
+            "statement": "Переход напротив дома сто два.",
+            "ask_patterns": [
+              "адрес",
+              "где (вы |ты )?(находитесь|находишься|сейчас|живете|живёте)",
+              "какая улица",
+              "назовите.*(дом|улиц)",
+              "куда (ехать|выезжать)",
+              "дом",
+              "номер дома"
+            ],
+            "ask_exclude_patterns": [
+              "ориентир"
+            ],
+            "disclosure_patterns": [
+              "102",
+              "сто два"
+            ]
+          },
+          {
+            "id": "landmark",
+            "label": "Ориентир",
+            "card_path": "/address/landmark",
+            "knowledge": "on_question",
+            "value": "пешеходный переход напротив дома 102, рядом автобусная остановка",
+            "statement": "Переход напротив сто второго дома, рядом автобусная остановка.",
+            "ask_patterns": [
+              "ориентир",
+              "что рядом",
+              "где именно",
+              "как найти"
+            ],
+            "disclosure_patterns": [
+              "остановк"
+            ]
+          },
+          {
+            "id": "applicant_status",
+            "label": "Статус заявителя",
+            "card_path": "/applicant_status",
+            "knowledge": "on_question",
+            "value": "witness",
+            "statement": "Я просто прохожий, стою рядом.",
+            "ask_patterns": [
+              "кто (вы|звонит)",
+              "вы (сами )?(пострадали|рядом|в порядке)"
+            ],
+            "disclosure_patterns": [
+              "прохож"
+            ]
+          },
+          {
+            "id": "gasified",
+            "label": "Газификация",
+            "knowledge": "unknown",
+            "ask_patterns": [
+              "газифиц",
+              "газ "
+            ]
+          },
+          {
+            "id": "address_city",
+            "label": "Населённый пункт",
+            "card_path": "/address/city",
+            "knowledge": "on_question",
+            "value": "Москва",
+            "statement": "Москва.",
+            "ask_patterns": [
+              "адрес",
+              "где (вы |ты )?(находитесь|находишься|сейчас|живете|живёте)",
+              "какая улица",
+              "назовите.*(дом|улиц)",
+              "куда (ехать|выезжать)"
+            ],
+            "ask_exclude_patterns": [
+              "ориентир"
+            ]
+          },
+          {
+            "id": "address_region",
+            "label": "Субъект",
+            "card_path": "/address/region",
+            "knowledge": "on_question",
+            "value": "Москва",
+            "statement": "Город Москва.",
+            "ask_patterns": [
+              "адрес",
+              "где (вы |ты )?(находитесь|находишься|сейчас|живете|живёте)",
+              "какая улица",
+              "назовите.*(дом|улиц)",
+              "куда (ехать|выезжать)"
+            ],
+            "ask_exclude_patterns": [
+              "ориентир"
+            ]
+          },
+          {
+            "id": "address_street",
+            "label": "Улица",
+            "card_path": "/address/street",
+            "knowledge": "on_question",
+            "value": "проспект Мира",
+            "statement": "Проспект Мира.",
+            "ask_patterns": [
+              "адрес",
+              "где (вы |ты )?(находитесь|находишься|сейчас|живете|живёте)",
+              "какая улица",
+              "назовите.*(дом|улиц)",
+              "куда (ехать|выезжать)"
+            ],
+            "ask_exclude_patterns": [
+              "ориентир"
+            ]
+          },
+          {
+            "id": "applicant_name",
+            "label": "ФИО заявителя",
+            "card_path": "/applicant_name",
+            "knowledge": "on_question",
+            "value": "Орешкин Никита Сергеевич",
+            "statement": "Меня зовут Орешкин Никита Сергеевич.",
+            "ask_patterns": [
+              "как вас зовут",
+              "представьтесь",
+              "ваше имя",
+              "назовите.*(ваше )?(имя|фамили|фио)",
+              "как к вам обращаться",
+              "ваши фамилия"
+            ],
+            "disclosure_patterns": [
+              "орешкин"
+            ]
+          },
+          {
+            "id": "applicant_age",
+            "label": "Возраст заявителя",
+            "card_path": "/age",
+            "knowledge": "on_question",
+            "value": "30",
+            "statement": "Мне 30 лет.",
+            "ask_patterns": [
+              "сколько вам лет",
+              "ваш возраст",
+              "назовите.*возраст"
+            ],
+            "disclosure_patterns": [
+              "30 лет",
+              "тридцать"
+            ]
+          },
+          {
+            "id": "provided_phone",
+            "label": "Телефон для связи",
+            "card_path": "/provided_phone",
+            "knowledge": "on_question",
+            "value": "+79260884512",
+            "statement": "Номер этот, с него звоню.",
+            "ask_patterns": [
+              "номер телефона",
+              "ваш (номер|телефон)",
+              "номер для связи",
+              "перезвонить",
+              "контактный номер",
+              "с какого (номера|телефона)"
+            ]
+          }
+        ]
+      },
+      "reference": {
+        "expected_types": [
+          "garbage_fire"
+        ],
+        "case_description": "Прохожий 30 лет: у пешеходного перехода напротив д. 102 по проспекту Мира горит мусорная урна, открытое пламя около полуметра, никто не пострадал. Карта 101 (ветка «Улица», место происшествия — «Пешеходный переход»), служба 101. Газификацию заявитель не знает и она к урне не относится — в эталон не входит. Тип «Пожар» тоже даёт карту 101 и не штрафуется. Эталон учебный, составлен командой EmSim по уточнению пользователя от 28.09.2026; профильной экспертизой не подтверждён.",
+        "expected_services": [
+          "pilot_fire_101"
+        ],
+        "expected_card": {
+          "applicant_status": "witness",
+          "applicant_name": "Орешкин Никита Сергеевич",
+          "age": 30,
+          "complaint": "горит мусорная урна у пешеходного перехода",
+          "address": {
+            "region": "Москва",
+            "city": "Москва",
+            "street": "проспект Мира",
+            "house": "102"
+          }
+        },
+        "alternatives": {
+          "expected_card.address.street": [
+            "Мира"
+          ],
+          "expected_card.address.region": [
+            "г. Москва",
+            "город Москва"
+          ],
+          "expected_card.address.city": [
+            "г. Москва",
+            "город Москва"
+          ]
+        },
+        "expected_profiles": {
+          "101": {
+            "location": "Улица",
+            "fire_sign_street": [
+              "Открытое пламя / Дым"
+            ],
+            "street_object": [
+              "Мусор"
+            ],
+            "street_place": "Пешеходный переход",
+            "threat_to_people": "Нет",
+            "medical_help": "Нет",
+            "evacuation": "Нет"
+          }
+        },
+        "description_questions": [
+          {
+            "id": "bin",
+            "question": "Указано ли, что горит мусорная урна (мусор)?"
+          },
+          {
+            "id": "crosswalk",
+            "question": "Указано ли, что это у пешеходного перехода?"
+          },
+          {
+            "id": "no_victims",
+            "question": "Указано ли, что никто не пострадал?"
+          }
+        ]
+      }
+    }
+  }
+}

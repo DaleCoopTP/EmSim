@@ -473,10 +473,10 @@ func TestAPIProcessContentCatalogAccess(t *testing.T) {
 		Total int `json:"total"`
 	}
 	response = jsonRequest(t, ctx, instructorClient, baseURL, http.MethodGet, "/api/v1/scenarios", nil, &scenarioList)
-	// The three AI-caller 112 scenarios and three DDS scenarios make up
-	// the default catalogue;
-	// assert that the full offline seed loaded.
-	if response.StatusCode != http.StatusOK || scenarioList.Total != 6 || len(scenarioList.Items) != 6 {
+	// Fourteen AI-caller 112 scenarios (three pilots and eleven cases with
+	// full references) and three DDS scenarios make up the default
+	// catalogue; assert that the full offline seed loaded.
+	if response.StatusCode != http.StatusOK || scenarioList.Total != 17 || len(scenarioList.Items) != 17 {
 		t.Fatalf("instructor GET /scenarios status = %d, body = %+v", response.StatusCode, scenarioList)
 	}
 	// Four DDS pilots and eight non-AI 112 cases are archived: listed

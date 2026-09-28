@@ -159,15 +159,17 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	// versions. The four slice 2–7 DDS pilots carry
 	// "archived": true on the four DDS pilots and eight non-AI 112 cases
 	// hides them from the default catalogue without changing their versions.
-	if scenarioResult.NewScenarios != 18 || scenarioResult.NewVersions != 24 || scenarioResult.Unchanged != 0 || scenarioResult.StatusChanged != 12 {
-		t.Fatalf("ImportScenarios = %+v, want NewScenarios=18 NewVersions=24 Unchanged=0 StatusChanged=12", scenarioResult)
+	// The eleven 112 cases with full references (2026-09-28: gas smell ×3,
+	// fire ×6, injury ×2) bring it to 29 scenarios/35 versions.
+	if scenarioResult.NewScenarios != 29 || scenarioResult.NewVersions != 35 || scenarioResult.Unchanged != 0 || scenarioResult.StatusChanged != 12 {
+		t.Fatalf("ImportScenarios = %+v, want NewScenarios=29 NewVersions=35 Unchanged=0 StatusChanged=12", scenarioResult)
 	}
 	scenarioResult2, err := svc.ImportScenarios(ctx, openScenarioDir(t, "../../seed/scenarios"), actorID, actorRole, "req-6")
 	if err != nil {
 		t.Fatalf("ImportScenarios (replay): %v", err)
 	}
-	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 24 || scenarioResult2.StatusChanged != 0 {
-		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=24", scenarioResult2)
+	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 35 || scenarioResult2.StatusChanged != 0 {
+		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=35", scenarioResult2)
 	}
 
 	// --- read side ---
@@ -175,8 +177,8 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListScenarios: %v", err)
 	}
-	if total != 6 || len(items) != 6 {
-		t.Fatalf("ListScenarios: total=%d len=%d, want 3 AI-caller 112 and 3 DDS scenarios", total, len(items))
+	if total != 17 || len(items) != 17 {
+		t.Fatalf("ListScenarios: total=%d len=%d, want 14 AI-caller 112 and 3 DDS scenarios", total, len(items))
 	}
 	archivedItems, archivedTotal, err := svc.ListScenarios(ctx, content.ScenarioFilter{Status: "archived"})
 	if err != nil || archivedTotal != 12 || len(archivedItems) != 12 {
@@ -196,9 +198,20 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 		"pilot-112-free-text-chat-01":             false,
 	}
 	active112 := map[string]bool{
-		"pilot-112-ai-toyota-fire-01":  false,
-		"pilot-112-ai-car-in-water-01": false,
-		"pilot-112-ai-mobile-shop-01":  false,
+		"pilot-112-ai-toyota-fire-01":        false,
+		"pilot-112-ai-car-in-water-01":       false,
+		"pilot-112-ai-mobile-shop-01":        false,
+		"112-gas-kitchen-bibirevo-01":        false,
+		"112-gas-hallway-chertanovo-01":      false,
+		"112-gas-metro-rimskaya-01":          false,
+		"112-garbage-fire-kosmonavtov-01":    false,
+		"112-fire-alarm-hotel-kosmos-01":     false,
+		"112-fire-clinic-leninsky-01":        false,
+		"112-fire-bakery-burns-01":           false,
+		"112-injury-eye-playground-01":       false,
+		"112-injury-hockey-sokolniki-01":     false,
+		"112-garbage-fire-crosswalk-mira-01": false,
+		"112-transport-fire-ebus-vdnh-01":    false,
 	}
 	for _, it := range archivedItems {
 		if it.SourceKey != nil && *it.SourceKey == "pilot-tree-02" {
@@ -243,7 +256,7 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 		t.Fatalf("pilot-112-medical-01 not found in archived ListScenarios: %+v", archivedItems)
 	}
 	intakeItems, intakeTotal, err := svc.ListScenarios(ctx, content.ScenarioFilter{ExerciseType: content.ExerciseTypeOperator112Intake})
-	if err != nil || intakeTotal != 3 || len(intakeItems) != 3 {
+	if err != nil || intakeTotal != 14 || len(intakeItems) != 14 {
 		t.Fatalf("112 catalogue filter: items=%+v total=%d err=%v", intakeItems, intakeTotal, err)
 	}
 	intakeDetail, err := svc.ScenarioDetail(ctx, intakeID)
