@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"emsim/internal/assessment"
+	"emsim/internal/assessment/dds/commentjudge"
 	"emsim/internal/assessment/operator112/descjudge"
 	"emsim/internal/content"
 	"emsim/internal/platform/audit"
@@ -565,10 +566,11 @@ func callerStubDelay() (time.Duration, error) {
 
 // judgeConfigFor is ADR-028's own worker-side wiring: nil when
 // ASSESSMENT_JUDGE is off (explicit since ADR-029 — no judge at all,
-// matching 112-6's pre-ADR-028 behavior exactly), otherwise a JudgeConfig whose
-// Registry has exactly one entry, descjudge.Handler under its own
-// PromptVersion — the same "one prompt version, one handler" convention
-// this ADR's own doc comment describes. Model/Parameters are sealed
+// matching 112-6's pre-ADR-028 behavior exactly), otherwise a JudgeConfig
+// whose Registry has one entry per judged prompt version — descjudge's
+// (112, ADR-028) and, since ADR-034, commentjudge's two DDS handlers —
+// all sharing one llm.Client; the same "one prompt version, one
+// handler" convention. Model/Parameters are sealed
 // into assessment_inputs.judge verbatim by sealInputForItem, so a later
 // config change is visible in old evidence without diffing deployed
 // code against a timestamp, the same reasoning aicaller.PromptVersion's
@@ -577,11 +579,16 @@ func judgeConfigFor(processConfig config.Worker) *assessment.JudgeConfig {
 	if processConfig.AssessmentJudge != config.AssessmentJudgeLLM {
 		return nil
 	}
+	chat := llm.NewClientWith(processConfig.JudgeLLMURL, llm.Options{APIKey: processConfig.JudgeLLMAPIKey, Dialect: processConfig.LLMDialect})
 	return &assessment.JudgeConfig{
 		Model:      processConfig.JudgeLLMModel,
 		Parameters: map[string]any{"temperature": 0, "max_tokens": processConfig.JudgeMaxTokens},
-		Registry:   assessment.SemanticJudgeRegistry{descjudge.PromptVersion: descjudge.Handler{Chat: llm.NewClientWith(processConfig.JudgeLLMURL, llm.Options{APIKey: processConfig.JudgeLLMAPIKey, Dialect: processConfig.LLMDialect})}},
-		Timeout:    processConfig.JudgeTimeout,
+		Registry: assessment.SemanticJudgeRegistry{
+			descjudge.PromptVersion:           descjudge.Handler{Chat: chat},
+			commentjudge.FactsPromptVersion:   commentjudge.FactsHandler{Chat: chat},
+			commentjudge.GrammarPromptVersion: commentjudge.GrammarHandler{Chat: chat},
+		},
+		Timeout: processConfig.JudgeTimeout,
 	}
 }
 

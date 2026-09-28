@@ -3638,3 +3638,13 @@ Status: c4 выполнен.
 - 15 новых тестов `comments_test.go`; мутационная проверка привязки факта к статусу ловится.
 
 Validation: `go test ./internal/assessment/...`, `go vet`.
+
+## 2026-09-28 — ДДС-4 c5: адаптеры модели
+
+Status: c5 выполнен.
+
+- `internal/assessment/dds/commentjudge/handler.go`: `FactsHandler` (`dds-comment-facts-v1`) и `GrammarHandler` (`dds-grammar-v1`) поверх `llm.Client`; структурный JSON-ответ, точный набор ключей, `finish_reason=length`/невалидный JSON/чужой фрагмент → ошибка (→ `judge_unavailable`). Фрагмент грамматической ошибки сверяется с текстом без учёта регистра и переносов; `null` вместо пустого списка допускается. В сообщениях об ошибках нет текста комментариев.
+- `cmd/emsim/worker_composition.go` `judgeConfigFor`: один клиент, три записи в реестре; `TestJudgeConfigForLLMWiresEveryPromptVersion`.
+- `testdata/comments.json` (42 вопроса к комментариям, 16 комментариев для грамматики) и `live_test.go` под тегом `llmlive` (как у `descjudge`, а не переменной окружения, как было написано в плане). Живой прогон — в c10.
+
+Validation: `go test ./internal/assessment/... ./cmd/emsim/`, `go vet -tags llmlive`.

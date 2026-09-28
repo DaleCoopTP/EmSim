@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"emsim/internal/assessment/dds/commentjudge"
 	"emsim/internal/assessment/operator112/descjudge"
 	"emsim/internal/platform/config"
 	"emsim/internal/platform/tasks"
@@ -155,13 +156,13 @@ func TestJudgeConfigForOff(t *testing.T) {
 	}
 }
 
-// TestJudgeConfigForLLMWiresOneHandler exercises the other side: an
-// enabled judge gets a Registry with exactly one entry, keyed by
-// descjudge.PromptVersion (the only prompt version this ADR's own
-// evaluator knows how to dispatch), and Model/Timeout carried straight
+// TestJudgeConfigForLLMWiresEveryPromptVersion exercises the other side:
+// an enabled judge gets a Registry with exactly one entry per prompt
+// version an evaluator can prepare — descjudge's (112, ADR-028) and
+// commentjudge's two (DDS, ADR-034) — and Model/Timeout carried straight
 // from config.Worker's own fields (sealed into assessment_inputs.judge
 // verbatim by sealInputForItem).
-func TestJudgeConfigForLLMWiresOneHandler(t *testing.T) {
+func TestJudgeConfigForLLMWiresEveryPromptVersion(t *testing.T) {
 	cfg := config.Worker{
 		AssessmentJudge: config.AssessmentJudgeLLM, JudgeLLMURL: "http://host.docker.internal:11434/v1",
 		JudgeLLMModel: "t-tech/T-lite-it-2.1:q5_K_M", JudgeTimeout: 45 * time.Second, JudgeMaxTokens: 777,
@@ -173,8 +174,14 @@ func TestJudgeConfigForLLMWiresOneHandler(t *testing.T) {
 	if got.Model != cfg.JudgeLLMModel || got.Timeout != cfg.JudgeTimeout {
 		t.Fatalf("unexpected JudgeConfig: %+v", got)
 	}
-	if _, ok := got.Registry[descjudge.PromptVersion]; !ok || len(got.Registry) != 1 {
-		t.Fatalf("Registry = %+v, want exactly one entry for %q", got.Registry, descjudge.PromptVersion)
+	wantVersions := []string{descjudge.PromptVersion, commentjudge.FactsPromptVersion, commentjudge.GrammarPromptVersion}
+	if len(got.Registry) != len(wantVersions) {
+		t.Fatalf("Registry has %d entries, want %d", len(got.Registry), len(wantVersions))
+	}
+	for _, version := range wantVersions {
+		if _, ok := got.Registry[version]; !ok {
+			t.Fatalf("Registry = %+v, missing an entry for %q", got.Registry, version)
+		}
 	}
 	if maxTokens, _ := got.Parameters["max_tokens"].(int); maxTokens != cfg.JudgeMaxTokens {
 		t.Fatalf("Parameters[max_tokens] = %v, want %d", got.Parameters["max_tokens"], cfg.JudgeMaxTokens)
