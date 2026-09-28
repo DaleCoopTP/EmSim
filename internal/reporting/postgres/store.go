@@ -148,6 +148,12 @@ var criterionLabels = map[string]string{
 	"D_PRIMARY": "Первичное решение", "D_COMMENT_REQUIRED": "Обязательный комментарий", "D_FIELD_CORRECTIONS": "Исправление данных",
 	"S_SEQUENCE": "Последовательность действий", "C_CALL_MADE": "Обязательный звонок", "C_CALL_LOG": "Оформление звонка",
 	"G_ADDRESS": "Корректность адреса", "D_COMMENT_CONTENT": "Содержание комментария", "C_CALL_CONTENT": "Содержание доклада", "C_CALL_LOG_CONTENT": "Содержание журнала звонка", "G_GRAMMAR": "Грамматика",
+	// ДДС-3/ADR-032 (dds/rubric-v2) — T_PROGRESS/C_CALLS replace
+	// C_CALL_MADE/C_CALL_LOG*/G_ADDRESS above for a lesson frozen on v2;
+	// v2's own S_SEQUENCE keeps v1's id and label (its rule name changes
+	// to s_sequence_reports, but the criterion id — and so the report
+	// column — stays "S_SEQUENCE").
+	"T_PROGRESS": "Реакция на доклады бригады", "C_CALLS": "Обязательная связь",
 	// 112-6/ADR-026 (operator112/rubric-v2) — mirrors rubric.operator112.
 	// json's own criteria[].title one-to-one, so a trainee's "Ошибки"
 	// column and an instructor's report both name blocks/penalties the
@@ -225,7 +231,8 @@ SELECT lesson_id, lesson_title, lesson_mode, user_id, full_name, workstation_no,
        item_id, ordinal, item_state, closed_at, card_number, scenario_title, difficulty,
        open_seconds, work_seconds, total_seconds, interruptions,
        assessment_id, assessment_revision, assessment_kind, assessment_status, score, passed,
-       COALESCE(critical_errors, '{}'::text[]), COALESCE(criteria, '[]'::jsonb), COALESCE(feedback, '[]'::jsonb)
+       COALESCE(critical_errors, '{}'::text[]), COALESCE(criteria, '[]'::jsonb), COALESCE(feedback, '[]'::jsonb),
+       exercise_type, reaction, close_reason
 FROM lesson_report_rows WHERE lesson_id=$1 ORDER BY full_name, ordinal, item_id`
 
 func (s *Store) LessonReport(ctx context.Context, lessonID uuid.UUID) (reporting.LessonReport, error) {
@@ -255,7 +262,8 @@ SELECT lesson_id, lesson_title, lesson_mode, user_id, full_name, workstation_no,
        item_id, ordinal, item_state, closed_at, card_number, scenario_title, difficulty,
        open_seconds, work_seconds, total_seconds, interruptions,
        assessment_id, assessment_revision, assessment_kind, assessment_status, score, passed,
-       COALESCE(critical_errors, '{}'::text[]), COALESCE(criteria, '[]'::jsonb), COALESCE(feedback, '[]'::jsonb)
+       COALESCE(critical_errors, '{}'::text[]), COALESCE(criteria, '[]'::jsonb), COALESCE(feedback, '[]'::jsonb),
+       exercise_type, reaction, close_reason
 FROM lesson_report_rows WHERE user_id=$1 AND exercise_type=$2 AND item_state IN ('closed','interrupted') ORDER BY closed_at DESC, item_id`, userID, exerciseType)
 	if err != nil {
 		return nil, err
@@ -342,13 +350,20 @@ func (s *Store) items(ctx context.Context, query string, args ...any) ([]reporti
 		var critical []string
 		var interruptions []byte
 		var assessmentStatus *string
-		if err := rows.Scan(&item.LessonID, &item.LessonTitle, &lessonMode, &item.UserID, &item.FullName, &item.WorkstationNo, &item.Level, &item.ItemID, &item.Ordinal, &item.ItemState, &item.ClosedAt, &item.CardNumber, &item.ScenarioTitle, &item.Difficulty, &item.OpenSeconds, &item.WorkSeconds, &item.TotalSeconds, &interruptions, &item.AssessmentID, &item.AssessmentRevision, &item.AssessmentKind, &assessmentStatus, &item.Score, &item.Passed, &critical, &criteriaRaw, &feedbackRaw); err != nil {
+		var exerciseType, reaction string
+		var closeReason *string
+		if err := rows.Scan(&item.LessonID, &item.LessonTitle, &lessonMode, &item.UserID, &item.FullName, &item.WorkstationNo, &item.Level, &item.ItemID, &item.Ordinal, &item.ItemState, &item.ClosedAt, &item.CardNumber, &item.ScenarioTitle, &item.Difficulty, &item.OpenSeconds, &item.WorkSeconds, &item.TotalSeconds, &interruptions, &item.AssessmentID, &item.AssessmentRevision, &item.AssessmentKind, &assessmentStatus, &item.Score, &item.Passed, &critical, &criteriaRaw, &feedbackRaw, &exerciseType, &reaction, &closeReason); err != nil {
 			return nil, fmt.Errorf("reporting: scan row: %w", err)
 		}
 		if assessmentStatus != nil {
 			item.AssessmentStatus = reporting.AssessmentStatus(*assessmentStatus)
 		}
 		item.LevelAtStart, item.CriticalErrors, item.Interruptions = item.Level, critical, json.RawMessage(interruptions)
+		// ДДС-3/ADR-032: operator112_intake has no equivalent notion, so
+		// CardStatus stays "" for it (omitempty in the JSON projection).
+		if exerciseType == string(content.ExerciseTypeDDSProcessing) {
+			item.CardStatus = reporting.DDSCardStatusOf(reaction, closeReason, item.ItemState)
+		}
 		if lessonMode == "intro" {
 			item.AssessmentStatus = reporting.AssessmentNotAssessed
 			item.AssessmentKind, item.Score, item.Passed = nil, nil, nil

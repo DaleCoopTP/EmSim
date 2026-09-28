@@ -2434,6 +2434,14 @@ components:
         item_state:
           type: string
           enum: [closed, interrupted]
+        card_status:
+          type: string
+          enum: [registered, not_notified, in_progress, refused, completed, not_completed]
+          description: >-
+            ДДС-3/ADR-032: только dds_processing, отсутствует для operator112_intake. То же вычисление, что и
+            ItemSummary.card_status (ADR-030), упрощённое для уже закрытой/прерванной карточки отчёта: без сравнения
+            с текущим временем, поэтому not_notified здесь не используется — отсутствие первичного решения
+            отражается как registered.
         errors:
           type: array
           items:

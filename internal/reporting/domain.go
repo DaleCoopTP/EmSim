@@ -79,6 +79,13 @@ type ItemResult struct {
 	CriticalErrors   []string         `json:"critical_errors"`
 	Errors           []PublicError    `json:"errors"`
 	Interruptions    any              `json:"interruptions"`
+	// CardStatus (ДДС-3/ADR-032) is ADR-030's derived DDS card status —
+	// set only for a dds_processing row, "" for operator112_intake (it
+	// has no equivalent notion). See DDSCardStatusOf's own doc comment
+	// for the report-time simplification of training/dds.CardStatusOf
+	// this reuses. Lives on ItemResult (not just ReportItem) so /my/
+	// results carries it too, the same way item_state already does.
+	CardStatus CardStatus `json:"card_status,omitempty"`
 }
 
 type ReportItem struct {
@@ -99,6 +106,53 @@ type ReportItem struct {
 	// there per revision), not re-derived from "today's" rubric.
 	IntakeBlocks       []IntakeBlockScore `json:"intake_blocks,omitempty"`
 	IntakePenaltyTotal *float64           `json:"intake_penalty_total,omitempty"`
+}
+
+// CardStatus mirrors training/dds.CardStatus's own values (openapi's
+// ItemSummary.card_status enum, ADR-030) — duplicated here rather than
+// imported, since reporting only ever reads training's own data through
+// lesson_report_rows, never its domain package (RFC-001 §4.2's module
+// boundary: a module reads another's rows, not its code).
+type CardStatus string
+
+const (
+	CardRegistered   CardStatus = "registered"
+	CardNotNotified  CardStatus = "not_notified"
+	CardInProgress   CardStatus = "in_progress"
+	CardRefused      CardStatus = "refused"
+	CardCompleted    CardStatus = "completed"
+	CardNotCompleted CardStatus = "not_completed"
+)
+
+// DDSCardStatusOf is training/dds.CardStatusOf's own report-time
+// simplification (ДДС-3/ADR-032): a report row only ever describes an
+// already-closed or interrupted item (LessonReport requires lessons.
+// state='finished'), so there is no "now" to compare against a primary
+// deadline — an item that never received a primary decision at all is
+// reported as CardRegistered rather than distinguishing CardNotNotified,
+// which needs that live deadline check. reaction/closeReason/itemState
+// are lesson_report_rows' own items.reaction/close_reason/state columns.
+func DDSCardStatusOf(reaction string, closeReason *string, itemState string) CardStatus {
+	switch reaction {
+	case "completed", "completed_without_team":
+		return CardCompleted
+	case "not_accepted", "refused":
+		return CardRefused
+	}
+	if closeReason != nil && *closeReason == "pilot_completed" {
+		return CardCompleted
+	}
+	switch itemState {
+	case "interrupted":
+		return CardNotCompleted
+	case "closed":
+		return CardNotCompleted
+	}
+	switch reaction {
+	case "added", "received":
+		return CardRegistered
+	}
+	return CardInProgress
 }
 
 // IntakeBlockScore is one operator112/rubric-v2 block's own points-out-

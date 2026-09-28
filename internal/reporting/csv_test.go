@@ -18,6 +18,28 @@ func TestCSVBOMSemicolonAndFormulaProtection(t *testing.T) {
 	}
 }
 
+// TestCSVIncludesDDSCardStatus is ДДС-3/ADR-032: a DDS row's own derived
+// card status is a dedicated column, empty for a non-DDS row (checked by
+// TestCSVIncludesOperator112BlocksAndPenalties below, which never sets
+// CardStatus).
+func TestCSVIncludesDDSCardStatus(t *testing.T) {
+	body, err := CSV(LessonReport{Items: []ReportItem{{
+		ItemResult: ItemResult{AssessmentStatus: AssessmentReady, CardStatus: CardCompleted},
+		FullName:   "Сидоров",
+		UserID:     uuid.New(),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(body)
+	if !strings.Contains(got, "Состояние карточки;Статус карточки;Состояние оценки") {
+		t.Fatalf("csv header missing card status column: %q", got)
+	}
+	if !strings.Contains(got, ";completed;") {
+		t.Fatalf("csv row missing card status value: %q", got)
+	}
+}
+
 func TestCSVIncludesOperator112BlocksAndPenalties(t *testing.T) {
 	points := 17.5
 	penalty := 5.0

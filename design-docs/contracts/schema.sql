@@ -535,7 +535,7 @@ ORDER BY item_id, (kind='expert') DESC, revision DESC;
 CREATE VIEW lesson_report_rows AS
 SELECT l.id AS lesson_id, l.title AS lesson_title, l.mode AS lesson_mode, l.state AS lesson_state,
        r.user_id, u.full_name, w.number AS workstation_no, r.level_at_start AS level, r.exercise_type,
-       i.id AS item_id, i.ordinal, i.state AS item_state, i.close_reason, i.offered_at, i.opened_at, i.closed_at, i.interruptions,
+       i.id AS item_id, i.ordinal, i.state AS item_state, i.reaction, i.close_reason, i.offered_at, i.opened_at, i.closed_at, i.interruptions,
        i.card->>'number' AS card_number, sv.scenario_id, s.title AS scenario_title, sv.version AS scenario_version, sv.difficulty,
        (ev.body->'derived'->>'open_seconds')::numeric AS open_seconds,
        (ev.body->'derived'->>'primary_seconds')::numeric AS primary_seconds,

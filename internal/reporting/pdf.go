@@ -65,6 +65,10 @@ func RenderPDF(snapshot Snapshot, generatedAt time.Time) ([]byte, error) {
 		}
 		first := fmt.Sprintf("%s, РМ %d - %s, карточка %s (№%d)", item.FullName, item.WorkstationNo, item.ScenarioTitle, item.CardNumber, item.Ordinal)
 		second := fmt.Sprintf("Карточка: %s | Оценка: %s | Балл: %s | Уровень: %s | Открытие: %s | Работа: %s | Всего: %s", item.ItemState, status, score, item.Level, seconds(item.OpenSeconds), seconds(item.WorkSeconds), seconds(item.TotalSeconds))
+		// ДДС-3/ADR-032: empty for operator112_intake (no equivalent).
+		if item.CardStatus != "" {
+			second += " | Статус карточки: " + string(item.CardStatus)
+		}
 		paragraph(pdf, first)
 		paragraph(pdf, second)
 		if len(item.Errors) > 0 {

@@ -16,11 +16,14 @@ func CSV(report LessonReport) ([]byte, error) {
 	w.UseCRLF = true
 	// 112-6/ADR-026: two extra trailing columns beyond DDS's own
 	// unchanged set, empty for every non-operator112_intake row.
-	if err := w.Write([]string{"ФИО", "РМ", "Сценарий", "Карточка", "Порядок", "Состояние карточки", "Состояние оценки", "Оценщик", "Балл", "Зачёт", "Уровень", "Открытие, с", "Работа, с", "Всего, с", "Ошибки", "Блоки 112", "Штрафы 112"}); err != nil {
+	// ДДС-3/ADR-032: "Статус карточки" is ADR-030's derived card status
+	// (registered/not_notified/in_progress/refused/completed/
+	// not_completed), empty for operator112_intake.
+	if err := w.Write([]string{"ФИО", "РМ", "Сценарий", "Карточка", "Порядок", "Состояние карточки", "Статус карточки", "Состояние оценки", "Оценщик", "Балл", "Зачёт", "Уровень", "Открытие, с", "Работа, с", "Всего, с", "Ошибки", "Блоки 112", "Штрафы 112"}); err != nil {
 		return nil, err
 	}
 	for _, item := range report.Items {
-		if err := w.Write([]string{cell(item.FullName), strconv.Itoa(item.WorkstationNo), cell(item.ScenarioTitle), cell(item.CardNumber), strconv.Itoa(item.Ordinal), item.ItemState, string(item.AssessmentStatus), nullable(item.AssessmentKind), number(item.Score), boolValue(item.Passed), item.Level, number(item.OpenSeconds), number(item.WorkSeconds), number(item.TotalSeconds), cell(errorText(item.Errors)), cell(intakeBlocksText(item.IntakeBlocks)), number(item.IntakePenaltyTotal)}); err != nil {
+		if err := w.Write([]string{cell(item.FullName), strconv.Itoa(item.WorkstationNo), cell(item.ScenarioTitle), cell(item.CardNumber), strconv.Itoa(item.Ordinal), item.ItemState, string(item.CardStatus), string(item.AssessmentStatus), nullable(item.AssessmentKind), number(item.Score), boolValue(item.Passed), item.Level, number(item.OpenSeconds), number(item.WorkSeconds), number(item.TotalSeconds), cell(errorText(item.Errors)), cell(intakeBlocksText(item.IntakeBlocks)), number(item.IntakePenaltyTotal)}); err != nil {
 			return nil, err
 		}
 	}
