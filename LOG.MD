@@ -3445,3 +3445,29 @@ Validation: `make verify` (после разрешения локальных т
 Risk/next: изменение статуса в уже развёрнутой БД применяется повторным `emsim import seed`; затем проверить браузерный e2e на запущенном стеке. Следующий содержательный шаг — заполнить эталоны трёх активных ИИ-кейсов и заменить заглушечные типы/службы там, где они не соответствуют ситуации.
 
 Note: запись выше зафиксирована до слияния c8/c9 ДДС-3 в эту ветку; `TestAssessmentPipelineThroughAPIAndWorker` и остальные несовпадения рубрики ДДС, упомянутые здесь, уже исправлены записью «ДДС-3: рубрика v2 завершена» выше.
+
+## 2026-09-28 — ДДС-10, часть 1: план и ADR-033 (c1)
+
+Status: planned, not implemented. ДДС-4, ДДС-5 и ДДС-8 ждут от заказчика структуру протокола классификации. На время ожидания пользователь выбрал часть ДДС-10, которая от неё не зависит: пункты 1–6.
+- Профиль класса `compose.class.yaml` (Caddy, `tls internal`, `COOKIE_SECURE=true`, api без опубликованных портов).
+- Ежедневный планировщик задач: `backup.run` (каталог хоста, 14 копий, `scripts/restore.sh`) и `audit.prune` (183 дня).
+- `GET /admin/status`, `POST /admin/backup`, `POST /admin/tasks/{id}/retry` с проверками по виду задачи; экран «Состояние».
+- Bearer-ключ и `compose.remote-llm.yaml` для удалённой модели.
+- `emsim demo-setup`.
+
+Нагрузка и W0, офлайн-пакет, документация и видео, `/admin/import/*` перенесены в техдолг.
+
+Решения пользователя 28.09: бэкап в каталог хоста, 14 копий; TLS от внутреннего CA Caddy; удалённая модель — OpenAI-совместимый API с Bearer.
+
+Сверка с кодом:
+- api и worker слушают только `127.0.0.1`, поэтому класс сейчас не подключится;
+- `/admin/status|backup|tasks/{id}/retry` есть только в `openapi.yaml`;
+- нет планировщика, очистки аудита и индекса `audit_log(at)`;
+- в runtime-образе нет `pg_dump`;
+- `llm.Client` не передаёт ключ.
+
+Changed: `design-docs/adr/033-delivery-class-profile.md`, `design-docs/adr/README.md`, `slice-dds-10-plan.md`, `slice-planning-dds.md`, `CLAUDE.md`, `LOG.MD`.
+
+Validation: изменены только документы, код и контракты не менялись.
+
+Next: c2 — `compose.class.yaml`, `deploy/caddy/Caddyfile`, `make class-up`/`class-ca`, README «Класс: доступ по HTTPS».
