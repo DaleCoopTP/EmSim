@@ -4,6 +4,13 @@ import type { CardView } from "../api/workplace";
 import { formatDateTime, formatOffset } from "../format";
 import { applicantStatusLabel, reactionLabel } from "../labels";
 
+// Fixed reference entries from the памятка's own АРМ-112 screenshot
+// (стр. 15–16): shown alongside the case's real notification_list.
+const fixedReferenceServices = [
+  { service: "Префектура ЮАО", status: "added" as const },
+  { service: "Департамент природопользования и охраны окружающей среды", status: "added" as const },
+];
+
 // IncidentCard renders CardPreview — the same allowlist projection a
 // trainee's АРМ-112 screen will show (slice 3), never the closed эталон
 // (that is ScenarioReference, rendered separately by the caller). It is
@@ -73,7 +80,15 @@ export function IncidentCard({ card, mineSlot }: { card: CardPreview | CardView;
               {n.mine && mineSlot ? mineSlot : <span>{reactionLabel(n.status)}</span>}
             </div>
           ))}
-          {card.notification_list.length === 0 && <p className="dds-card-subvalue">Службы не назначены.</p>}
+          {/* Fixed reference services from the памятка's own АРМ-112
+              screenshot (стр. 15–16): display-only, not part of this
+              card's real notification_list. */}
+          {fixedReferenceServices.map((n) => (
+            <div key={n.service} className="dds-service">
+              <strong>{n.service}</strong>
+              <span>{reactionLabel(n.status)}</span>
+            </div>
+          ))}
         </div>
       </section>
     </article>
