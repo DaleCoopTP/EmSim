@@ -9,6 +9,8 @@ import {
   useLesson, useLessonOptions, type Assignment,
 } from "../../api/training";
 import { formatDateTime } from "../../format";
+import { LessonSettings } from "./LessonSettings";
+import { RandomFill } from "./RandomFill";
 
 const stateLabels: Record<string, string> = { draft: "Черновик", running: "Идёт", stopped: "Остановлено", finished: "Завершено" };
 const levelLabels: Record<string, string> = { easy: "лёгкий", medium: "средний", hard: "сложный" };
@@ -107,6 +109,14 @@ export function LessonDetailRoute() {
     },
   });
 
+  // ДДС-6: a random proposal replaces the queues of the rows it was drawn
+  // for; it stays local until "Сохранить назначения".
+  const applyDrawn = (drawn: Assignment[]) => {
+    setRows(effectiveRows.map((row) => {
+      const match = drawn.find((a) => String(a.workstation_no) === row.workstationNo && a.user_id === row.userId);
+      return match ? { ...row, queue: [], savedVersionIds: match.scenario_version_ids } : row;
+    }));
+  };
   const onSave = (event: FormEvent) => { event.preventDefault(); save.mutate(); };
   if (lesson.isPending) return <p>Загрузка…</p>;
   if (lesson.isError) return <p className="error">{errorMessage(lesson.error)}</p>;
@@ -137,6 +147,8 @@ export function LessonDetailRoute() {
         {current.state === "stopped" && <><dt>Остановлено</dt><dd>{formatDateTime(current.stopped_at)}{current.stop_reason ? ` — ${current.stop_reason}` : ""}</dd></>}
       </dl>
 
+      {current.exercise_type === "dds_processing" && <LessonSettings lesson={current} />}
+
       {isDraft ? (
         <form className="lesson-form assignment-editor" onSubmit={onSave}>
           <h2>Назначения</h2>
@@ -155,6 +167,13 @@ export function LessonDetailRoute() {
             />
           ))}
           <p><button type="button" className="arm-secondary-action" onClick={addRow}>+ Добавить рабочее место</button></p>
+          {current.exercise_type === "dds_processing" && (
+            <RandomFill
+              lessonId={lessonId} level={current.level}
+              pairs={effectiveRows.filter((r) => r.workstationNo !== "" && r.userId !== "").map((r) => ({ workstation_no: Number(r.workstationNo), user_id: r.userId }))}
+              onDrawn={applyDrawn}
+            />
+          )}
           {current.level === "hard" && effectiveRows.some((r) => r.savedVersionIds.length + r.queue.length > 1) && !((current.timing?.spawn_every_s ?? 0) > 0) && (
             <p role="alert" className="error">У занятия не задан интервал новых карточек — очередь длиннее одной версии недопустима.</p>
           )}

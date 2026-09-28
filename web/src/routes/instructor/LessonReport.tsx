@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { errorMessage } from "../../api/errors";
 import {
   reportFilesQueryKey, requestLessonPDF, useLessonReport, useReportFiles,
-  type AssessmentStatus, type ReportFile, type ReportItem,
+  type AssessmentStatus, type LessonReport, type ReportFile, type ReportItem,
 } from "../../api/reporting";
 import { formatDateTime } from "../../format";
 import { useLesson } from "../../api/training";
@@ -70,6 +70,8 @@ export function LessonReportRoute() {
       <h1>Отчёт: {value.lesson.title}</h1>
       <p>Завершено: {formatDateTime(value.lesson.finished_at)}. В расчёты попадают только готовые оценки; вводные карточки не оцениваются.</p>
 
+      {dds && <LessonSettingsSummary lesson={value.lesson} />}
+
       <h2>Итоги</h2>
       <dl>
         <dt>Средний балл</dt><dd>{score(value.aggregates.avg_score)}</dd>
@@ -128,4 +130,14 @@ export function LessonReportRoute() {
       )}
     </section>
   );
+}
+
+// ДДС-6/ADR-035: the lesson's own norm and, when the instructor changed
+// them, its pass threshold and weights — the same line the PDF header shows.
+function LessonSettingsSummary({ lesson }: { lesson: LessonReport["lesson"] }) {
+  const parts: string[] = [];
+  if (lesson.timing) parts.push(`Нормативы: открытие ${lesson.timing.open_s} с, решение ${lesson.timing.primary_s} с, отработка ${lesson.timing.complete_s} с`);
+  if (lesson.pass_threshold != null) parts.push(`порог зачёта ${lesson.pass_threshold} (задан преподавателем)`);
+  if (lesson.custom_weights) parts.push("веса критериев изменены преподавателем");
+  return parts.length === 0 ? null : <p>{parts.join("; ")}.</p>;
 }

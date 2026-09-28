@@ -29,7 +29,15 @@ export function errorMessage(error: unknown): string {
       return "Сначала устраните ошибки проверки (вкладка «Проверка»).";
     case "unsupported_for_editor":
       return "Редактор 112-7 работает только со сценариями «полный кейс» + «ИИ-заявитель».";
+    case "not_enough_scenarios": {
+      const available = typeof error.details?.available === "number" ? error.details.available : undefined;
+      const workstation = typeof error.details?.workstation_no === "number" ? ` для РМ № ${error.details.workstation_no}` : "";
+      return `Подходящих сценариев${workstation} меньше запрошенного${available === undefined ? "" : ` (доступно: ${available})`}. Выберите больше разделов или уменьшите число карточек.`;
+    }
     case "validation_failed":
+      if (field?.startsWith("timing.")) return `Проверьте норматив «${fieldLabel(field)}».`;
+      if (field?.startsWith("scoring.")) return `Проверьте оценивание: «${fieldLabel(field)}»${reason === "must sum to 100" ? " — сумма весов должна быть 100" : ""}.`;
+      if (field === "categories" || field === "count") return "Выберите разделы и число карточек от 1 до 20.";
       if (field === "workstation_no") {
         if (reason === "required") return "Укажите номер рабочего места.";
         if (reason === "unknown") return "Рабочее место с таким номером не найдено.";
@@ -57,8 +65,17 @@ const fieldLabels: Record<string, string> = {
   scenario_version_ids: "сценарий",
   difficulty_min: "сложность от",
   difficulty_max: "сложность до",
+  "timing.open_s": "открытие, с",
+  "timing.primary_s": "первичное решение, с",
+  "timing.complete_s": "отработка, с",
+  "timing.spawn_every_s": "интервал новых карточек, с",
+  "scoring.pass_threshold": "порог зачёта",
+  "scoring.weights": "веса критериев",
+  categories: "разделы",
+  count: "число карточек",
 };
 
 function fieldLabel(field: string): string {
+  if (field.startsWith("scoring.weights.")) return `вес ${field.slice("scoring.weights.".length)}`;
   return fieldLabels[field] ?? field;
 }

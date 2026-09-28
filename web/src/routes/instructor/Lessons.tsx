@@ -3,6 +3,8 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { errorMessage } from "../../api/errors";
 import { createLesson, lessonsQueryKey, useLessons, type Level, type LessonCreate } from "../../api/training";
+import { TimingFields } from "../../components/LessonTimingFields";
+import { timingProblemText } from "../../lessonTiming";
 import { formatDateTime } from "../../format";
 
 const stateLabels: Record<string, string> = { draft: "черновик", running: "идёт", stopped: "остановлено", finished: "завершено" };
@@ -17,6 +19,9 @@ export function LessonsRoute() {
   const [exerciseType, setExerciseType] = useState<"dds_processing" | "operator112_intake">("operator112_intake");
   const [level, setLevel] = useState<Level>("easy");
   const [spawnEveryS, setSpawnEveryS] = useState("150");
+  const [openS, setOpenS] = useState("30");
+  const [primaryS, setPrimaryS] = useState("30");
+  const [completeS, setCompleteS] = useState("180");
   const create = useMutation({
     mutationFn: createLesson,
     onSuccess: async (lesson) => {
@@ -27,6 +32,7 @@ export function LessonsRoute() {
 
   const spawnValue = Number(spawnEveryS);
   const spawnValid = level !== "hard" || (Number.isFinite(spawnValue) && spawnValue > 0);
+  const timingProblem = timingProblemText(Number(openS), Number(primaryS), Number(completeS));
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -36,7 +42,7 @@ export function LessonsRoute() {
       mode: "training",
 	  level: exerciseType === "operator112_intake" ? "easy" : level,
 	  ...(exerciseType === "dds_processing" ? { timing: {
-        open_s: 30, primary_s: 30, complete_s: 180,
+        open_s: Number(openS), primary_s: Number(primaryS), complete_s: Number(completeS),
         spawn_every_s: level === "hard" ? spawnValue : undefined,
 	  }} : {}),
     };
@@ -65,16 +71,18 @@ export function LessonsRoute() {
               {(Object.keys(levelLabels) as Level[]).map((option) => <option key={option} value={option}>{levelLabels[option]}</option>)}
             </select>
           </label>
+          <TimingFields open={openS} primary={primaryS} complete={completeS} onOpen={setOpenS} onPrimary={setPrimaryS} onComplete={setCompleteS} />
           {level === "hard" && (
             <label>Интервал новых карточек, с
               <input type="number" min={1} required value={spawnEveryS} onChange={(event) => setSpawnEveryS(event.target.value)} />
             </label>
           )}
 		  </>}
-		  <p>{exerciseType === "operator112_intake" ? "Режим: обучение · лёгкий уровень · без норматива времени" : "Режим: обучение · таймеры: 30 / 30 / 180 с"}</p>
+		  <p>{exerciseType === "operator112_intake" ? "Режим: обучение · лёгкий уровень · без норматива времени" : "Режим: обучение · веса и порог зачёта, случайное заполнение очередей — на странице занятия"}</p>
+          {exerciseType === "dds_processing" && timingProblem && <p role="alert" className="error">{timingProblem}</p>}
           {create.isError && <p role="alert" className="error">{errorMessage(create.error)}</p>}
           <p>
-			<button type="submit" disabled={create.isPending || title.trim() === "" || (exerciseType === "dds_processing" && !spawnValid)}>Создать</button>{" "}
+			<button type="submit" disabled={create.isPending || title.trim() === "" || (exerciseType === "dds_processing" && (!spawnValid || timingProblem !== null))}>Создать</button>{" "}
             <button type="button" onClick={() => setShowCreate(false)}>Отмена</button>
           </p>
         </form>

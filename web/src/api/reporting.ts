@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./client";
+import type { components } from "./schema";
 
 export type AssessmentStatus = "ready" | "needs_review" | "unavailable" | "pending" | "not_assessed";
 
@@ -71,7 +72,7 @@ export interface ReportParticipant {
 }
 
 export interface LessonReport {
-  lesson: { id: string; title: string; mode: string; finished_at: string };
+  lesson: { id: string; title: string; mode: string; finished_at: string } & Pick<components["schemas"]["ReportLesson"], "timing" | "pass_threshold" | "custom_weights">;
   items: ReportItem[];
   participants: ReportParticipant[];
   aggregates: {
