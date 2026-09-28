@@ -3739,3 +3739,23 @@ Status: c1 выполнен (документы).
 Validation: `python3 design-docs/contracts/check.py`.
 
 Next: c2 — контракты (OpenAPI, schema.sql).
+
+## 2026-09-29 — ДДС-6 c2–c10: настройка занятия реализована
+
+Status: срез ДДС-6 реализован (c1–c10, [ADR-035](design-docs/adr/035-dds-lesson-settings.md), `slice-dds-6-plan.md`).
+
+- c2 контракты: `PATCH /lessons/{id}`, `GET /lessons/{id}/rubric`, `POST /lessons/{id}/assignments/draw`, `GET /scenarios/categories`, `Lesson.scoring`, границы нормативов, код `not_enough_scenarios`; `lessons.scoring` в `schema.sql`.
+- c3 `training`: `validateTiming`, `UpdateLessonSettings` (владелец, только черновик), **исправлен срок первичного решения** — `offered_at + primary_s` (раньше `open_s`).
+- c4 миграция `00021` (`lessons.scoring`), `ExpectedSchemaVersion` 21, `validateLessonScoring`, `content.DDSRubricDefaults`.
+- c5 `assessment.MergeLesson` во всех трёх местах сборки рубрики, `LessonRubric` для `GET /lessons/{id}/rubric`.
+- c6 `content.CategoryOf`/`LevelDifficultyBand`/`SummarizeCategories`, `Store.ListApprovedDDSVersions`, `training.DrawAssignments` (общая `loadAssignee` с `ReplaceAssignments`).
+- c7 отчёт: нормативы, порог, «веса изменены» в JSON и шапке PDF; CSV не менялся.
+- c8 web: `LessonSettings`, `RandomFill`, поля нормативов в форме создания, шапка отчёта.
+- c9 тесты: `test/integration/dds_lesson_settings_test.go`, `dds_draw_test.go`, `web/e2e/dds-lesson-settings.spec.ts`; мутационная проверка срока `primary_s` роняет тест.
+- c10 документы: `CLAUDE.md`, `README.md`, `slice-planning-dds.md`, итог в плане.
+
+Validation: `go test ./...`; `make test-integration` на отдельном PostgreSQL 18 (Docker-демона не было; единственный отказ — `TestPlatformSchema`, он требует major 16); `cd web && npm run build`, `npx tsc -b`, `npm run lint` (без новых предупреждений); `python3 design-docs/contracts/check.py`; `web/e2e/dds-lesson-settings.spec.ts` на локальных api и worker.
+
+Unresolved risks: в сидах ДДС сложность 1–4 — на «сложном» уровне случайная выборка пуста, на «среднем» почти пуста (ДДС-5); категория — допущение до реального классификатора; если веса занятия и `disabled` сценария дают сумму применимых весов 0, балл 0 (сохранение это не ловит).
+
+Next: ДДС-7 (результаты и рекомендации) или ДДС-5 (контент), когда придёт протокол классификации.
