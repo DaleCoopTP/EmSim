@@ -32,6 +32,13 @@ type trainingE2EFixture struct {
 
 func setupTrainingE2E(t *testing.T) trainingE2EFixture {
 	t.Helper()
+	return setupTrainingE2EWithAPIEnv(t, nil)
+}
+
+// setupTrainingE2EWithAPIEnv is setupTrainingE2E with extra environment
+// entries for the api process (a later entry wins over the defaults).
+func setupTrainingE2EWithAPIEnv(t *testing.T, apiEnv []string) trainingE2EFixture {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
 	databaseURL := openTestDatabase(t, ctx)
@@ -51,7 +58,7 @@ func setupTrainingE2E(t *testing.T) trainingE2EFixture {
 	blobRoot := runImportSeedProcess(t, ctx, binary, databaseURL, adminLogin, "../../seed")
 
 	publicAddr, adminAddr := freeAddr(t), freeAddr(t)
-	api := startAPIProcess(t, binary, databaseURL, publicAddr, adminAddr, blobRoot)
+	api := startAPIProcessWithEnv(t, binary, databaseURL, publicAddr, adminAddr, apiEnv, blobRoot)
 	t.Cleanup(func() { api.stop(t) })
 	return trainingE2EFixture{ctx: ctx, databaseURL: databaseURL, baseURL: "http://" + publicAddr, blobRoot: blobRoot}
 }

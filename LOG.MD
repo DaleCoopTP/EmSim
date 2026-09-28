@@ -3681,3 +3681,20 @@ Status: c8 выполнен.
 - `schema.d.ts` в `.gitignore` (генерируется `npm run generate:api`).
 
 Validation: `make verify-web` (tsc + vite build), `npm run lint` (те же 4 прежних предупреждения). Браузерный e2e в песочнице не запускался: `web/e2e/run.mjs` поднимает Docker Compose, а Docker-демона здесь нет (см. c9/c10).
+
+## 2026-09-28 — ДДС-4 c9: сквозной тест рубрики v3
+
+Status: c9 выполнен.
+
+- `test/integration/dds_rubric_v3_test.go` — реальные процессы api и worker с `ASSESSMENT_JUDGE=llm` и поддельным OpenAI-совместимым сервером (`httptest`, различает промпты по системному сообщению):
+  - новое занятие ДДС замораживает `dds/rubric-v3`; закрытие запечатывает оба запроса в `assessment_inputs.semantic_input` (+ `judge.model`, `prompt_versions`);
+  - судья отвечает «нет» на один факт и находит 2 ошибки → `auto rev=1 ready`, `D_COMMENT_CONTENT` partial 0,75, `G_GRAMMAR` partial с 2 ошибками, `model=fake-dds-judge`;
+  - модель видит только комментарии со статусами и вопросы (нет текста докладов, весов, баллов), по одному запросу на критерий;
+  - `needs_review` судьи → `needs_review`, `score=NULL`;
+  - модель недоступна (HTTP 500) → повторы задачи, затем финализатор даёт `auto needs_review`, оба судейских критерия `unavailable`, детерминированные критерии сохраняют результат.
+  - «ASSESSMENT_JUDGE=off → v2, модель не вызывается» уже покрыто `TestDDSRubricV2ThroughAPIAndWorker` (api и worker с выключенным судьёй), отдельно не дублировалось.
+- Хелперы: `startAPIProcessWithEnv`, `startWorkerProcessWithEnv`, `setupTrainingE2EWithAPIEnv` (прежние обёртки не менялись).
+- Существующие тесты ДДС не ослаблялись: они идут с `ASSESSMENT_JUDGE=off`.
+- Мутационная проверка: подмена «нет» на «да» в `commentContentRule` роняет тест.
+
+Validation: `make verify` (format, build, test, vet, staticcheck); `TEST_DATABASE_URL=… go test -tags=integration ./test/integration/...` — весь набор, 104 с; `python3 design-docs/contracts/check.py`. Браузерный e2e (`npm run test:e2e`) не запускался: нет Docker-демона; e2e идёт с судьёй `off`, поведение экранов ДДС v2 не менялось.

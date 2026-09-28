@@ -50,6 +50,15 @@ func (p *workerProcess) stop(t *testing.T, crash bool) {
 
 func startWorkerProcess(t *testing.T, binary, databaseURL, role, id string, blobRoots ...string) *workerProcess {
 	t.Helper()
+	return startWorkerProcessWithEnv(t, binary, databaseURL, role, id, nil, blobRoots...)
+}
+
+// startWorkerProcessWithEnv is startWorkerProcess with extra environment
+// entries appended after the defaults (a later entry wins), for a test
+// that needs a non-default setting such as ASSESSMENT_JUDGE=llm with a
+// fake model endpoint.
+func startWorkerProcessWithEnv(t *testing.T, binary, databaseURL, role, id string, extraEnv []string, blobRoots ...string) *workerProcess {
+	t.Helper()
 	blobRoot := t.TempDir()
 	if len(blobRoots) > 0 {
 		blobRoot = blobRoots[0]
@@ -79,6 +88,7 @@ func startWorkerProcess(t *testing.T, binary, databaseURL, role, id string, blob
 		"BLOB_ROOT="+blobRoot,
 		"WORKER_LOCAL_TEST_POLICY=e2e-fast-v1",
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

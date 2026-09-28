@@ -65,6 +65,14 @@ func freeAddr(t *testing.T) string {
 
 func startAPIProcess(t *testing.T, binary, databaseURL, publicAddr, adminAddr string, blobRoots ...string) *apiProcess {
 	t.Helper()
+	return startAPIProcessWithEnv(t, binary, databaseURL, publicAddr, adminAddr, nil, blobRoots...)
+}
+
+// startAPIProcessWithEnv is startAPIProcess with extra environment
+// entries appended after the defaults (a later entry wins), for a test
+// that needs a non-default setting such as ASSESSMENT_JUDGE=llm.
+func startAPIProcessWithEnv(t *testing.T, binary, databaseURL, publicAddr, adminAddr string, extraEnv []string, blobRoots ...string) *apiProcess {
+	t.Helper()
 	blobRoot := t.TempDir()
 	if len(blobRoots) > 0 {
 		blobRoot = blobRoots[0]
@@ -83,6 +91,7 @@ func startAPIProcess(t *testing.T, binary, databaseURL, publicAddr, adminAddr st
 		// the same explicit setting compose.no-llm.yaml uses (ADR-029).
 		"ASSESSMENT_JUDGE=off",
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
