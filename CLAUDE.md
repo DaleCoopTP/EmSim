@@ -41,12 +41,12 @@ Do not silently resolve a material contradiction. Record the chosen interpretati
 
   DDS-4 onwards is still a plan: the AI judge (`dds/rubric-v3`), content, and authoring. Until DDS-8, DDS instructors use prepared, immutable scenarios.
 
-  DDS-4, DDS-5 and DDS-8 wait for the customer's incident-classification protocol structure. Meanwhile DDS-10 part 1 (`slice-dds-10-plan.md`, [ADR-033](design-docs/adr/033-delivery-class-profile.md), 2026-09-28) is planned but not implemented. It covers:
-  - the `compose.class.yaml` Caddy/HTTPS profile with an internal CA;
-  - a daily scheduler for `backup.run` (host dir, 14 copies, `scripts/restore.sh`) and `audit.prune`;
-  - `GET /admin/status`, `POST /admin/backup` and `POST /admin/tasks/{id}/retry` with per-kind guards, plus the admin "Состояние" screen;
-  - a bearer API key and `compose.remote-llm.yaml` for a remote model;
-  - `emsim demo-setup`.
+  DDS-4, DDS-5 and DDS-8 wait for the customer's incident-classification protocol structure. Meanwhile DDS-10 part 1 (`slice-dds-10-plan.md`, [ADR-033](design-docs/adr/033-delivery-class-profile.md), 2026-09-28) is implemented:
+  - `compose.class.yaml`: Caddy with `tls internal` in front of api, `COOKIE_SECURE=true`, `make class-up`/`class-ca`;
+  - `tasks.Scheduler` (maintenance role) enqueues daily `audit.prune` (`AUDIT_RETENTION_DAYS`, migration `00020` BRIN index) and `backup.run` (`internal/platform/backup`: `pg_dump` + blobs tar + manifest into `BACKUP_DIR`, `BACKUP_KEEP` copies; the runtime image ships `postgresql16-client`); `emsim backup`, `emsim restore --yes`, `scripts/restore.sh`;
+  - `internal/platform/status`: `GET /admin/status`, `POST /admin/backup`, `POST /admin/tasks/{id}/retry` (`tasks.Store.RetryTx` with per-kind `RetryGuard`s — `assessment.Service.RetryTarget`, `tasks.NeverRetry` for `caller.reply`/`caller.warmup`), worker heartbeats in `platform_heartbeats`, the admin «Состояние» screen (`web/src/routes/admin/Status.tsx`);
+  - `llm.Client` bearer key and `LLM_DIALECT`, `compose.remote-llm.yaml`;
+  - `emsim demo-setup` / `make demo`.
 
   Load testing/W0, the offline package, documentation/video and `/admin/import/*` are tech debt.
 - The same scenario version may be assigned to multiple participants. Each participant receives an independent run and item state.

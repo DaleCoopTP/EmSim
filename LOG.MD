@@ -3471,3 +3471,46 @@ Changed: `design-docs/adr/033-delivery-class-profile.md`, `design-docs/adr/READM
 Validation: изменены только документы, код и контракты не менялись.
 
 Next: c2 — `compose.class.yaml`, `deploy/caddy/Caddyfile`, `make class-up`/`class-ca`, README «Класс: доступ по HTTPS».
+
+## 2026-09-28 — ДДС-10, часть 1 реализована (c2–c10)
+
+Status: completed, ветка `dds-10`, [ADR-033](design-docs/adr/033-delivery-class-profile.md), [`slice-dds-10-plan.md`](slice-dds-10-plan.md).
+
+- **c2, класс по HTTPS.** `compose.class.yaml`: Caddy 2.10 (digest), `tls internal`, api без публичного порта, `COOKIE_SECURE=true`. `deploy/caddy/Caddyfile`, `make class-up`/`class-ca`.
+- **c3, удалённая модель.** `llm.Client`: `APIKey` → Bearer, `LLM_DIALECT=openai` не шлёт `repeat_penalty`. `CALLER_/JUDGE_/LLM_API_KEY`, `compose.remote-llm.yaml`, `bench-llm` без `/metrics`.
+- **c4, планировщик и аудит.** `tasks.Scheduler` в роли maintenance: ежедневные слоты в `SCHEDULE_TZ`, dedup `<kind>:daily:<дата>`. `audit.prune` (`AUDIT_RETENTION_DAYS=183`, пачки по 5000, своя запись аудита). Миграция `00020`: BRIN `audit_log(at)`, `platform_heartbeats`. Исправлено: reaper при остановке посреди `ReapExpired` завершался с ошибкой — отсюда редкий exit 1 в `TestWorkerProcessCrashRecovery`.
+- **c5, бэкап.** `internal/platform/backup` (`pg_dump -Fc`, `blobs.tar.gz`, `manifest.json`, `.tmp-*` → rename, 14 копий). `backup.run` в пуле report, `BACKUP_AT=03:00`. `emsim backup`/`restore --yes`, `scripts/restore.sh`. В runtime-образе `postgresql16-client`. `backup-dir` делает chown каталога хоста.
+- **c6, «Состояние».** `internal/platform/status`: `GET /admin/status` (без payload задач), `POST /admin/backup` (409 `backup_not_configured`/`backup_in_progress`). Worker пишет heartbeats: worker, llm, каталог копий.
+- **c7, повтор задач.** `POST /admin/tasks/{id}/retry`: `tasks.Store.RetryTx` + `RetryGuard`. Оценка с auto/expert — 409; без input — в waiting. `caller.*` — `NeverRetry`. Только `GroupAdmin`.
+- **c8, веб.** `web/src/routes/admin/Status.tsx`, пункт «Состояние» в меню.
+- **c9, демо-стенд.** `emsim demo-setup --actor`: РМ-01…N, `instructor`, `traineeNN` по кругу ДДС района/03/112. Идемпотентно, пароли не меняет. `make demo`.
+- **c10, e2e.** `web/e2e/admin-status.spec.ts`; `run.mjs` пишет копии во временный каталог.
+
+Validation:
+- `make verify` — после каждого коммита.
+- `make test-integration` — полный набор зелёный после c4 и c7; новые тесты c9 прогнаны отдельно.
+- `python3 design-docs/contracts/check.py` — ok (DDL-часть пропущена без `DATABASE_URL`).
+- `make verify-web`, `npm run lint` — только прежние предупреждения. `npx playwright test --list` видит новый спек.
+- Вручную в compose (изолированный проект):
+  - HTTPS через Caddy: сертификат, 308 с http, cookie `Secure`, SSE `stream.ready`;
+  - плановый и ручной бэкап, восстановление через `restore.sh` (данные после копии исчезли, блобы на месте);
+  - экран «Состояние» во встроенном браузере: копия и «Повторить».
+- `TestBackupRestoreRoundTrip` пропускается, если на хосте клиент PostgreSQL другой major-версии (здесь 18). Прогнан через клиент 16 из Docker — прошёл.
+
+Not run:
+- браузерный e2e `admin-status.spec.ts` (и полный `npm run test:e2e`);
+- ручной `make demo` на итоговом образе.
+
+Причина: на хосте кончилось место (ENOSPC), после очистки Docker Desktop не отвечает.
+
+Отклонения от плана:
+- Визуального эталона у `admin-status.spec.ts` нет: экран почти целиком из времени, размеров и id, маски свели бы его к пустому снимку.
+- `GroupTasks` оставлен для будущего `GET /tasks/{id}`; повтор — под `GroupAdmin`.
+- Копии в одну секунду получают суффикс `-2`.
+
+Риски:
+- Бэкап делит единственный слот report с PDF-отчётами.
+- На хосте без `BACKUP_DIR` плановой копии нет, а ручная возвращает 409.
+- Первая плановая копия при старте стека может опередить импорт сида — в ней нет блобов.
+
+Next: когда Docker вернётся — `cd web && npm run test:e2e`, затем `DEMO_PASSWORD=… make demo`; затем ДДС-4 после получения структуры протокола классификации.

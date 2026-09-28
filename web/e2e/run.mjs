@@ -1,5 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
@@ -33,6 +35,9 @@ const apiPort = process.env.E2E_API_PORT ?? await unusedPort();
 const apiAdminPort = await unusedPort();
 const workerAdminPort = await unusedPort();
 const project = `emsim-e2e-${process.pid}-${Date.now()}`;
+// ADR-033: this run's backup copies go to a throwaway directory, never to
+// the repository's ./backups.
+const backupDir = mkdtempSync(join(tmpdir(), "emsim-e2e-backups-"));
 const environment = {
   ...process.env,
   API_PORT: apiPort,
@@ -55,6 +60,7 @@ const environment = {
   // the specs assert the stub's fixed phrases and rubric-v2.
   CALLER_REPLIER: "stub",
   ASSESSMENT_JUDGE: "off",
+  BACKUP_HOST_DIR: backupDir,
 };
 const compose = ["compose", "-p", project, "-f", "compose.yaml", "-f", "compose.no-llm.yaml"];
 
@@ -71,4 +77,7 @@ try {
   } catch (error) {
     console.error("e2e compose cleanup failed:", error);
   }
+  // Copies were written by the container's own user; a leftover is only
+  // a temp directory, so a failed removal is not an error.
+  rmSync(backupDir, { recursive: true, force: true, maxRetries: 2 });
 }
