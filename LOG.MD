@@ -3727,3 +3727,15 @@ Unresolved risks: `G_GRAMMAR` завышает число ошибок (вес 5
 Validation: `go test ./internal/assessment/...`; live-тесты `commentjudge`. `make verify` и интеграционные тесты не запускались.
 
 Next: сформулировать поведение комментария 112 в ADR при подходе к 112-10.
+
+## 2026-09-29 — ДДС-6 c1: план и ADR-035
+
+Status: c1 выполнен (документы).
+
+- `slice-dds-6-plan.md`, `design-docs/adr/035-dds-lesson-settings.md`, строка в `adr/README.md`, ДДС-6 → «в работе» в `slice-planning-dds.md`.
+- Решения пользователя: категория — раздел `type_code`; уровень → диапазоны сложности 1–3/4–6/7–10; случайность при назначении; веса занятия главнее весов сценария. Остальное (только ДДС, границы нормативов, `lessons.scoring`) — решения исполнителя, в ADR-035.
+- Найдено: `PrimaryAt` выдачи считается от `open_s`, а не `primary_s` — исправляется в c3.
+
+Validation: `python3 design-docs/contracts/check.py`.
+
+Next: c2 — контракты (OpenAPI, schema.sql).
