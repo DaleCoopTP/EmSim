@@ -88,6 +88,9 @@ type Store interface {
 
 	InsertLesson(ctx context.Context, tx pgx.Tx, l Lesson) (Lesson, error)
 	LessonByID(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock Lock) (Lesson, error)
+	// UpdateLessonSettings writes a draft lesson's editable settings
+	// (ADR-035) under the row lock the caller already holds.
+	UpdateLessonSettings(ctx context.Context, tx pgx.Tx, l Lesson) error
 	ListLessonsByInstructor(ctx context.Context, tx pgx.Tx, instructorID uuid.UUID, state *LessonState) ([]Lesson, error)
 	// StartLesson transitions draft -> running, setting started_at, under
 	// the row lock the caller already holds (LessonByID with LockUpdate).

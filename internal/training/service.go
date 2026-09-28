@@ -151,6 +151,83 @@ func defaultTiming() Timing {
 	return Timing{OpenS: 30, PrimaryS: 30, CompleteS: 180}
 }
 
+// DDS timing norm bounds (ADR-035): open_s 10–300, primary_s from open_s to
+// 600, complete_s 60–3600. spawn_every_s stays hard-only and positive.
+const (
+	timingOpenMinS, timingOpenMaxS         = 10, 300
+	timingPrimaryMaxS                      = 600
+	timingCompleteMinS, timingCompleteMaxS = 60, 3600
+)
+
+// validateTiming checks a DDS lesson's timing norm against ADR-035's bounds
+// for the given level; the field named in the error is the offending one.
+func validateTiming(t Timing, level auth.Level) error {
+	if t.OpenS < timingOpenMinS || t.OpenS > timingOpenMaxS {
+		return validationErr("timing.open_s", "must be between 10 and 300")
+	}
+	if t.PrimaryS < t.OpenS || t.PrimaryS > timingPrimaryMaxS {
+		return validationErr("timing.primary_s", "must be between open_s and 600")
+	}
+	if t.CompleteS < timingCompleteMinS || t.CompleteS > timingCompleteMaxS {
+		return validationErr("timing.complete_s", "must be between 60 and 3600")
+	}
+	if t.SpawnEveryS != nil {
+		if level != auth.LevelHard {
+			return validationErr("timing.spawn_every_s", "is allowed only for hard lessons")
+		}
+		if *t.SpawnEveryS <= 0 {
+			return validationErr("timing.spawn_every_s", "must be positive")
+		}
+	}
+	return nil
+}
+
+// LessonSettingsPatch is UpdateLessonSettings' input: a nil field is left
+// unchanged.
+type LessonSettingsPatch struct {
+	Timing *Timing
+}
+
+// UpdateLessonSettings changes a draft DDS lesson's timing norm (ADR-035).
+// Only the owner may call it and only while the lesson is a draft — start
+// freezes the norm into every offered item.
+func (s *Service) UpdateLessonSettings(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, patch LessonSettingsPatch, requestID string) (Lesson, error) {
+	var updated Lesson
+	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		lesson, err := s.store.LessonByID(ctx, tx, lessonID, LockUpdate)
+		if err != nil {
+			return err
+		}
+		if lesson.InstructorID != actor.UserID || lesson.Mode == ModePreview {
+			return ErrNotFound
+		}
+		if lesson.State != LessonDraft {
+			return ErrConflict
+		}
+		if lesson.ExerciseType != content.ExerciseTypeDDSProcessing {
+			return validationErr("exercise_type", "lesson settings are available for dds_processing only")
+		}
+		if patch.Timing != nil {
+			if err := validateTiming(*patch.Timing, lesson.Level); err != nil {
+				return err
+			}
+			lesson.Timing = *patch.Timing
+		}
+		if err := s.store.UpdateLessonSettings(ctx, tx, lesson); err != nil {
+			return err
+		}
+		updated = lesson
+		return s.store.AuditRecord(ctx, tx, audit.Entry{
+			ActorID: &actor.UserID, ActorRole: string(actor.Role), Action: "lesson.update",
+			ResourceType: "lesson", ResourceID: &lessonID, Outcome: audit.OutcomeOK, RequestID: requestID,
+		})
+	})
+	if err != nil {
+		return Lesson{}, err
+	}
+	return updated, nil
+}
+
 // CreateLesson creates a draft lesson. Hard lessons may opt into a positive
 // spawn interval; C5 uses it for parallel offers, while C4's ordinary queue
 // still waits for a normal close before issuing the next card.
@@ -183,16 +260,8 @@ func (s *Service) CreateLesson(ctx context.Context, actor auth.Principal, in Les
 	}
 	if in.Timing != nil {
 		timing = *in.Timing
-		if timing.OpenS <= 0 || timing.PrimaryS <= 0 || timing.CompleteS <= 0 {
-			return Lesson{}, validationErr("timing", "open_s/primary_s/complete_s must be positive")
-		}
-		if timing.SpawnEveryS != nil {
-			if in.Level != auth.LevelHard {
-				return Lesson{}, validationErr("timing.spawn_every_s", "is allowed only for hard lessons")
-			}
-			if *timing.SpawnEveryS <= 0 {
-				return Lesson{}, validationErr("timing.spawn_every_s", "must be positive")
-			}
+		if err := validateTiming(timing, in.Level); err != nil {
+			return Lesson{}, err
 		}
 	}
 
@@ -1188,7 +1257,7 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 		Card: card, Workflow: svc.Workflow,
 		PilotGoal: version.Body.Reference.PilotGoal, Mode: lesson.Mode,
 		TimingEffective: lesson.Timing,
-		Deadlines:       Deadlines{OpenAt: openAt, PrimaryAt: openAt},
+		Deadlines:       Deadlines{OpenAt: openAt, PrimaryAt: now.Add(time.Duration(lesson.Timing.PrimaryS) * time.Second)},
 		OfferedAt:       now,
 	}
 	if _, err := s.store.InsertItem(ctx, tx, item); err != nil {

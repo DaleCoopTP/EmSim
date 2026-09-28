@@ -45,6 +45,7 @@ import (
 // convention.
 type trainingService interface {
 	CreateLesson(ctx context.Context, actor auth.Principal, in training.LessonCreate, requestID string) (training.Lesson, error)
+	UpdateLessonSettings(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, patch training.LessonSettingsPatch, requestID string) (training.Lesson, error)
 	ReplaceAssignments(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, inputs []training.AssignmentInput, requestID string) (training.Lesson, error)
 	Start(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, requestID string) (training.Lesson, error)
 	Stop(ctx context.Context, actor auth.Principal, lessonID uuid.UUID, reason *string, requestID string) (training.Lesson, error)
@@ -112,6 +113,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	// registration order, so "options" is never captured as a lessonId.
 	mux.Handle("GET /api/v1/lessons/options", lessons(h.lessonOptions))
 	mux.Handle("GET /api/v1/lessons/{lessonId}", lessons(h.getLesson))
+	mux.Handle("PATCH /api/v1/lessons/{lessonId}", lessons(h.updateLessonSettings))
 	mux.Handle("PUT /api/v1/lessons/{lessonId}/assignments", lessons(h.replaceAssignments))
 	mux.Handle("POST /api/v1/lessons/{lessonId}/start", lessons(h.startLesson))
 	mux.Handle("POST /api/v1/lessons/{lessonId}/stop", lessons(h.stopLesson))
@@ -341,6 +343,35 @@ func (h *Handlers) getLesson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, r, http.StatusOK, toLessonJSON(lesson, assignments))
+}
+
+type lessonSettingsRequest struct {
+	Timing *timingJSON `json:"timing,omitempty"`
+}
+
+func (h *Handlers) updateLessonSettings(w http.ResponseWriter, r *http.Request) {
+	principal, _ := authhttp.PrincipalFromContext(r.Context())
+	lessonID, err := uuid.Parse(r.PathValue("lessonId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "lesson not found", nil)
+		return
+	}
+	var body lessonSettingsRequest
+	if err := httpapi.DecodeJSON(r, 0, &body); err != nil {
+		writeDecodeError(w, r, err)
+		return
+	}
+	var patch training.LessonSettingsPatch
+	if body.Timing != nil {
+		timing := fromTimingJSON(*body.Timing)
+		patch.Timing = &timing
+	}
+	lesson, err := h.training.UpdateLessonSettings(r.Context(), principal, lessonID, patch, httpapi.RequestIDFromContext(r.Context()))
+	if err != nil {
+		writeTrainingError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, toLessonJSON(lesson, nil))
 }
 
 type assignmentRequest struct {

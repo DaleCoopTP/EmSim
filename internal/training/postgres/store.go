@@ -144,6 +144,21 @@ func (s *Store) InsertLesson(ctx context.Context, tx pgx.Tx, l training.Lesson) 
 	return l, nil
 }
 
+func (s *Store) UpdateLessonSettings(ctx context.Context, tx pgx.Tx, l training.Lesson) error {
+	timingJSON, err := json.Marshal(l.Timing)
+	if err != nil {
+		return fmt.Errorf("training/postgres: marshal timing: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `UPDATE lessons SET timing = $2 WHERE id = $1 AND state = 'draft'`, l.ID, timingJSON)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return training.ErrConflict
+	}
+	return nil
+}
+
 func (s *Store) LessonByID(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock training.Lock) (training.Lesson, error) {
 	query := `SELECT ` + lessonColumns + ` FROM lessons WHERE id = $1` + lockSuffix(lock, "")
 	return scanLesson(tx.QueryRow(ctx, query, id))

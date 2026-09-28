@@ -54,10 +54,15 @@ type fakeTraining struct {
 	executeErr      error
 	lastCreate      training.LessonCreate
 	lastAssignments []training.AssignmentInput
+	lastPatch       training.LessonSettingsPatch
 }
 
 func (f *fakeTraining) CreateLesson(_ context.Context, _ auth.Principal, in training.LessonCreate, _ string) (training.Lesson, error) {
 	f.lastCreate = in
+	return f.lesson, f.readErr
+}
+func (f *fakeTraining) UpdateLessonSettings(_ context.Context, _ auth.Principal, _ uuid.UUID, patch training.LessonSettingsPatch, _ string) (training.Lesson, error) {
+	f.lastPatch = patch
 	return f.lesson, f.readErr
 }
 func (f *fakeTraining) ReplaceAssignments(_ context.Context, _ auth.Principal, _ uuid.UUID, in []training.AssignmentInput, _ string) (training.Lesson, error) {
@@ -170,7 +175,7 @@ func requireError(t *testing.T, response *httptest.ResponseRecorder, status int,
 
 func TestRoutesRequireAuthenticationAndCorrectRoles(t *testing.T) {
 	id := uuid.New().String()
-	lessonRoutes := []struct{ method, path string }{{"GET", "/api/v1/lessons"}, {"POST", "/api/v1/lessons"}, {"GET", "/api/v1/lessons/options"}, {"GET", "/api/v1/lessons/" + id}, {"PUT", "/api/v1/lessons/" + id + "/assignments"}, {"POST", "/api/v1/lessons/" + id + "/start"}, {"GET", "/api/v1/lessons/" + id + "/runs/" + id + "/actions"}}
+	lessonRoutes := []struct{ method, path string }{{"GET", "/api/v1/lessons"}, {"POST", "/api/v1/lessons"}, {"GET", "/api/v1/lessons/options"}, {"GET", "/api/v1/lessons/" + id}, {"PATCH", "/api/v1/lessons/" + id}, {"PUT", "/api/v1/lessons/" + id + "/assignments"}, {"POST", "/api/v1/lessons/" + id + "/start"}, {"GET", "/api/v1/lessons/" + id + "/runs/" + id + "/actions"}}
 	// traineeRoutes are trainee-only (unlike POST .../actions below,
 	// 112-7/ADR-027 gives no instructor exception here).
 	traineeRoutes := []struct{ method, path string }{{"GET", "/api/v1/my/run"}, {"GET", "/api/v1/my/items"}}
@@ -221,6 +226,30 @@ func TestPreviewInstructorReachesItemActions(t *testing.T) {
 	trainingMux(svc, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("POST", "/api/v1/items/"+svc.item.ID.String()+"/actions", []byte(body), true))
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestUpdateLessonSettingsPassesTimingAndMapsErrors(t *testing.T) {
+	svc := trainingFixture()
+	path := "/api/v1/lessons/" + svc.lesson.ID.String()
+	body := `{"timing":{"open_s":20,"primary_s":45,"complete_s":240}}`
+	response := httptest.NewRecorder()
+	trainingMux(svc, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("PATCH", path, []byte(body), true))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if got := svc.lastPatch.Timing; got == nil || got.OpenS != 20 || got.PrimaryS != 45 || got.CompleteS != 240 {
+		t.Fatalf("timing not passed through: %+v", got)
+	}
+	for _, tc := range []struct {
+		err    error
+		status int
+		code   string
+	}{{training.ErrConflict, 409, "conflict"}, {training.ErrNotFound, 404, "not_found"}} {
+		svc.readErr = tc.err
+		response = httptest.NewRecorder()
+		trainingMux(svc, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("PATCH", path, []byte(body), true))
+		requireError(t, response, tc.status, tc.code)
 	}
 }
 
