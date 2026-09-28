@@ -474,9 +474,10 @@ func TestAPIProcessContentCatalogAccess(t *testing.T) {
 	}
 	response = jsonRequest(t, ctx, instructorClient, baseURL, http.MethodGet, "/api/v1/scenarios", nil, &scenarioList)
 	// The 112 intake fixtures (including 112-5b's three AI-caller
-	// scenarios) and ADR-030's two full-cycle DDS scenarios make up the
-	// default catalogue; assert that the full offline seed loaded.
-	if response.StatusCode != http.StatusOK || scenarioList.Total != 13 || len(scenarioList.Items) != 13 {
+	// scenarios) and the three DDS scenarios (ADR-030's two full-cycle
+	// ones and ДДС-2's pipe burst, ADR-031) make up the default catalogue;
+	// assert that the full offline seed loaded.
+	if response.StatusCode != http.StatusOK || scenarioList.Total != 14 || len(scenarioList.Items) != 14 {
 		t.Fatalf("instructor GET /scenarios status = %d, body = %+v", response.StatusCode, scenarioList)
 	}
 	// The four slice 2–7 DDS pilots are archived (ADR-030): listed only

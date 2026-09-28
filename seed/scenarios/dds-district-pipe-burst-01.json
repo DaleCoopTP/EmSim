@@ -1,0 +1,64 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "dds-district-pipe-burst-01",
+  "version": 1,
+  "title": "ДДС района: прорыв трубы в подъезде — звонки отдела контроля",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "target_service": "dds_district_chertanovo",
+    "card": {
+      "number": "882231",
+      "registered_at_offset_s": -30,
+      "applicant": { "name": "Смирнова, жительница кв. 8", "phone": "+77495124418", "status": "victim" },
+      "address": {
+        "country": "Россия", "city": "Москва", "okrug": "ЮАО", "district": "Чертаново Южное",
+        "street": "Россошанская улица", "house": "3", "building": "2", "entrance": "3",
+        "text": "Россия, Москва, (ЮАО, Чертаново Южное), Россошанская улица, 3, к. 2, под. 3"
+      },
+      "incident": {
+        "type_code": "14020300", "type_name": "Течь (прорыв трубы) в квартире (подъезде подвале)",
+        "features": { "признак": "Прорыв горячей воды", "место": "Подъезд многоквартирного дома" },
+        "description": "Прорыв трубы с горячей водой на 3-м этаже, вода заливает подъезд и лестницу.", "victims": 0
+      },
+      "notification_list": [{ "service": "dds_district_chertanovo", "status": "added", "mine": true }],
+      "phones": { "aon": "+77495124418", "provided": "+7 (749) 512-44-18" }
+    },
+    "contacts": [
+      { "key": "crew_leader", "role": "crew", "label": "Руководитель аварийной бригады", "number": "4152", "voice": "crew_leader_recorded",
+        "phrases": { "greeting": "Диспетчерская, руководитель бригады, слушаю вас.", "ack": "Информация принята. Бригада направлена по указанному адресу." } },
+      { "key": "control", "role": "control_112", "label": "Отдел контроля реагирования 112", "number": "0112", "voice": "female_calm",
+        "phrases": { "greeting": "Отдел контроля реагирования Службы 112, слушаю.", "ack": "Информацию приняли, спасибо." } },
+      { "key": "applicant", "role": "applicant", "label": "Заявитель Смирнова", "number": "4418", "voice": "female_urgent",
+        "phrases": { "greeting": "Алло! Да, это я звонила, у нас весь подъезд в воде.", "ack": "Хорошо, будем ждать бригаду." } }
+    ],
+    "events": [
+      { "key": "e1", "at_s": 40, "since": "offered", "status_in": ["received"], "delivery": "phone_incoming", "from": "control", "voice": false,
+        "text": "Отдел контроля реагирования 112. По карточке 882231 у вашей службы нет статуса реагирования. Вы приняли информацию о прорыве трубы?",
+        "expects": { "status": "accepted", "within_s": 30, "action": "set_status" } },
+      { "key": "e2", "at_s": 20, "since": "call_ended", "since_contact": "crew_leader", "delivery": "notice", "from": "crew_leader", "voice": false,
+        "text": "Аварийная бригада выехала, будем через 10 минут.",
+        "expects": { "status": "responding", "within_s": 30, "action": "set_status" } },
+      { "key": "e3", "at_s": 40, "since": "call_ended", "since_contact": "crew_leader", "delivery": "phone_incoming", "from": "crew_leader", "voice": false,
+        "text": "Диспетчер, бригада на месте, перекрываем стояк горячей воды.",
+        "expects": { "status": "arrived", "within_s": 30, "action": "set_status" } },
+      { "key": "e4", "at_s": 50, "since": "call_ended", "since_contact": "crew_leader", "delivery": "phone_incoming", "from": "control", "voice": false,
+        "text": "Отдел контроля реагирования 112. По адресу идут повторные обращения: жители кв. 12 сообщают, что их квартиру залило. Отразите это в комментарии к статусу." },
+      { "key": "e5", "at_s": 65, "since": "call_ended", "since_contact": "crew_leader", "delivery": "notice", "from": "crew_leader", "voice": false,
+        "text": "Стояк перекрыт, меняем участок трубы. На месте главный инженер, управа проинформирована.",
+        "expects": { "status": "working", "within_s": 30, "action": "set_status", "comment_facts": ["меняют участок трубы", "залита кв. 12", "управа проинформирована"] } },
+      { "key": "e6", "at_s": 95, "since": "call_ended", "since_contact": "crew_leader", "delivery": "phone_incoming", "from": "crew_leader", "voice": false,
+        "text": "Диспетчер, участок трубы заменили, горячую воду подали, подъезд откачали. Работы завершены.",
+        "expects": { "status": "completed", "within_s": 30, "action": "set_status", "comment_facts": ["участок трубы заменён", "водоснабжение восстановлено"] } }
+    ],
+    "reference": {
+      "primary_decision": { "status": "accepted", "comment_required": false },
+      "expected_chain": ["responding", "arrived", "working", "completed"],
+      "call": { "required": true, "to": "crew_leader", "must_mention": ["address", "incident_type"], "before_status": "responding" },
+      "field_corrections": [],
+      "guide_refs": ["Памятка ДДС, стр. 26–28: отдел контроля реагирования; стр. 31: нарушение №6 — нет статусов хода работ и комментариев"],
+      "notes": "Профильное происшествие: «Принята» до 30 с (иначе звонит отдел контроля), звонок руководителю бригады, статусы хода работ по докладам. Отдел контроля звонит с повторными обращениями о заливе кв. 12 — это нужно отразить в комментарии к «Проведению работ»; в комментарии к «Работам завершены» — итог."
+    },
+    "difficulty": 4, "exercise_type": "dds_processing"
+  }
+}
