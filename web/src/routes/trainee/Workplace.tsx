@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useOutletContext } from "react-router-dom";
 import { executeCommand, type Command, type Receipt } from "../../api/commands";
 import { errorMessage } from "../../api/errors";
@@ -29,7 +29,18 @@ const rejectionLabels: Record<string, string> = {
   call_required: "Сначала завершите обязательный звонок.",
   call_in_progress: "Сначала завершите текущий звонок.",
   invalid_payload: "Проверьте заполненные данные.",
+  call_missed: "Звонок уже пропущен: абонент положил трубку.",
+  call_not_active: "Этот звонок уже завершён.",
 };
+
+// ADR-031: contact roles group the DDS phone's contacts.
+const contactRoleLabels: Record<string, string> = {
+  crew: "Бригада",
+  control_112: "Отдел контроля 112",
+  applicant: "Заявитель",
+  other: "Прочие",
+};
+const contactRoleOrder = ["crew", "control_112", "applicant", "other"];
 
 export function WorkplaceRoute() {
   const me = useOutletContext<Me>();
@@ -335,10 +346,24 @@ function ItemWorkplace({ me, item }: { me: Me; item: DDSItem }) {
         <div><span>Первичное решение</span><strong>{remaining(item.deadlines.primary_at, clockAnchor.server + clientNow - clockAnchor.client)}</strong></div>
         {item.deadlines.complete_at && <div><span>Завершить</span><strong>{remaining(item.deadlines.complete_at, clockAnchor.server + clientNow - clockAnchor.client)}</strong></div>}
       </section>
-      <IncidentCard card={item.card} mineSlot={legacy || open ? undefined : (
-        <ServiceStatusBlock item={item} terminalStatuses={terminalStatuses} disabled={!!pending || finished} onSave={(status, text) => send("set_status", text ? { status, comment: text } : { status })} />
-      )} />
-      {item.events.length > 0 && (
+      {legacy || open ? (
+        <IncidentCard card={item.card} />
+      ) : (
+        <div className="dds-work-area">
+          <IncidentCard card={item.card} mineSlot={
+            <ServiceStatusBlock item={item} terminalStatuses={terminalStatuses} disabled={!!pending || finished} onSave={(status, text) => send("set_status", text ? { status, comment: text } : { status })} />
+          } />
+          <CrewCommsPanel
+            item={item}
+            serverNowMs={clockAnchor.server + clientNow - clockAnchor.client}
+            disabled={!!pending || finished}
+            onAnswer={(eventKey) => send("answer_incoming", { event_key: eventKey })}
+            onEndIncoming={(callId) => send("call_end", { call_id: callId, accepted_by: "", summary: "", recording: null })}
+            phone={finished ? undefined : <PhonePanel item={item} onChanged={refresh} />}
+          />
+        </div>
+      )}
+      {legacy && item.events.length > 0 && (
         <div className="item-events">
           <h3>Сообщения</h3>
           <ul>
@@ -363,7 +388,7 @@ function ItemWorkplace({ me, item }: { me: Me; item: DDSItem }) {
           {legacy && !open && item.allowed_transitions.includes("not_accepted") && (
             <button type="button" disabled={!!pending || comment.trim() === ""} onClick={() => send("set_status", { status: "not_accepted", comment: comment.trim() })}>Не принять</button>
           )}
-          {!open && <PhonePanel item={item} onChanged={refresh} />}
+          {legacy && !open && <PhonePanel item={item} onChanged={refresh} />}
           {closable && <button type="button" disabled={!!pending} onClick={() => send("close", {})}>Завершить упражнение</button>}
         </div>
       )}
@@ -395,6 +420,12 @@ function ItemWorkplace({ me, item }: { me: Me; item: DDSItem }) {
 // reload therefore has the explicitly documented "missing recording" outcome.
 function PhonePanel({ item, onChanged }: { item: DDSItem; onChanged: () => Promise<void> }) {
   const contacts = item.card.contacts ?? [];
+  // ADR-031: an answered incoming call occupies the line.
+  const incomingActive = item.calls.some((call) => call.direction === "incoming" && !call.ended_at);
+  const phraseText = (key: string, phrase: "greeting" | "ack") => contacts.find((candidate) => candidate.key === key)?.phrases?.[phrase];
+  const grouped = contactRoleOrder
+    .map((role) => ({ role, contacts: contacts.filter((candidate) => (candidate.role ?? "other") === role) }))
+    .filter((group) => group.contacts.length > 0);
   const [contact, setContact] = useState(contacts[0]?.key ?? "");
   const [callId, setCallId] = useState<string | null>(null);
   const [callEndSeq, setCallEndSeq] = useState<number | null>(null);
@@ -466,7 +497,8 @@ function PhonePanel({ item, onChanged }: { item: DDSItem; onChanged: () => Promi
       setCallId(receipt.call_id);
       setCallEndSeq(receipt.seq);
       setMuted(false);
-      setStatus("Звонок: воспроизводится приветствие…");
+      const greeting = phraseText(contact, "greeting");
+      setStatus(greeting ? `Абонент: «${greeting}»` : "Звонок: воспроизводится приветствие…");
       try { await new Audio(`/api/v1/items/${encodeURIComponent(item.id)}/contacts/${encodeURIComponent(contact)}/phrases/greeting`).play(); } catch { /* optional phrase */ }
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
         setStatus("Микрофон отсутствует: звонок будет без записи.");
@@ -542,10 +574,11 @@ function PhonePanel({ item, onChanged }: { item: DDSItem; onChanged: () => Promi
       try { await new Audio(`/api/v1/items/${encodeURIComponent(item.id)}/contacts/${encodeURIComponent(contact)}/phrases/ack`).play(); } catch { /* optional phrase */ }
       setCallId(null);
       setCallEndSeq(null);
+      const ack = phraseText(contact, "ack");
       if (recording) {
         await uploadRecording({ callId, blob: recording });
       } else {
-        setStatus("Звонок завершён без записи.");
+        setStatus(ack ? `Абонент: «${ack}» Звонок завершён без записи.` : "Звонок завершён без записи.");
         await onChanged();
       }
     } catch (cause) {
@@ -565,13 +598,18 @@ function PhonePanel({ item, onChanged }: { item: DDSItem; onChanged: () => Promi
       <div className="phone-panel-body">
         <div className="phone-contacts" aria-label="Контакты для вызова">
           <span className="phone-section-label">Кому звоним</span>
-          {contacts.map((candidate) => <button type="button" key={candidate.key} className={contact === candidate.key ? "active" : undefined} disabled={!!callId} onClick={() => setContact(candidate.key)}>{candidate.label}<small>{candidate.number}</small></button>)}
+          {grouped.map((group) => (
+            <div key={group.role} className="phone-contact-group" role="group" aria-label={contactRoleLabels[group.role]}>
+              <span className="phone-contact-role">{contactRoleLabels[group.role]}</span>
+              {group.contacts.map((candidate) => <button type="button" key={candidate.key} className={contact === candidate.key ? "active" : undefined} disabled={!!callId} onClick={() => setContact(candidate.key)}>{candidate.label}<small>{candidate.number}</small></button>)}
+            </div>
+          ))}
           {contacts.length === 0 && <p>Контакты не назначены.</p>}
         </div>
         {!callId ? (
           <div className="phone-start-control">
-            <span>Громкая связь <b aria-label="включена">●</b></span>
-            <button type="button" className="phone-call-button" onClick={() => void start()} disabled={!contact || isEnding}>Вызов</button>
+            <span>{incomingActive ? "Линия занята входящим звонком" : <>Громкая связь <b aria-label="включена">●</b></>}</span>
+            <button type="button" className="phone-call-button" onClick={() => void start()} disabled={!contact || isEnding || incomingActive}>Вызов</button>
           </div>
         ) : (
           <div className="phone-call-control">
@@ -583,11 +621,94 @@ function PhonePanel({ item, onChanged }: { item: DDSItem; onChanged: () => Promi
           </div>
         )}
         {pendingUpload && <button type="button" className="phone-retry-button" onClick={() => void uploadRecording(pendingUpload)}>Повторить загрузку записи</button>}
-        {item.calls.map((call) => <p key={call.id} className="phone-call-history">Запись: {call.recording_state === "expired" ? "не загружена" : call.recording_state}</p>)}
+        {item.calls.filter((call) => call.direction !== "incoming").map((call) => <p key={call.id} className="phone-call-history">Запись: {call.recording_state === "expired" ? "не загружена" : call.recording_state}</p>)}
         {status && <p className="notice" aria-live="polite">{status}</p>}
         {error && <p className="error" role="alert">{error}</p>}
       </div>
     </section>
+  );
+}
+
+type CommsEntry = {
+  key: string;
+  at: string;
+  kind: string;
+  from: string;
+  text: string;
+  mark?: string;
+  alarm?: boolean;
+};
+
+// CrewCommsPanel is the DDS workplace's «Связь с бригадой» (ADR-031): the
+// ringing incoming call, the answered call in progress, the phone for
+// outgoing calls, and one time-ordered log of crew reports and calls. A
+// ringing call shows only who calls; its words arrive once answered.
+function CrewCommsPanel({ item, serverNowMs, disabled, onAnswer, onEndIncoming, phone }: {
+  item: DDSItem;
+  serverNowMs: number;
+  disabled: boolean;
+  onAnswer: (eventKey: string) => void;
+  onEndIncoming: (callId: string) => void;
+  phone?: ReactNode;
+}) {
+  const contacts = item.card.contacts ?? [];
+  const contactLabel = (key?: string) => contacts.find((candidate) => candidate.key === key)?.label ?? key ?? "";
+  const contactRole = (key?: string) => contacts.find((candidate) => candidate.key === key)?.role ?? "other";
+  const ringing = item.incoming_call && new Date(item.incoming_call.ring_until).getTime() > serverNowMs ? item.incoming_call : null;
+  const ringSeconds = ringing ? Math.max(0, Math.ceil((new Date(ringing.ring_until).getTime() - serverNowMs) / 1_000)) : 0;
+  const activeIncoming = item.calls.find((call) => call.direction === "incoming" && !call.ended_at);
+  const activeIncomingEvent = activeIncoming ? item.events.find((event) => event.key === activeIncoming.event_key) : undefined;
+  const finished = item.state === "closed" || item.state === "interrupted";
+
+  const entries: CommsEntry[] = [];
+  for (const event of item.events) {
+    if (event.delivery === "notice") {
+      entries.push({ key: `e-${event.key}`, at: event.delivered_at, kind: contactRole(event.from) === "crew" ? "Доклад бригады" : "Сообщение", from: contactLabel(event.from), text: event.text, mark: event.late ? "с опозданием" : undefined });
+    } else if (event.delivery === "phone_incoming") {
+      const isRinging = ringing?.event_key === event.key;
+      const mark = event.answered ? "принят" : isRinging ? "звонит" : finished ? "не отвечен" : "пропущен";
+      entries.push({ key: `e-${event.key}`, at: event.delivered_at, kind: "Входящий звонок", from: contactLabel(event.from), text: event.answered ? event.text : "", mark, alarm: !event.answered && !isRinging });
+    }
+  }
+  for (const call of item.calls) {
+    if (call.direction === "incoming") continue;
+    entries.push({ key: `c-${call.id}`, at: call.started_at, kind: "Исходящий звонок", from: contactLabel(call.contact_key), text: call.summary ?? "", mark: call.ended_at ? undefined : "идёт" });
+  }
+  entries.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+
+  return (
+    <aside className="dds-comms-panel" aria-label="Связь с бригадой">
+      <h3>Связь с бригадой</h3>
+      {ringing && !finished && (
+        <div className="dds-incoming-call" role="alert">
+          <div>
+            <span className="dds-incoming-label">Входящий звонок · {contactRoleLabels[contactRole(ringing.from)] ?? ""}</span>
+            <strong>{contactLabel(ringing.from)}</strong>
+            <span className="dds-incoming-timer">Звонит ещё {ringSeconds} с</span>
+          </div>
+          <button type="button" className="dds-answer-button" disabled={disabled || !!activeIncoming || item.calls.some((call) => !call.ended_at)} onClick={() => onAnswer(ringing.event_key)}>Ответить</button>
+        </div>
+      )}
+      {activeIncoming && (
+        <div className="dds-incoming-active">
+          <span className="dds-incoming-label">Разговор · {contactLabel(activeIncoming.contact_key)}</span>
+          <p>{activeIncomingEvent?.text ? `«${activeIncomingEvent.text}»` : "…"}</p>
+          <button type="button" className="dds-hangup-button" disabled={disabled} onClick={() => onEndIncoming(activeIncoming.id)}>Завершить разговор</button>
+        </div>
+      )}
+      {phone}
+      <ol className="dds-comms-log" aria-label="Журнал связи">
+        {entries.map((entry) => (
+          <li key={entry.key} className={entry.alarm ? "dds-comms-alarm" : undefined}>
+            <div className="dds-comms-meta">
+              <strong>{entry.kind}</strong> · {entry.from} · {formatDateTime(entry.at)}{entry.mark ? ` · ${entry.mark}` : ""}
+            </div>
+            {entry.text && <p>{entry.text}</p>}
+          </li>
+        ))}
+        {entries.length === 0 && <li className="dds-comms-empty">Докладов и звонков пока нет.</li>}
+      </ol>
+    </aside>
   );
 }
 

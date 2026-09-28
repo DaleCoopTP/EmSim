@@ -377,6 +377,37 @@ dd { margin: 0; }
 .dds-item-status span { display: block; color: #647279; font-size: 10px; text-transform: uppercase; }
 .dds-item-status strong { display: block; margin-top: 4px; color: #26353d; font-size: 12px; }
 
+/* ADR-031: card on the left, «Связь с бригадой» on the right. */
+.dds-work-area { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 420px); align-items: start; gap: 12px; }
+.dds-work-area > .incident-card { margin-bottom: 0; }
+.dds-comms-panel { display: grid; gap: 8px; padding: 0 0 8px; background: #e4e8ea; border: 1px solid #aeb8bd; box-shadow: var(--arm-shadow); }
+.dds-comms-panel > h3 { padding: 9px 12px; margin: 0; color: #fff; background: var(--arm-panel); font-size: 14px; }
+.dds-comms-panel > .phone-panel { margin: 0 8px; }
+.dds-comms-panel .phone-call-control { grid-template-columns: 1fr; }
+.dds-comms-panel .phone-display { min-width: 110px; }
+.phone-contact-group { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+.phone-contact-role { width: 100%; color: #afc0c6; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.dds-incoming-call { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; margin: 0 8px; color: #fff; background: #2f6d50; animation: phone-pulse 1.2s ease-in-out infinite; }
+.dds-incoming-call strong { display: block; font-size: 14px; }
+.dds-incoming-label { display: block; color: #d6e8df; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.dds-incoming-timer { display: block; margin-top: 2px; color: #e8f3ee; font-size: 11px; }
+.dds-incoming-call .dds-answer-button { min-width: 110px; color: #fff; background: #3f9a6e; border-color: #7cc6a1; font-weight: 700; text-transform: uppercase; }
+.dds-incoming-active { padding: 9px 12px; margin: 0 8px; background: #fff; border-left: 3px solid var(--arm-ok); }
+.dds-incoming-active .dds-incoming-label { color: #4f6168; }
+.dds-incoming-active p { margin: 6px 0; color: #203038; font-size: 13px; }
+.dds-incoming-active .dds-hangup-button { color: #fff; background: #b34137; border-color: #e47c72; }
+.dds-comms-log { display: grid; gap: 4px; padding: 0 8px; margin: 0; list-style: none; }
+.dds-comms-log li { padding: 6px 8px; background: #f0f3f4; border-left: 3px solid #8a999f; font-size: 12px; }
+.dds-comms-log li.dds-comms-alarm { border-left-color: var(--arm-danger); }
+.dds-comms-log li.dds-comms-alarm .dds-comms-meta { color: var(--arm-danger); }
+.dds-comms-log p { margin: 3px 0 0; color: #203038; }
+.dds-comms-meta { color: #4f6168; font-size: 11px; }
+.dds-comms-meta strong { color: #283740; }
+.dds-comms-empty { color: #5d6b72; }
+@media (max-width: 1200px) {
+  .dds-work-area { grid-template-columns: 1fr; }
+}
+
 /* C5: browser phone simulator keeps all call evidence in the card context. */
 .phone-panel { padding: 0; overflow: hidden; color: #fff; background: #2b3941; border: 1px solid #1e2b32; box-shadow: var(--arm-shadow); }
 .phone-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 13px; background: #202e36; border-bottom: 1px solid #596a72; }
