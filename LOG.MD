@@ -3626,3 +3626,15 @@ Status: c3 выполнен.
 - Внимание: `ASSESSMENT_JUDGE` по умолчанию `llm` (ADR-029), поэтому с этого коммита новые занятия ДДС замораживают v3; до c4 llm-критерии v3 `unavailable` (оценка `needs_review`). Интеграционные тесты ДДС должны идти с `ASSESSMENT_JUDGE=off` — проверить в c9.
 
 Validation: `go test ./internal/content/... ./internal/training/... ./internal/assessment/`.
+
+## 2026-09-28 — ДДС-4 c4: вопросы к комментариям и подсчёт
+
+Status: c4 выполнен.
+
+- `internal/assessment/dds/comments.go`: `commentEntries` (комментарии по статусу; `add_comment` → статус, действовавший при записи), `commentQuestions` (`primary:<n>`, `event:<key>:<n>`), `PrepareSemantic` (`assessment.SemanticPreparer`), `commentContentRule`/`grammarRule`; `rules.go` разводит llm-критерии по `prompt` (v1 остаётся `unavailable`).
+- `internal/assessment/dds/commentjudge/types.go`: формы запросов/ответов (адаптеры — c5).
+- `CriterionDetail.Errors` (`assessment.GrammarError`) через БД (`detailRow`) и HTTP.
+- Уточнение ADR-034: «не противоречит статусу» — один вопрос карточки в баллах (иначе безобидные комментарии без фактов разбавляют критерий); вопросы по докладам, которые обучаемый не услышал, исключаются (включая «бригаде не звонили»). Формулировка вопроса лежит в `Expected` строки (вырезается для обучаемого), `Label` общий.
+- 15 новых тестов `comments_test.go`; мутационная проверка привязки факта к статусу ловится.
+
+Validation: `go test ./internal/assessment/...`, `go vet`.

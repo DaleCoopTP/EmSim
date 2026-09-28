@@ -125,13 +125,43 @@ type criterionRow struct {
 // CriterionDetail, 112-6/ADR-026) — kept alongside criterionRow for the
 // same reason: the domain type stays free of encoding tags.
 type detailRow struct {
-	Key       string  `json:"key"`
-	Label     string  `json:"label,omitempty"`
-	Points    float64 `json:"points"`
-	MaxPoints float64 `json:"max_points"`
-	Status    string  `json:"status"`
-	Actual    *string `json:"actual,omitempty"`
-	Expected  *string `json:"expected,omitempty"`
+	Key       string            `json:"key"`
+	Label     string            `json:"label,omitempty"`
+	Points    float64           `json:"points"`
+	MaxPoints float64           `json:"max_points"`
+	Status    string            `json:"status"`
+	Actual    *string           `json:"actual,omitempty"`
+	Expected  *string           `json:"expected,omitempty"`
+	Errors    []grammarErrorRow `json:"errors,omitempty"`
+}
+
+// grammarErrorRow is assessment.GrammarError's jsonb shape (ДДС-4/ADR-034).
+type grammarErrorRow struct {
+	Fragment   string `json:"fragment"`
+	Correction string `json:"correction"`
+	Kind       string `json:"kind"`
+}
+
+func toGrammarErrorRows(errs []assessment.GrammarError) []grammarErrorRow {
+	if len(errs) == 0 {
+		return nil
+	}
+	rows := make([]grammarErrorRow, len(errs))
+	for i, e := range errs {
+		rows[i] = grammarErrorRow{Fragment: e.Fragment, Correction: e.Correction, Kind: e.Kind}
+	}
+	return rows
+}
+
+func fromGrammarErrorRows(rows []grammarErrorRow) []assessment.GrammarError {
+	if len(rows) == 0 {
+		return nil
+	}
+	errs := make([]assessment.GrammarError, len(rows))
+	for i, r := range rows {
+		errs[i] = assessment.GrammarError{Fragment: r.Fragment, Correction: r.Correction, Kind: r.Kind}
+	}
+	return errs
 }
 
 func toCriterionRow(r assessment.CriterionResult) criterionRow {
@@ -145,7 +175,7 @@ func toCriterionRow(r assessment.CriterionResult) criterionRow {
 		for _, d := range r.Details {
 			details = append(details, detailRow{
 				Key: d.Key, Label: d.Label, Points: d.Points, MaxPoints: d.MaxPoints,
-				Status: string(d.Status), Actual: d.Actual, Expected: d.Expected,
+				Status: string(d.Status), Actual: d.Actual, Expected: d.Expected, Errors: toGrammarErrorRows(d.Errors),
 			})
 		}
 	}
@@ -177,7 +207,7 @@ func fromCriteriaJSON(raw []byte) ([]assessment.CriterionResult, error) {
 			for _, d := range row.Details {
 				details = append(details, assessment.CriterionDetail{
 					Key: d.Key, Label: d.Label, Points: d.Points, MaxPoints: d.MaxPoints,
-					Status: assessment.CriterionStatus(d.Status), Actual: d.Actual, Expected: d.Expected,
+					Status: assessment.CriterionStatus(d.Status), Actual: d.Actual, Expected: d.Expected, Errors: fromGrammarErrorRows(d.Errors),
 				})
 			}
 		}

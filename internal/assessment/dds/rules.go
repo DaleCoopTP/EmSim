@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"emsim/internal/assessment"
+	"emsim/internal/assessment/dds/commentjudge"
 	"emsim/internal/content"
 	"emsim/internal/training"
 
@@ -36,21 +37,31 @@ type evaluator struct{}
 // dds_processing document, sealed by training/dds.Exercise.Evidence and
 // digest-checked by the caller (assessment.Service.sealInputForItem)
 // before Evaluate ever runs.
-func (evaluator) Evaluate(raw json.RawMessage, body content.Body, effective assessment.Rubric, _ assessment.SemanticAnswers) ([]assessment.CriterionResult, error) {
+func (evaluator) Evaluate(raw json.RawMessage, body content.Body, effective assessment.Rubric, semantic assessment.SemanticAnswers) ([]assessment.CriterionResult, error) {
 	var ev training.EvidenceBody
 	if err := json.Unmarshal(raw, &ev); err != nil {
 		return nil, fmt.Errorf("assessment/dds: decode evidence: %w", err)
 	}
 	results := make([]assessment.CriterionResult, 0, len(effective.Criteria))
 	for _, c := range effective.Criteria {
-		results = append(results, evaluateCriterion(ev, body, c))
+		results = append(results, evaluateCriterion(ev, body, c, semantic))
 	}
 	return results, nil
 }
 
-func evaluateCriterion(ev training.EvidenceBody, body content.Body, c assessment.RubricCriterion) assessment.CriterionResult {
+func evaluateCriterion(ev training.EvidenceBody, body content.Body, c assessment.RubricCriterion, semantic assessment.SemanticAnswers) assessment.CriterionResult {
 	ref := body.Reference
 	if c.Kind == "llm" {
+		// ДДС-4/ADR-034: dds/rubric-v3's two judged criteria are told
+		// apart by their own prompt version; v1's never-implemented
+		// comment-v2/grammar-v1 prompts keep llmCriterionResult's
+		// unavailable, so a lesson frozen on v1 is unchanged.
+		switch c.Prompt {
+		case commentjudge.FactsPromptVersion:
+			return commentContentRule(ev, body, c, semantic)
+		case commentjudge.GrammarPromptVersion:
+			return grammarRule(ev, c, semantic)
+		}
 		return llmCriterionResult(c, ref)
 	}
 	switch c.Rule {

@@ -159,10 +159,25 @@ type criterionDetailJSON struct {
 	Status    assessment.CriterionStatus `json:"status"`
 	Actual    *string                    `json:"actual,omitempty"`
 	Expected  *string                    `json:"expected,omitempty"`
+	Errors    []grammarErrorJSON         `json:"errors,omitempty"`
+}
+
+// grammarErrorJSON is openapi.yaml's GrammarError (ДДС-4/ADR-034).
+type grammarErrorJSON struct {
+	Fragment   string `json:"fragment"`
+	Correction string `json:"correction"`
+	Kind       string `json:"kind"`
 }
 
 func toCriterionDetailJSON(d assessment.CriterionDetail) criterionDetailJSON {
-	return criterionDetailJSON{Key: d.Key, Label: d.Label, Points: d.Points, MaxPoints: d.MaxPoints, Status: d.Status, Actual: d.Actual, Expected: d.Expected}
+	out := criterionDetailJSON{Key: d.Key, Label: d.Label, Points: d.Points, MaxPoints: d.MaxPoints, Status: d.Status, Actual: d.Actual, Expected: d.Expected}
+	if len(d.Errors) > 0 {
+		out.Errors = make([]grammarErrorJSON, len(d.Errors))
+		for i, e := range d.Errors {
+			out.Errors[i] = grammarErrorJSON{Fragment: e.Fragment, Correction: e.Correction, Kind: e.Kind}
+		}
+	}
+	return out
 }
 
 // criterionJSON is openapi.yaml's CriterionResult. PenaltyPoints/Details

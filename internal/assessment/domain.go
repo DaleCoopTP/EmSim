@@ -131,6 +131,19 @@ type CriterionDetail struct {
 	Status    CriterionStatus // met | partial | not_met | not_applicable
 	Actual    *string
 	Expected  *string
+	// Errors (ДДС-4/ADR-034) lists the grammar mistakes found in Actual —
+	// set only on G_GRAMMAR's own rows. It is the trainee's own text
+	// corrected, not the scenario's answer key, so StripExpected leaves
+	// it in.
+	Errors []GrammarError
+}
+
+// GrammarError is one G_GRAMMAR finding (openapi.yaml's GrammarError):
+// Fragment is a substring of the trainee's own comment.
+type GrammarError struct {
+	Fragment   string
+	Correction string
+	Kind       string // spelling | grammar | punctuation
 }
 
 // StripExpected returns a copy of criteria with every CriterionDetail's
