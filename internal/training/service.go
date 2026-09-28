@@ -1203,7 +1203,7 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 	if err := s.store.SetRunQueueCursor(ctx, tx, run.ID, queueIndex+1); err != nil {
 		return uuid.Nil, err
 	}
-	if err := s.scheduleEventsForAnchor(ctx, tx, item, version.Body.Events, "offered", now); err != nil {
+	if err := s.scheduleEventsForAnchor(ctx, tx, item, version.Body.Events, eventAnchor{name: "offered"}, now); err != nil {
 		return uuid.Nil, err
 	}
 	return item.ID, s.notify(ctx, tx, lesson.ID, run.UserID, item.ID)
@@ -1256,7 +1256,46 @@ func (s *Service) checkSpawnQueuePlan(ctx context.Context, tx pgx.Tx, queue []uu
 	return nil
 }
 
-func (s *Service) scheduleEventsForAnchor(ctx context.Context, tx pgx.Tx, item Item, events []content.Event, anchor string, anchorAt time.Time) error {
+// eventAnchor is one reached event.since point (RFC-001 §7.2). contact is
+// set only for content.EventSinceCallEnded (ADR-031): the contact whose
+// outgoing call just ended.
+type eventAnchor struct {
+	name    string
+	contact string
+}
+
+func (a eventAnchor) matches(event content.Event) bool {
+	if event.Since != a.name {
+		return false
+	}
+	return a.name != content.EventSinceCallEnded || event.SinceContact == a.contact
+}
+
+// ddsEventAnchor is the anchor an accepted DDS command reaches, if any:
+// open → opened, a progress status → that status, and (ADR-031) the end
+// of an outgoing call → call_ended for its contact. calls already holds
+// the ended call. First reach wins — scheduleEventsForAnchor skips an
+// event already scheduled for this item.
+func ddsEventAnchor(cmdType CommandType, decision Decision, calls []Call) (eventAnchor, bool) {
+	if cmdType == CommandOpen {
+		return eventAnchor{name: "opened"}, true
+	}
+	if decision.EndCall != nil {
+		for _, call := range calls {
+			if call.ID == decision.EndCall.CallID && call.Outgoing() {
+				return eventAnchor{name: content.EventSinceCallEnded, contact: call.ContactKey}, true
+			}
+		}
+		return eventAnchor{}, false
+	}
+	switch decision.Reaction {
+	case content.ReactionAccepted, content.ReactionResponding, content.ReactionArrived, content.ReactionWorking:
+		return eventAnchor{name: string(decision.Reaction)}, true
+	}
+	return eventAnchor{}, false
+}
+
+func (s *Service) scheduleEventsForAnchor(ctx context.Context, tx pgx.Tx, item Item, events []content.Event, anchor eventAnchor, anchorAt time.Time) error {
 	existing, err := s.store.ItemEventsByItem(ctx, tx, item.ID)
 	if err != nil {
 		return err
@@ -1266,7 +1305,7 @@ func (s *Service) scheduleEventsForAnchor(ctx context.Context, tx pgx.Tx, item I
 		known[event.EventKey] = struct{}{}
 	}
 	for _, event := range events {
-		if event.Since != anchor {
+		if !anchor.matches(event) {
 			continue
 		}
 		if _, exists := known[event.Key]; exists {
@@ -1628,22 +1667,7 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 		if err != nil {
 			return Receipt{}, err
 		}
-		anchor := ""
-		if cmd.Type == CommandOpen {
-			anchor = "opened"
-		} else {
-			switch decision.Reaction {
-			case content.ReactionAccepted:
-				anchor = "accepted"
-			case content.ReactionResponding:
-				anchor = "responding"
-			case content.ReactionArrived:
-				anchor = "arrived"
-			case content.ReactionWorking:
-				anchor = "working"
-			}
-		}
-		if anchor != "" {
+		if anchor, ok := ddsEventAnchor(cmd.Type, decision, item.Calls); ok {
 			if err := s.scheduleEventsForAnchor(ctx, tx, item, version.Body.Events, anchor, now); err != nil {
 				return Receipt{}, err
 			}
