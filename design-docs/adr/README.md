@@ -32,3 +32,4 @@
 | [029](029-operator112-local-inference-container.md) | Локальная модель (`llama-server`) в составе compose, ИИ-заявитель и судья по умолчанию | accepted |
 | [030](030-dds-dispatcher-role.md) | Роль диспетчера ДДС: цикл статусов реагирования, закрытие финальным статусом, статус карточки, архив пилотов | accepted |
 | [031](031-dds-crew-communication.md) | ДДС: доклады бригады после звонка (`since: call_ended`), входящие звонки, роли контактов, реакция на доклад в мониторе | accepted |
+| [032](032-dds-rubric-v2.md) | ДДС: рубрика v2 — `T_PROGRESS`/`S_SEQUENCE` по докладам, `C_CALLS`, необязательный журнал звонка | accepted |

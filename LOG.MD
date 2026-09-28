@@ -3397,3 +3397,13 @@ Browser e2e: `npm run test:e2e` через compose не запускался —
 - Задержки реакции пока не оцениваются, `comment_facts` не проверяются — это ДДС-3 и ДДС-4.
 
 Next: ДДС-3 — `dds/rubric-v2` (`T_PROGRESS` по докладам и `within_s`, `S_SEQUENCE`, `C_CALLS` с пропущенными входящими, необязательные `accepted_by`/`summary`).
+
+## 2026-09-28 — ДДС-3: рубрика v2 (план, c1)
+
+Status: in progress. `design-docs/adr/032-dds-rubric-v2.md` (веса, правила `T_PROGRESS`/`S_SEQUENCE`/`C_CALLS`, `reference.required_contacts`, необязательный журнал звонка на службах с финальными статусами), `design-docs/adr/README.md`, `slice-dds-3-plan.md` (коммиты c1–c9).
+
+Решения (28.09, с пользователем): статус раньше доклада штрафуется только в `S_SEQUENCE`; пропущенный входящий штрафуется в `C_CALLS`, `T_PROGRESS` для этого пункта `not_applicable`, бригада не перезванивает; `T_COMPLETE` в v2 убран; веса T_OPEN 10 / T_PRIMARY 10 / D_PRIMARY 25 / T_PROGRESS 20 / S_SEQUENCE 15 / D_COMMENT_REQUIRED 10 / C_CALLS 10, порог 70, critical_cap 40.
+
+Validation: `python3 design-docs/contracts/check.py` (без изменений контрактов — пройдёт как раньше).
+
+Next: c2 — `rubric.dds.v2.json`, `reference.required_contacts` в scenario.schema.json/scenario-file.schema.json, embed.go, check.py.
