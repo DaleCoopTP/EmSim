@@ -82,6 +82,22 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # One-shot, profile "demo" only (ADR-033): workstations РМ-01…РМ-N, an
+  # instructor and demo trainees (`make demo`). Idempotent; never changes
+  # an existing account. DEMO_PASSWORD is required for it to run.
+  demo-setup:
+    image: emsim:local
+    profiles: ["demo"]
+    command: ["demo-setup", "--actor", "${BOOTSTRAP_ADMIN_LOGIN:-admin}"]
+    environment:
+      DATABASE_URL: *database-url
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
+      DEMO_WORKSTATIONS: ${DEMO_WORKSTATIONS:-6}
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    restart: "no"
+
   # One-shot (ADR-033): the host backup directory is created by Docker as
   # root; hand it to the emsim user (uid 65532) the worker runs as.
   backup-dir:

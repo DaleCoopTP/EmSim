@@ -1,4 +1,4 @@
-.PHONY: class-up class-ca format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build seed model web-install web-build web-check verify-web
+.PHONY: demo class-up class-ca format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build seed model web-install web-build web-check verify-web
 
 GO_FILES := $(shell git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do test -f "$$file" && printf '%s\n' "$$file"; done)
 
@@ -34,6 +34,12 @@ compose-config:
 	docker compose -f compose.yaml -f compose.no-llm.yaml config --quiet
 	EMSIM_HOST=emsim.local docker compose -f compose.yaml -f compose.class.yaml config --quiet
 	REMOTE_LLM_URL=https://llm.example/v1 REMOTE_LLM_MODEL=model docker compose -f compose.yaml -f compose.remote-llm.yaml config --quiet
+
+# Demo stand (ADR-033): workstations, an instructor and demo trainees
+# for a running stack. DEMO_PASSWORD (8+ characters) comes from .env or the
+# environment and is the password of every account it creates.
+demo:
+	docker compose --profile demo run --rm demo-setup
 
 # Classroom profile (ADR-033): Caddy with HTTPS from its internal CA in
 # front of api. EMSIM_HOST (the name/IP the classroom opens) comes from

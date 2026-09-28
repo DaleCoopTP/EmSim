@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	errCommandRequired = errors.New("subcommand is required: migrate | api | worker | bootstrap-admin | import | bench-llm | backup | restore")
+	errCommandRequired = errors.New("subcommand is required: migrate | api | worker | bootstrap-admin | import | bench-llm | backup | restore | demo-setup")
 	errUnknownCommand  = errors.New("unknown subcommand")
 	errNotImplemented  = errors.New("subcommand is not implemented yet")
 )
@@ -62,6 +62,8 @@ func run(ctx context.Context, args []string) error {
 		return runBackup(ctx, rest, os.Stdout)
 	case "restore":
 		return runRestore(ctx, rest, os.Stdout)
+	case "demo-setup":
+		return runDemoSetup(ctx, rest, os.Stdout)
 	default:
 		return errUnknownCommand
 	}
@@ -77,7 +79,8 @@ func errorCode(err error) string {
 		return "invalid_invocation"
 	case errors.Is(err, errNotImplemented):
 		return "not_implemented"
-	case errors.Is(err, errBackupUsage), errors.Is(err, errRestoreUsage), errors.Is(err, errRestoreNotConfirmed):
+	case errors.Is(err, errBackupUsage), errors.Is(err, errRestoreUsage), errors.Is(err, errRestoreNotConfirmed),
+		errors.Is(err, errDemoUsage), errors.Is(err, errDemoPassword), errors.Is(err, errDemoWorkstations):
 		return "invalid_invocation"
 	case errors.Is(err, backup.ErrNotConfigured):
 		return "backup_not_configured"
