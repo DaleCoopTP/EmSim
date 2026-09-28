@@ -864,3 +864,22 @@ dd { margin: 0; }
 .arm112-field.is-invalid input, .arm112-plain.is-invalid, .arm112-description.is-invalid textarea {
   border-bottom-color: #d32f2f; background: #fdecea; }
 .arm112-field.is-invalid > label > span { color: #b3261e; }
+
+/* ADR-033: admin "Состояние" screen. */
+.status-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: #e8ecee;
+  border-left: 4px solid var(--arm-panel-muted);
+  box-shadow: var(--arm-shadow);
+}
+.status-card span { color: #52616a; }
+.status-card strong { font-weight: 500; overflow-wrap: anywhere; }
+.status-card.status-ok { border-left-color: var(--arm-ok); }
+.status-card.status-bad { border-left-color: var(--arm-danger); background: #fdebed; }
+.status-panel { padding: 12px 15px; margin-bottom: 14px; background: #e8ecee; box-shadow: var(--arm-shadow); }
+.status-panel h2 { margin: 0 0 10px; font-size: 16px; }
+.status-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }

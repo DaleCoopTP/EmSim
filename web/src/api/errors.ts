@@ -17,6 +17,9 @@ export function errorMessage(error: unknown): string {
     case "forbidden":
       return "Недостаточно прав.";
     case "conflict":
+      if (reason === "backup_not_configured") return "Резервное копирование не настроено: у worker'а не задан BACKUP_DIR.";
+      if (reason === "backup_in_progress") return "Копия уже создаётся. Дождитесь её завершения.";
+      if (reason === "not_retryable") return "Эту задачу нельзя повторить (уже выполнена, отменена или её результат уже записан).";
       return "Конфликт состояния. Обновите страницу и повторите действие.";
     case "not_found":
       return "Не найдено.";

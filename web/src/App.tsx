@@ -4,6 +4,7 @@ import { Layout } from "./components/Layout";
 import { RequireAuth } from "./components/RequireAuth";
 import { UsersRoute } from "./routes/admin/Users";
 import { WorkstationsRoute } from "./routes/admin/Workstations";
+import { StatusRoute } from "./routes/admin/Status";
 import { HomeRoute } from "./routes/Home";
 import { ScenarioCatalogueRoute } from "./routes/instructor/ScenarioCatalogue";
 import { ScenarioDetailRoute } from "./routes/instructor/ScenarioDetail";
@@ -43,6 +44,7 @@ export default function App() {
             <Route element={<Layout />}>
               <Route path="/admin/users" element={<UsersRoute />} />
               <Route path="/admin/workstations" element={<WorkstationsRoute />} />
+              <Route path="/admin/status" element={<StatusRoute />} />
             </Route>
           </Route>
           <Route element={<RequireAuth roles={["instructor"]} />}>

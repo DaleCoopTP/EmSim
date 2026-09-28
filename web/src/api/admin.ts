@@ -60,3 +60,33 @@ export function useReplaceWorkstations() {
     onSuccess: (list) => queryClient.setQueryData(workstationsQueryKey, list),
   });
 }
+
+// ADR-033: the administrator's status screen. Polled every 10 s; the
+// manual backup and the task retry refetch it at once.
+export type AdminStatus = components["schemas"]["AdminStatus"];
+export type AdminTaskSummary = components["schemas"]["AdminTaskSummary"];
+export const statusQueryKey = ["admin", "status"] as const;
+
+export function useAdminStatus() {
+  return useQuery({
+    queryKey: statusQueryKey,
+    queryFn: () => api.get<AdminStatus>("/admin/status"),
+    refetchInterval: 10_000,
+  });
+}
+
+export function useStartBackup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<{ task_id: string }>("/admin/backup"),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: statusQueryKey }),
+  });
+}
+
+export function useRetryTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => api.post<AdminTaskSummary>(`/admin/tasks/${encodeURIComponent(taskId)}/retry`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: statusQueryKey }),
+  });
+}

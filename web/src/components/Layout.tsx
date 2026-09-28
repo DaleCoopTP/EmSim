@@ -33,6 +33,7 @@ export function Layout() {
           <nav>
             <NavLink to="/admin/users">Пользователи</NavLink>
             <NavLink to="/admin/workstations">Рабочие места</NavLink>
+            <NavLink to="/admin/status">Состояние</NavLink>
           </nav>
         )}
         {me.user.role === "instructor" && (
