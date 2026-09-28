@@ -166,16 +166,14 @@ func TestGrammarAnswerParsesErrors(t *testing.T) {
 	}
 }
 
-func TestGrammarAnswerRejectsInventedFragmentsAndBadShapes(t *testing.T) {
+func TestGrammarAnswerRejectsBadShapes(t *testing.T) {
 	payload := grammarPayload(t, Comment{ID: "comment:2", Text: "Выехала бригада 12"})
 	for name, text := range map[string]string{
-		"fragment not in text": `{"comment:2":[{"fragment":"совсем другой текст","correction":"x","kind":"spelling"}]}`,
-		"empty fragment":       `{"comment:2":[{"fragment":"","correction":"x","kind":"spelling"}]}`,
-		"empty correction":     `{"comment:2":[{"fragment":"бригада","correction":"","kind":"spelling"}]}`,
-		"unknown kind":         `{"comment:2":[{"fragment":"бригада","correction":"x","kind":"style"}]}`,
-		"missing comment":      `{}`,
-		"extra comment":        `{"comment:2":[],"comment:9":[]}`,
-		"not an object":        `[]`,
+		"empty correction": `{"comment:2":[{"fragment":"бригада","correction":"","kind":"spelling"}]}`,
+		"unknown kind":     `{"comment:2":[{"fragment":"бригада","correction":"x","kind":"style"}]}`,
+		"missing comment":  `{}`,
+		"extra comment":    `{"comment:2":[],"comment:9":[]}`,
+		"not an object":    `[]`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			chat := &fakeChat{result: llm.Result{Text: text, FinishReason: "stop"}}
@@ -183,6 +181,22 @@ func TestGrammarAnswerRejectsInventedFragmentsAndBadShapes(t *testing.T) {
 				t.Fatal("Answer must reject the answer")
 			}
 		})
+	}
+}
+
+func TestGrammarAnswerDropsInventedFragments(t *testing.T) {
+	chat := &fakeChat{result: llm.Result{Text: `{"comment:2":[{"fragment":"совсем другой текст","correction":"x","kind":"spelling"},{"fragment":"","correction":"x","kind":"spelling"},{"fragment":"бригада","correction":"Бригада","kind":"grammar"}]}`, FinishReason: "stop"}}
+	payload := grammarPayload(t, Comment{ID: "comment:2", Text: "Выехала бригада 12"})
+	answer, err := GrammarHandler{Chat: chat}.Answer(context.Background(), "m", nil, payload)
+	if err != nil {
+		t.Fatalf("Answer must tolerate an invented fragment: %v", err)
+	}
+	var decoded map[string][]GrammarError
+	if err := json.Unmarshal(answer, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded["comment:2"]) != 1 || decoded["comment:2"][0].Fragment != "бригада" {
+		t.Fatalf("only the real fragment must survive, got %+v", decoded)
 	}
 }
 

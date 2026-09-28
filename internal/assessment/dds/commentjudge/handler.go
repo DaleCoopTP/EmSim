@@ -210,16 +210,24 @@ func parseGrammarAnswers(text string, ids []string, texts map[string]string) (ma
 		if len(errs) > maxGrammarErrors {
 			return nil, fmt.Errorf("commentjudge: %d grammar errors for comment %q", len(errs), id)
 		}
+		kept := make([]GrammarError, 0, len(errs))
 		for _, e := range errs {
 			switch e.Kind {
 			case KindSpelling, KindGrammar, KindPunctuation:
 			default:
 				return nil, fmt.Errorf("commentjudge: invalid grammar error kind for comment %q", id)
 			}
-			if strings.TrimSpace(e.Correction) == "" || !containsFragment(texts[id], e.Fragment) {
-				return nil, fmt.Errorf("commentjudge: grammar error for comment %q is not a fragment of it", id)
+			if strings.TrimSpace(e.Correction) == "" {
+				return nil, fmt.Errorf("commentjudge: empty grammar correction for comment %q", id)
+			}
+			// A fragment the comment does not contain is a model
+			// hallucination about one error, not a reason to lose the
+			// whole assessment: drop that error and keep the rest.
+			if containsFragment(texts[id], e.Fragment) {
+				kept = append(kept, e)
 			}
 		}
+		answers[id] = kept
 	}
 	return answers, nil
 }
