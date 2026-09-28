@@ -31,8 +31,8 @@ func fullSecretBody() Body {
 			NotificationList: []NotificationEntry{{Service: "dds_district", Status: ReactionAdded, Mine: true}},
 		},
 		Contacts: []Contact{{
-			Key: "c1", Label: "l", Number: "100", Voice: "male_calm",
-			Phrases: ContactPhrases{Greeting: secretSentinel, Ack: secretSentinel},
+			Key: "c1", Label: "l", Number: "100", Voice: "male_calm", Role: ContactRoleCrew,
+			Phrases: ContactPhrases{Greeting: "Слушаю", Ack: "Принято"},
 		}},
 		Events: []Event{{
 			Key: "e1", AtS: 1, Since: "accepted", Delivery: "notice", From: "c1",
@@ -40,6 +40,7 @@ func fullSecretBody() Body {
 			Spawn: &EventSpawn{Kind: "scenario", ScenarioKey: secretSentinel, Version: 1},
 			Expects: &EventExpects{
 				Status: ReactionAccepted, WithinS: 30, Action: secretSentinel,
+				CommentFacts: []string{secretSentinel},
 			},
 		}},
 		Reference: Reference{
@@ -118,13 +119,22 @@ func TestProjectCardGoldenShape(t *testing.T) {
 	}
 }
 
-func TestProjectContactsDropsPhrases(t *testing.T) {
-	contacts := []Contact{{
-		Key: "c1", Label: "Бригада", Number: "201", Voice: "male_calm",
-		Phrases: ContactPhrases{Greeting: secretSentinel, Ack: secretSentinel},
-	}}
+// ADR-031: the role and the phrase texts are not part of the answer key —
+// the trainee's phone groups contacts by role and shows a phrase's text
+// when no recording exists — so both are projected; an empty role reads
+// as "other".
+func TestProjectContactsCarriesRoleAndPhrases(t *testing.T) {
+	contacts := []Contact{
+		{Key: "c1", Label: "Бригада", Number: "201", Voice: "male_calm", Role: ContactRoleCrew,
+			Phrases: ContactPhrases{Greeting: "Слушаю", Ack: "Принято"}},
+		{Key: "c2", Label: "Прочие", Number: "202", Voice: "male_calm"},
+	}
 	got := ProjectContacts(contacts)
-	want := []ContactPreview{{Key: "c1", Label: "Бригада", Number: "201", Voice: "male_calm"}}
+	want := []ContactPreview{
+		{Key: "c1", Label: "Бригада", Number: "201", Voice: "male_calm", Role: ContactRoleCrew,
+			Phrases: ContactPhrases{Greeting: "Слушаю", Ack: "Принято"}},
+		{Key: "c2", Label: "Прочие", Number: "202", Voice: "male_calm", Role: ContactRoleOther},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ProjectContacts = %+v, want %+v", got, want)
 	}

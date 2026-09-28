@@ -665,6 +665,9 @@ func validateContactKeys(contacts []Contact) (map[string]bool, error) {
 		if keys[c.Key] {
 			return nil, invalid(fmt.Sprintf("contacts[%d].key", i), "duplicate")
 		}
+		if !c.Role.Valid() {
+			return nil, invalid(fmt.Sprintf("contacts[%d].role", i), "invalid")
+		}
 		keys[c.Key] = true
 	}
 	return keys, nil
@@ -681,6 +684,22 @@ func validateEvents(events []Event, contactKeys map[string]bool, exerciseType Ex
 		if e.Delivery == "phone_incoming" || e.Delivery == "notice" {
 			if e.From == "" || !contactKeys[e.From] {
 				return invalid(fmt.Sprintf("events[%d].from", i), "unknown_contact")
+			}
+		}
+		// ADR-031: call_ended is anchored on the first ended outgoing
+		// call to since_contact, which must be a contact of this scenario.
+		if e.Since == EventSinceCallEnded {
+			if e.SinceContact == "" || !contactKeys[e.SinceContact] {
+				return invalid(fmt.Sprintf("events[%d].since_contact", i), "unknown_contact")
+			}
+		} else if e.SinceContact != "" {
+			return invalid(fmt.Sprintf("events[%d].since_contact", i), "not_allowed")
+		}
+		if e.Expects != nil {
+			for j, fact := range e.Expects.CommentFacts {
+				if strings.TrimSpace(fact) == "" {
+					return invalid(fmt.Sprintf("events[%d].expects.comment_facts[%d]", i, j), "empty")
+				}
 			}
 		}
 		if e.Delivery == "spawn_card" {

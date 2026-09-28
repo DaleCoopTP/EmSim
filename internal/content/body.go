@@ -336,14 +336,44 @@ type Phones struct {
 }
 
 // Contact is one scenario.contacts entry — a simulated phone contact
-// (RFC-001 §7.3). Phrases is voice-only (slice 5+); CardPreview's
-// projection deliberately drops it (preview.go).
+// (RFC-001 §7.3). Role (ADR-031) groups a DDS contact as crew, the 112
+// control department, the applicant or other; an empty Role is "other".
+// Neither Role nor the phrase texts are part of the answer key, so both
+// reach the trainee through ProjectContacts (preview.go).
 type Contact struct {
 	Key     string         `json:"key"`
 	Label   string         `json:"label"`
 	Number  string         `json:"number"`
 	Voice   string         `json:"voice"`
+	Role    ContactRole    `json:"role,omitempty"`
 	Phrases ContactPhrases `json:"phrases"`
+}
+
+// ContactRole is scenario.schema.json's contact.role (ADR-031).
+type ContactRole string
+
+const (
+	ContactRoleCrew       ContactRole = "crew"
+	ContactRoleControl112 ContactRole = "control_112"
+	ContactRoleApplicant  ContactRole = "applicant"
+	ContactRoleOther      ContactRole = "other"
+)
+
+// Valid reports whether r is a known role; empty is valid and means other.
+func (r ContactRole) Valid() bool {
+	switch r {
+	case "", ContactRoleCrew, ContactRoleControl112, ContactRoleApplicant, ContactRoleOther:
+		return true
+	}
+	return false
+}
+
+// Effective is r with the schema's default applied.
+func (r ContactRole) Effective() ContactRole {
+	if r == "" {
+		return ContactRoleOther
+	}
+	return r
 }
 
 type ContactPhrases struct {
@@ -372,16 +402,19 @@ type Generation struct {
 // the file omits it; UnmarshalJSON applies that default explicitly since
 // encoding/json otherwise leaves a missing bool at its zero value (false).
 type Event struct {
-	Key      string        `json:"key"`
-	AtS      int           `json:"at_s"`
-	Since    string        `json:"since"`
-	StatusIn []Reaction    `json:"status_in"`
-	Delivery string        `json:"delivery"`
-	From     string        `json:"from"`
-	Text     string        `json:"text"`
-	Voice    bool          `json:"voice"`
-	Spawn    *EventSpawn   `json:"spawn"`
-	Expects  *EventExpects `json:"expects"`
+	Key   string `json:"key"`
+	AtS   int    `json:"at_s"`
+	Since string `json:"since"`
+	// SinceContact is the contact whose first ended outgoing call anchors
+	// an event with Since == EventSinceCallEnded (ADR-031); empty otherwise.
+	SinceContact string        `json:"since_contact,omitempty"`
+	StatusIn     []Reaction    `json:"status_in"`
+	Delivery     string        `json:"delivery"`
+	From         string        `json:"from"`
+	Text         string        `json:"text"`
+	Voice        bool          `json:"voice"`
+	Spawn        *EventSpawn   `json:"spawn"`
+	Expects      *EventExpects `json:"expects"`
 }
 
 func (e *Event) UnmarshalJSON(data []byte) error {
@@ -417,7 +450,14 @@ type EventExpects struct {
 	Status  Reaction `json:"status"`
 	WithinS int      `json:"within_s"`
 	Action  string   `json:"action"`
+	// CommentFacts are the facts the comment to the status set in reaction
+	// to this event should carry (ADR-031); judged in slice DDS-4.
+	CommentFacts []string `json:"comment_facts,omitempty"`
 }
+
+// EventSinceCallEnded is event.since's call anchor (ADR-031): the end of
+// the item's first outgoing call to event.since_contact.
+const EventSinceCallEnded = "call_ended"
 
 // Reference is scenario.reference — the closed-book эталон. Never
 // projected to a trainee; internal/content/http (C4) exposes it only to

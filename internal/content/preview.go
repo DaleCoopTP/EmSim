@@ -62,6 +62,11 @@ type ContactPreview struct {
 	Label  string `json:"label"`
 	Number string `json:"number"`
 	Voice  string `json:"voice"`
+	// Role and Phrases (ADR-031) are not part of the answer key: the role
+	// groups contacts on the DDS phone, the phrase texts stand in for a
+	// missing recording.
+	Role    ContactRole    `json:"role"`
+	Phrases ContactPhrases `json:"phrases"`
 }
 
 // ProjectCard builds a CardPreview from a scenario version's Card — the
@@ -102,7 +107,7 @@ func ProjectCard(card Card) CardPreview {
 func ProjectContacts(contacts []Contact) []ContactPreview {
 	out := make([]ContactPreview, len(contacts))
 	for i, c := range contacts {
-		out[i] = ContactPreview{Key: c.Key, Label: c.Label, Number: c.Number, Voice: c.Voice}
+		out[i] = ContactPreview{Key: c.Key, Label: c.Label, Number: c.Number, Voice: c.Voice, Role: c.Role.Effective(), Phrases: c.Phrases}
 	}
 	return out
 }

@@ -452,6 +452,50 @@ func TestValidateRejectsEventFromUnknownContact(t *testing.T) {
 	assertInvalidField(t, Validate(body, pilotCatalog()), "events[0].from")
 }
 
+// ADR-031: crew reports anchored on the first outgoing call to a contact.
+func TestValidateCallEndedAnchor(t *testing.T) {
+	body := validPilotBody()
+	body.Contacts = []Contact{{Key: "crew", Role: ContactRoleCrew}, {Key: "control", Role: ContactRoleControl112}}
+	body.Events = []Event{
+		{Key: "e1", AtS: 20, Since: EventSinceCallEnded, SinceContact: "crew", Delivery: "notice", From: "crew",
+			Expects: &EventExpects{Status: ReactionResponding, CommentFacts: []string{"бригада выехала"}}},
+		{Key: "e2", AtS: 40, Since: EventSinceCallEnded, SinceContact: "crew", Delivery: "phone_incoming", From: "crew"},
+		{Key: "e3", AtS: 30, Since: "offered", Delivery: "phone_incoming", From: "control"},
+	}
+	if err := Validate(body, pilotCatalog()); err != nil {
+		t.Fatalf("Validate(call_ended anchor) = %v, want nil", err)
+	}
+
+	missing := validPilotBody()
+	missing.Contacts = body.Contacts
+	missing.Events = []Event{{Key: "e1", Since: EventSinceCallEnded, Delivery: "notice", From: "crew"}}
+	assertInvalidField(t, Validate(missing, pilotCatalog()), "events[0].since_contact")
+
+	unknown := validPilotBody()
+	unknown.Contacts = body.Contacts
+	unknown.Events = []Event{{Key: "e1", Since: EventSinceCallEnded, SinceContact: "nobody", Delivery: "notice", From: "crew"}}
+	assertInvalidField(t, Validate(unknown, pilotCatalog()), "events[0].since_contact")
+
+	stray := validPilotBody()
+	stray.Contacts = body.Contacts
+	stray.Events = []Event{{Key: "e1", Since: "accepted", SinceContact: "crew", Delivery: "notice", From: "crew"}}
+	assertInvalidField(t, Validate(stray, pilotCatalog()), "events[0].since_contact")
+}
+
+func TestValidateRejectsEmptyCommentFact(t *testing.T) {
+	body := validPilotBody()
+	body.Contacts = []Contact{{Key: "crew"}}
+	body.Events = []Event{{Key: "e1", Since: "offered", Delivery: "notice", From: "crew",
+		Expects: &EventExpects{CommentFacts: []string{"адрес", "  "}}}}
+	assertInvalidField(t, Validate(body, pilotCatalog()), "events[0].expects.comment_facts[1]")
+}
+
+func TestValidateRejectsUnknownContactRole(t *testing.T) {
+	body := validPilotBody()
+	body.Contacts = []Contact{{Key: "crew", Role: "boss"}}
+	assertInvalidField(t, Validate(body, pilotCatalog()), "contacts[0].role")
+}
+
 func TestValidateRejectsSpawnScenarioWithoutStableReference(t *testing.T) {
 	body := validPilotBody()
 	body.Events = []Event{{Key: "e1", Since: "accepted", Delivery: "spawn_card", Spawn: &EventSpawn{Kind: "scenario"}}}
