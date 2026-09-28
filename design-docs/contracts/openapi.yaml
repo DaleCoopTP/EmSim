@@ -196,6 +196,15 @@ paths:
       description: 'Срез 112-7. Роль — instructor. То же содержимое, из которого intake_state обучаемого уже строится (internal/content/postgres.IntakeCatalog) — не секрет, здесь только собрано в одном ответе ради редактора.'
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Intake112Catalog' } } } }
+  /scenarios/categories:
+    get:
+      tags: [content]
+      summary: Разделы классификатора и число сценариев по уровням (ДДС-6)
+      description: 'Роль — instructor. Утверждённые неархивные сценарии dds_processing; раздел — первые две цифры card.incident.type_code (ADR-035).'
+      parameters:
+        - { name: service, in: query, schema: { type: string } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScenarioCategory' } } } } }
   /scenarios/generate:
     post:
       tags: [content]
@@ -341,6 +350,36 @@ paths:
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Lesson' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [lessons]
+      summary: Нормативы и оценивание занятия (ДДС-6)
+      description: 'Роль — instructor, владелец. Только черновик (иначе 409). Только dds_processing: для 112 timing/scoring отклоняются. Проверка scoring — по замороженной rubric_version.'
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LessonSettingsPatch' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Lesson' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Validation' }
+  /lessons/{lessonId}/rubric:
+    parameters: [ { $ref: '#/components/parameters/LessonId' } ]
+    get:
+      tags: [lessons]
+      summary: Рубрика занятия с весами и порогом (ДДС-6)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/LessonRubric' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /lessons/{lessonId}/assignments/draw:
+    parameters: [ { $ref: '#/components/parameters/LessonId' } ]
+    post:
+      tags: [lessons]
+      summary: Предложить случайные очереди (ДДС-6, ничего не сохраняет)
+      description: 'Для каждой строки — сценарии службы обучаемого из выбранных разделов и сложности уровня занятия (easy 1–3, medium 4–6, hard 7–10), без повторов и без сценариев со spawn_card. Порядок свой на каждом РМ. Результат сохраняется обычным PUT assignments.'
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AssignmentDrawRequest' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Assignment' } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { description: 'validation_failed или not_enough_scenarios (details.available — сколько сценариев доступно)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /lessons/{lessonId}/assignments:
     parameters: [ { $ref: '#/components/parameters/LessonId' } ]
     put:
@@ -668,7 +707,7 @@ components:
           properties:
             code:
               type: string
-              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, call_required, call_in_progress, call_not_active, call_missed, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation, stale_draft, has_blocking_issues, unsupported_for_editor]
+              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, call_required, call_in_progress, call_not_active, call_missed, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation, stale_draft, has_blocking_issues, unsupported_for_editor, not_enough_scenarios]
             message: { type: string }
             details: { type: object, additionalProperties: true }
         request_id: { type: string }
@@ -1398,9 +1437,9 @@ components:
           type: object
           description: Только ДДС. У 112-1 нет временных нормативов; сервер возвращает нулевую политику, но не использует её для оценки.
           properties:
-            open_s: { type: integer, default: 30 }
-            primary_s: { type: integer, default: 30 }
-            complete_s: { type: integer, default: 180 }
+            open_s: { type: integer, default: 30, minimum: 10, maximum: 300 }
+            primary_s: { type: integer, default: 30, minimum: 10, maximum: 600, description: 'Не меньше open_s (ADR-035); дедлайн первичного решения — offered_at + primary_s.' }
+            complete_s: { type: integer, default: 180, minimum: 60, maximum: 3600 }
             spawn_every_s: { type: integer, nullable: true, description: hard — интервал новых карточек }
     Lesson:
       allOf:
@@ -1442,6 +1481,82 @@ components:
             maxLength: 500
           pending_assessments:
             type: integer
+          scoring:
+            $ref: '#/components/schemas/LessonScoring'
+
+    LessonScoring:
+      type: object
+      nullable: true
+      description: 'ДДС-6/ADR-035: веса критериев и порог «зачтено» занятия. null — значения рубрики; только dds_processing.'
+      required: [weights, pass_threshold]
+      properties:
+        weights: { type: object, additionalProperties: { type: number, minimum: 0 }, description: 'Полный набор критериев замороженной rubric_version, сумма 100.' }
+        pass_threshold: { type: number, minimum: 0, maximum: 100 }
+
+    LessonSettingsPatch:
+      type: object
+      description: 'Только черновик, только владелец. Отсутствующее поле не меняется; scoring=null сбрасывает к значениям рубрики.'
+      properties:
+        timing: { $ref: '#/components/schemas/LessonTiming' }
+        scoring: { $ref: '#/components/schemas/LessonScoring' }
+
+    LessonTiming:
+      type: object
+      required: [open_s, primary_s, complete_s]
+      properties:
+        open_s: { type: integer, minimum: 10, maximum: 300 }
+        primary_s: { type: integer, minimum: 10, maximum: 600 }
+        complete_s: { type: integer, minimum: 60, maximum: 3600 }
+        spawn_every_s: { type: integer, nullable: true, minimum: 1, description: только hard }
+
+    LessonRubric:
+      type: object
+      description: 'ДДС-6: рубрика занятия — критерии замороженной rubric_version с весами занятия (если заданы) и порог.'
+      required: [rubric_version, pass_threshold, default_pass_threshold, criteria]
+      properties:
+        rubric_version: { type: string }
+        pass_threshold: { type: number }
+        default_pass_threshold: { type: number }
+        criteria:
+          type: array
+          items:
+            type: object
+            required: [id, title, kind, weight, default_weight, critical]
+            properties:
+              id: { type: string }
+              title: { type: string }
+              kind: { type: string, enum: [deterministic, llm, manual] }
+              weight: { type: number }
+              default_weight: { type: number }
+              critical: { type: boolean }
+
+    ScenarioCategory:
+      type: object
+      description: 'ДДС-6: раздел классификатора — первые две цифры card.incident.type_code (ADR-035).'
+      required: [code, type_names, count_by_level]
+      properties:
+        code: { type: string, minLength: 2, maxLength: 2 }
+        type_names: { type: array, items: { type: string } }
+        count_by_level:
+          type: object
+          required: [easy, medium, hard]
+          properties: { easy: { type: integer }, medium: { type: integer }, hard: { type: integer } }
+
+    AssignmentDrawRequest:
+      type: object
+      required: [categories, count, rows]
+      properties:
+        categories: { type: array, minItems: 1, items: { type: string, minLength: 2, maxLength: 2 } }
+        count: { type: integer, minimum: 1, maximum: 20, description: Число карточек на РМ. }
+        rows:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [workstation_no, user_id]
+            properties:
+              workstation_no: { type: integer }
+              user_id: { type: string, format: uuid }
 
     Assignment:
       type: object

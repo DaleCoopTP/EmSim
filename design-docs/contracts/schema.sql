@@ -231,6 +231,7 @@ CREATE TABLE lessons (
     epoch         bigint NOT NULL DEFAULT 0,           -- растёт при stop; барьер для поздних команд
     timing        jsonb NOT NULL,                      -- {open_s:30, primary_s:30, complete_s:180, spawn_every_s:150?}
     rubric_version text NOT NULL,                      -- фиксируется на старте
+    scoring       jsonb,                               -- ДДС-6/ADR-035: {weights:{id:w}, pass_threshold}; NULL — значения рубрики
     recording_grace_s integer NOT NULL DEFAULT 120 CHECK (recording_grace_s >= 0),
     created_at    timestamptz NOT NULL DEFAULT now(),
     started_at    timestamptz,
@@ -238,6 +239,7 @@ CREATE TABLE lessons (
     stop_reason   text CHECK (stop_reason IS NULL OR length(stop_reason) <= 500),
     finished_at   timestamptz,
     CONSTRAINT lessons_timing_object CHECK (jsonb_typeof(timing) = 'object'),
+    CONSTRAINT lessons_scoring_object CHECK (scoring IS NULL OR jsonb_typeof(scoring) = 'object'),
     CONSTRAINT lessons_state_shape CHECK (
         (state = 'draft'    AND started_at IS NULL) OR
         (state = 'running'  AND started_at IS NOT NULL AND stopped_at IS NULL) OR
