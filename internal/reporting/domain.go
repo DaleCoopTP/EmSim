@@ -106,6 +106,14 @@ type ReportItem struct {
 	// there per revision), not re-derived from "today's" rubric.
 	IntakeBlocks       []IntakeBlockScore `json:"intake_blocks,omitempty"`
 	IntakePenaltyTotal *float64           `json:"intake_penalty_total,omitempty"`
+	// CommentErrors (ДДС-4/ADR-034) is the number of spelling/grammar/
+	// punctuation mistakes the judge found in the trainee's comments —
+	// set only for a final ready assessment whose rubric has an
+	// evaluated G_GRAMMAR (dds/rubric-v3); nil for every other row
+	// (rubric-v1/v2, 112, not_applicable or unavailable grammar). Read
+	// from the final assessment's own criteria details, so an expert
+	// revision that keeps the details keeps the count.
+	CommentErrors *int `json:"comment_errors,omitempty"`
 }
 
 // CardStatus mirrors training/dds.CardStatus's own values (openapi's

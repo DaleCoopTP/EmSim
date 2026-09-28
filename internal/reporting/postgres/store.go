@@ -147,7 +147,10 @@ var criterionLabels = map[string]string{
 	"T_OPEN": "Скорость открытия карточки", "T_PRIMARY": "Время первичного решения", "T_COMPLETE": "Время обработки",
 	"D_PRIMARY": "Первичное решение", "D_COMMENT_REQUIRED": "Обязательный комментарий", "D_FIELD_CORRECTIONS": "Исправление данных",
 	"S_SEQUENCE": "Последовательность действий", "C_CALL_MADE": "Обязательный звонок", "C_CALL_LOG": "Оформление звонка",
-	"G_ADDRESS": "Корректность адреса", "D_COMMENT_CONTENT": "Содержание комментария", "C_CALL_CONTENT": "Содержание доклада", "C_CALL_LOG_CONTENT": "Содержание журнала звонка", "G_GRAMMAR": "Грамматика",
+	// ДДС-4/ADR-034: D_COMMENT_CONTENT/G_GRAMMAR are judged for real on
+	// dds/rubric-v3 (they were never evaluated on v1), same ids and
+	// labels for both rubric versions.
+	"G_ADDRESS": "Корректность адреса", "D_COMMENT_CONTENT": "Содержание комментариев", "C_CALL_CONTENT": "Содержание доклада", "C_CALL_LOG_CONTENT": "Содержание журнала звонка", "G_GRAMMAR": "Грамотность",
 	// ДДС-3/ADR-032 (dds/rubric-v2) — T_PROGRESS/C_CALLS replace
 	// C_CALL_MADE/C_CALL_LOG*/G_ADDRESS above for a lesson frozen on v2;
 	// v2's own S_SEQUENCE keeps v1's id and label (its rule name changes
@@ -189,6 +192,47 @@ type criterion struct {
 	Score         *float64 `json:"score"`
 	Weight        float64  `json:"weight"`
 	PenaltyPoints *float64 `json:"penalty_points"`
+	// Details is read only for G_GRAMMAR's own error count (ДДС-4/
+	// ADR-034); every other criterion's rows are ignored here.
+	Details []struct {
+		Errors []json.RawMessage `json:"errors"`
+	} `json:"details"`
+}
+
+// commentErrorCount is ReportItem.CommentErrors for a final assessment's
+// criteria: the number of grammar mistakes in G_GRAMMAR's details, or nil
+// when the rubric has no evaluated G_GRAMMAR (missing, not_applicable or
+// unavailable), the final revision is an expert one that dropped the
+// details, or the assessment is not ready.
+func commentErrorCount(criteriaRaw []byte, status reporting.AssessmentStatus) *int {
+	if status != reporting.AssessmentReady {
+		return nil
+	}
+	var criteria []criterion
+	if err := json.Unmarshal(criteriaRaw, &criteria); err != nil {
+		return nil
+	}
+	for _, c := range criteria {
+		if c.ID != "G_GRAMMAR" {
+			continue
+		}
+		// An evaluated G_GRAMMAR always has one detail row per comment;
+		// an expert revision does not carry details over (its form posts
+		// per-criterion verdicts only), and then the count is unknown —
+		// not zero.
+		if len(c.Details) == 0 {
+			return nil
+		}
+		switch c.Status {
+		case "met", "partial", "not_met":
+			total := 0
+			for _, d := range c.Details {
+				total += len(d.Errors)
+			}
+			return &total
+		}
+	}
+	return nil
 }
 
 // intake112Breakdown extracts ReportItem's own IntakeBlocks/
@@ -372,6 +416,7 @@ func (s *Store) items(ctx context.Context, query string, args ...any) ([]reporti
 		}
 		item.Errors = publicErrors(criteriaRaw, feedbackRaw, item.AssessmentStatus)
 		item.IntakeBlocks, item.IntakePenaltyTotal = intakeBreakdownFor(criteriaRaw, item.AssessmentStatus)
+		item.CommentErrors = commentErrorCount(criteriaRaw, item.AssessmentStatus)
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {

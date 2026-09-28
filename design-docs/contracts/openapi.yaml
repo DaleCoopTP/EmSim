@@ -2641,6 +2641,9 @@ components:
             type: array
             items: { $ref: '#/components/schemas/IntakeBlockScore' }
           intake_penalty_total: { type: [number, 'null'] }
+          comment_errors:
+            type: [integer, 'null']
+            description: 'ДДС-4/ADR-034 — число орфографических, грамматических и пунктуационных ошибок в комментариях обучаемого (G_GRAMMAR, dds/rubric-v3); null, если критерий не оценивался.'
 
     IntakeBlockScore:
       type: object

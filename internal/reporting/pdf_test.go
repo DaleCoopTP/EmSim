@@ -70,3 +70,25 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// TestRenderPDFIncludesCommentErrorCount is ДДС-4/ADR-034: an item with
+// a grammar verdict renders its error count without breaking the
+// document (RenderPDF exposes no text to assert on, like the other PDF
+// tests here).
+func TestRenderPDFIncludesCommentErrorCount(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	score := 91.0
+	errs := 2
+	snapshot := Snapshot{Version: 1, CapturedAt: now, Report: LessonReport{Lesson: Lesson{ID: uuid.New(), Title: "ДДС", FinishedAt: now}, Items: []ReportItem{{
+		ItemResult: ItemResult{ItemID: uuid.New(), AssessmentStatus: AssessmentReady, Score: &score, ItemState: "closed", CardNumber: "К-1", CardStatus: CardCompleted},
+		UserID:     uuid.New(), FullName: "Иванов Иван", WorkstationNo: 2, ScenarioTitle: "Дерево", Ordinal: 1, Level: "easy", CommentErrors: &errs,
+	}}}}
+	snapshot.Report.Participants, snapshot.Report.Aggregates = Enrich(snapshot.Report.Items)
+	body, err := RenderPDF(snapshot, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(body, []byte("%PDF-")) || !bytes.Contains(body, []byte("%%EOF")) {
+		t.Fatalf("not a PDF: %q", body[:min(len(body), 12)])
+	}
+}

@@ -3658,3 +3658,15 @@ Status: c6 выполнен.
 - Среда: для интеграционных тестов в песочнице нет Docker, но есть PostgreSQL 16 — поднят локально (`pg_ctlcluster 16 main start`, `TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/emsim_test?sslmode=disable`).
 
 Validation: `go test ./internal/content/`, `go test -tags=integration -run 'TestContentImportSeedEndToEnd|TestAPIProcessContentCatalogAccess' ./test/integration/`.
+
+## 2026-09-28 — ДДС-4 c7: отчёт, CSV и PDF
+
+Status: c7 выполнен.
+
+- `reporting.ReportItem.CommentErrors` (`comment_errors` в OpenAPI): число ошибок из `details[].errors` итоговой ревизии `G_GRAMMAR`; `nil` для рубрик v1/v2, 112, `not_applicable`/`unavailable` и неготовой оценки (`commentErrorCount` в `postgres/store.go`).
+- Экспертная ревизия не переносит `details` (форма шлёт вердикты по критериям), поэтому после неё число ошибок неизвестно — колонка пустая, а не «0».
+- CSV: последняя колонка «Ошибок в комментариях»; PDF: строка «Ошибок в комментариях: N».
+- Подписи `D_COMMENT_CONTENT` («Содержание комментариев») и `G_GRAMMAR` («Грамотность»); подписи v1 остаются теми же id.
+- Trainee: эндпоинты оценки ему недоступны (403); `/my/results` отдаёт только `PublicError` с названием критерия — тест `TestPublicErrorsNameJudgedDDSCriteria` фиксирует, что текст вопроса (эталон) туда не попадает. `StripExpected` остаётся защитой в глубину (вопрос лежит в `Expected`).
+
+Validation: `go test ./internal/...`, `python3 design-docs/contracts/check.py`.

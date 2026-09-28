@@ -74,6 +74,9 @@ func RenderPDF(snapshot Snapshot, generatedAt time.Time) ([]byte, error) {
 		if len(item.Errors) > 0 {
 			paragraph(pdf, "Ошибки: "+errorText(item.Errors))
 		}
+		if item.CommentErrors != nil {
+			paragraph(pdf, fmt.Sprintf("Ошибок в комментариях: %d", *item.CommentErrors))
+		}
 		if len(item.IntakeBlocks) > 0 {
 			paragraph(pdf, "Блоки 112: "+intakeBlocksText(item.IntakeBlocks))
 		}
