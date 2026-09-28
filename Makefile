@@ -33,6 +33,7 @@ compose-config:
 	docker compose config --quiet
 	docker compose -f compose.yaml -f compose.no-llm.yaml config --quiet
 	EMSIM_HOST=emsim.local docker compose -f compose.yaml -f compose.class.yaml config --quiet
+	REMOTE_LLM_URL=https://llm.example/v1 REMOTE_LLM_MODEL=model docker compose -f compose.yaml -f compose.remote-llm.yaml config --quiet
 
 # Classroom profile (ADR-033): Caddy with HTTPS from its internal CA in
 # front of api. EMSIM_HOST (the name/IP the classroom opens) comes from

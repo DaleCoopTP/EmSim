@@ -252,3 +252,39 @@ func TestWorkerAssessmentJudgeRejectsUnknownValue(t *testing.T) {
 		t.Fatalf("unknown ASSESSMENT_JUDGE error = %v", err)
 	}
 }
+
+// TestWorkerRemoteModelKeysAndDialect (ADR-033): each model client takes
+// its own key, falling back to the shared LLM_API_KEY; LLM_DIALECT
+// defaults to llama and rejects anything but llama/openai.
+func TestWorkerRemoteModelKeysAndDialect(t *testing.T) {
+	values := map[string]string{
+		"DATABASE_URL": "postgres://example.invalid/emsim", "WORKER_ID": "worker-1",
+		"WORKER_POLL_INTERVAL": "250ms", "WORKER_DRAIN_TIMEOUT": "10s",
+		"WORKER_ADMIN_LISTEN_ADDR": "127.0.0.1:8082",
+		"SHORT_CONCURRENCY":        "4", "LLM_CONCURRENCY": "1", "STT_CONCURRENCY": "1", "REPORT_CONCURRENCY": "1",
+		"CALLER_CONCURRENCY": "1", "CALLER_REPLY_TIMEOUT": "10s",
+		"CALLER_REPLIER": "stub", "ASSESSMENT_JUDGE": "off",
+	}
+	lookup := func(name string) string { return values[name] }
+	got, err := WorkerFromEnvironment(lookup, "worker")
+	if err != nil {
+		t.Fatalf("WorkerFromEnvironment: %v", err)
+	}
+	if got.LLMDialect != "llama" || got.CallerLLMAPIKey != "" || got.JudgeLLMAPIKey != "" {
+		t.Fatalf("defaults = %q/%q/%q", got.LLMDialect, got.CallerLLMAPIKey, got.JudgeLLMAPIKey)
+	}
+	values["LLM_API_KEY"] = "shared"
+	values["JUDGE_LLM_API_KEY"] = "judge-only"
+	values["LLM_DIALECT"] = "openai"
+	got, err = WorkerFromEnvironment(lookup, "worker")
+	if err != nil {
+		t.Fatalf("WorkerFromEnvironment: %v", err)
+	}
+	if got.CallerLLMAPIKey != "shared" || got.JudgeLLMAPIKey != "judge-only" || got.LLMDialect != "openai" {
+		t.Fatalf("keys/dialect = %q/%q/%q", got.CallerLLMAPIKey, got.JudgeLLMAPIKey, got.LLMDialect)
+	}
+	values["LLM_DIALECT"] = "anthropic"
+	if _, err := WorkerFromEnvironment(lookup, "worker"); !errors.Is(err, ErrInvalidWorkerConfiguration) || !strings.Contains(err.Error(), "LLM_DIALECT") {
+		t.Fatalf("unknown dialect error = %v", err)
+	}
+}

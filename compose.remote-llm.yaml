@@ -1,0 +1,29 @@
+# Runs EmSim against a remote OpenAI-compatible model instead of the
+# bundled llama-server (ADR-033), e.g. when the class server cannot hold
+# the model:
+#
+#   REMOTE_LLM_URL=https://llm.example/v1 REMOTE_LLM_MODEL=<model> LLM_API_KEY=<key> \
+#     docker compose -f compose.yaml -f compose.remote-llm.yaml up -d --build
+#
+# The AI caller's dialogue lines and the caller descriptions judged by the
+# model then leave the training centre's premises: switch this on only
+# where that is agreed. The key is sent as "Authorization: Bearer" and is
+# never logged. LLM_DIALECT=openai (the default here) sends only standard
+# chat-completions fields; use LLM_DIALECT=llama for a remote llama-server
+# or Ollama. Keep keys in .env, never on the command line of a shared
+# machine.
+
+services:
+  llm:
+    profiles: ["bundled-model-disabled"]
+
+  worker:
+    environment:
+      CALLER_LLM_URL: ${REMOTE_LLM_URL:?set REMOTE_LLM_URL to the remote OpenAI-compatible base URL, e.g. https://host/v1}
+      CALLER_LLM_MODEL: ${REMOTE_LLM_MODEL:?set REMOTE_LLM_MODEL to the remote model name}
+      JUDGE_LLM_URL: ${REMOTE_LLM_URL}
+      JUDGE_LLM_MODEL: ${REMOTE_JUDGE_MODEL:-${REMOTE_LLM_MODEL}}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      CALLER_LLM_API_KEY: ${CALLER_LLM_API_KEY:-}
+      JUDGE_LLM_API_KEY: ${JUDGE_LLM_API_KEY:-}
+      LLM_DIALECT: ${LLM_DIALECT:-openai}

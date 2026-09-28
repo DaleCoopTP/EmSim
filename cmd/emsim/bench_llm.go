@@ -403,6 +403,11 @@ func benchRun(ctx context.Context, opts benchOptions, cfg config.Worker, scenari
 		report.Scenarios = append(report.Scenarios, s.key)
 	}
 	metricsURL := strings.TrimSuffix(strings.TrimSuffix(cfg.CallerLLMURL, "/"), "/v1") + "/metrics"
+	if cfg.LLMDialect == llm.DialectOpenAI {
+		// A remote API has no llama-server /metrics; its server-side
+		// columns stay empty (ADR-033).
+		metricsURL = ""
+	}
 	for i, level := range opts.levels {
 		if ctx.Err() != nil {
 			return report, ctx.Err()
@@ -438,7 +443,7 @@ func benchLevelRun(ctx context.Context, opts benchOptions, cfg config.Worker, sc
 		firstPrompt: &countRecorder{}, firstCached: &countRecorder{},
 	}
 	replier := aicaller.Replier{
-		Chat:  timedChat{inner: llm.NewClient(cfg.CallerLLMURL), recorder: callerRec},
+		Chat:  timedChat{inner: callerClient(cfg), recorder: callerRec},
 		Model: cfg.CallerLLMModel, Temperature: cfg.CallerTemperature, TopP: cfg.CallerTopP,
 		RepeatPenalty: cfg.CallerRepeatPenalty, MaxTokens: cfg.CallerMaxTokens,
 		Stub: operator112.StubCallerReplier{},
@@ -449,7 +454,7 @@ func benchLevelRun(ctx context.Context, opts benchOptions, cfg config.Worker, sc
 	var warm func(context.Context, operator112.CallerReplyRequest) error
 	if cfg.CallerWarmup {
 		warmReplier := replier
-		warmReplier.Chat = llm.NewClient(cfg.CallerLLMURL)
+		warmReplier.Chat = callerClient(cfg)
 		warm = warmReplier.Warm
 	}
 	pace := benchPace{firstLine: opts.firstLine, openingDelay: opts.openingDelay, think: opts.think}
@@ -613,7 +618,7 @@ func judgeScenarios(scenarios []benchScenario) []descjudge.Request {
 }
 
 func benchJudgeLoop(ctx context.Context, cfg config.Worker, requests []descjudge.Request, loop int, think time.Duration, rec *latencyRecorder) {
-	handler := descjudge.Handler{Chat: llm.NewClient(cfg.JudgeLLMURL)}
+	handler := descjudge.Handler{Chat: llm.NewClientWith(cfg.JudgeLLMURL, llm.Options{APIKey: cfg.JudgeLLMAPIKey, Dialect: cfg.LLMDialect})}
 	parameters := map[string]any{"temperature": 0, "max_tokens": cfg.JudgeMaxTokens}
 	for n := loop; ctx.Err() == nil; n++ {
 		payload, err := json.Marshal(requests[n%len(requests)])
@@ -657,6 +662,12 @@ type metricsSampler struct {
 	finished      chan struct{}
 }
 
+// callerClient is the caller's model client with the same key and
+// dialect the worker uses (ADR-033).
+func callerClient(cfg config.Worker) *llm.Client {
+	return llm.NewClientWith(cfg.CallerLLMURL, llm.Options{APIKey: cfg.CallerLLMAPIKey, Dialect: cfg.LLMDialect})
+}
+
 func startMetricsSampler(url string) *metricsSampler {
 	s := &metricsSampler{done: make(chan struct{}), finished: make(chan struct{})}
 	go func() {
@@ -679,6 +690,9 @@ func startMetricsSampler(url string) *metricsSampler {
 }
 
 func (s *metricsSampler) sample(url string) {
+	if url == "" {
+		return
+	}
 	values, err := fetchLlamaMetrics(url)
 	if err != nil {
 		return

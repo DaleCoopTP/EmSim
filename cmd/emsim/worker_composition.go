@@ -442,7 +442,7 @@ func judgeConfigFor(processConfig config.Worker) *assessment.JudgeConfig {
 	return &assessment.JudgeConfig{
 		Model:      processConfig.JudgeLLMModel,
 		Parameters: map[string]any{"temperature": 0, "max_tokens": processConfig.JudgeMaxTokens},
-		Registry:   assessment.SemanticJudgeRegistry{descjudge.PromptVersion: descjudge.Handler{Chat: llm.NewClient(processConfig.JudgeLLMURL)}},
+		Registry:   assessment.SemanticJudgeRegistry{descjudge.PromptVersion: descjudge.Handler{Chat: llm.NewClientWith(processConfig.JudgeLLMURL, llm.Options{APIKey: processConfig.JudgeLLMAPIKey, Dialect: processConfig.LLMDialect})}},
 		Timeout:    processConfig.JudgeTimeout,
 	}
 }
@@ -532,7 +532,7 @@ func composePools(
 	var callerWarm func(context.Context, operator112.CallerReplyRequest) error
 	if processConfig.CallerReplier == config.CallerReplierLLM {
 		aiReplier := aicaller.Replier{
-			Chat: llm.NewClient(processConfig.CallerLLMURL), Model: processConfig.CallerLLMModel,
+			Chat: llm.NewClientWith(processConfig.CallerLLMURL, llm.Options{APIKey: processConfig.CallerLLMAPIKey, Dialect: processConfig.LLMDialect}), Model: processConfig.CallerLLMModel,
 			Temperature: processConfig.CallerTemperature, TopP: processConfig.CallerTopP,
 			RepeatPenalty: processConfig.CallerRepeatPenalty, MaxTokens: processConfig.CallerMaxTokens,
 			Stub: stubReplier,

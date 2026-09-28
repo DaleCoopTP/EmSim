@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	llmclient "emsim/internal/platform/llm"
 	"emsim/internal/platform/tasks"
 )
 
@@ -137,7 +138,17 @@ type Worker struct {
 	JudgeTimeout time.Duration
 	// JudgeMaxTokens is descjudge's own num_predict/max_tokens — see the
 	// defaultJudgeMaxTokens doc comment for why 1024 is the default.
-	JudgeMaxTokens  int
+	JudgeMaxTokens int
+	// CallerLLMAPIKey/JudgeLLMAPIKey (ADR-033) authenticate a remote
+	// OpenAI-compatible model as "Authorization: Bearer"; empty for the
+	// bundled llama-server. CALLER_LLM_API_KEY/JUDGE_LLM_API_KEY, each
+	// falling back to the shared LLM_API_KEY. Never logged.
+	CallerLLMAPIKey string
+	JudgeLLMAPIKey  string
+	// LLMDialect (ADR-033, LLM_DIALECT) is llmclient.DialectLlama (default:
+	// llama-server, Ollama) or llm.DialectOpenAI (a strict remote API,
+	// sent only standard request fields). Shared by caller and judge.
+	LLMDialect      llmclient.Dialect
 	LocalTestPolicy string
 }
 
@@ -217,6 +228,11 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 	if err != nil {
 		return Worker{}, ErrInvalidWorkerConfiguration
 	}
+	sharedAPIKey := strings.TrimSpace(lookup("LLM_API_KEY"))
+	llmDialect := llmclient.Dialect(strings.TrimSpace(lookup("LLM_DIALECT")))
+	if llmDialect == "" {
+		llmDialect = llmclient.DialectLlama
+	}
 	config := Worker{
 		DatabaseURL: strings.TrimSpace(lookup("DATABASE_URL")), Role: role,
 		WorkerID: strings.TrimSpace(lookup("WORKER_ID")), PollInterval: poll, DrainTimeout: drain,
@@ -231,12 +247,24 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 		AssessmentJudge:    assessmentJudge, JudgeLLMURL: strings.TrimSpace(lookup("JUDGE_LLM_URL")),
 		JudgeLLMModel: strings.TrimSpace(lookup("JUDGE_LLM_MODEL")),
 		JudgeTimeout:  judgeTimeout, JudgeMaxTokens: judgeMaxTokens,
+		CallerLLMAPIKey: firstNonEmpty(strings.TrimSpace(lookup("CALLER_LLM_API_KEY")), sharedAPIKey),
+		JudgeLLMAPIKey:  firstNonEmpty(strings.TrimSpace(lookup("JUDGE_LLM_API_KEY")), sharedAPIKey),
+		LLMDialect:      llmDialect,
 		LocalTestPolicy: strings.TrimSpace(lookup("WORKER_LOCAL_TEST_POLICY")),
 	}
 	if err := config.Validate(); err != nil {
 		return Worker{}, err
 	}
 	return config, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func parseFloatOrDefault(raw string, fallback float64) (float64, error) {
@@ -293,6 +321,9 @@ func (c Worker) Validate() error {
 	}
 	if c.JudgeTimeout <= 0 || c.JudgeMaxTokens < 1 {
 		return ErrInvalidWorkerConfiguration
+	}
+	if !llmclient.ValidDialect(c.LLMDialect) {
+		return fmt.Errorf("%w: LLM_DIALECT must be llama or openai", ErrInvalidWorkerConfiguration)
 	}
 	return nil
 }

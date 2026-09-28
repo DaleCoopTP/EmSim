@@ -83,14 +83,44 @@ type Timings struct {
 	CachedTokens int `json:"cache_n"`
 }
 
+// Dialect names the flavor of OpenAI-compatible server a Client talks
+// to (ADR-033). DialectLlama (the default, also for an empty value) is
+// llama-server and Ollama, which accept llama.cpp's own request
+// extensions; DialectOpenAI is a strict OpenAI-compatible remote API,
+// which is sent only standard fields.
+type Dialect string
+
+const (
+	DialectLlama  Dialect = "llama"
+	DialectOpenAI Dialect = "openai"
+)
+
+// ValidDialect reports whether d is a known dialect; empty means
+// DialectLlama.
+func ValidDialect(d Dialect) bool {
+	return d == "" || d == DialectLlama || d == DialectOpenAI
+}
+
 // Client calls one OpenAI-compatible /v1/chat/completions endpoint.
 // BaseURL carries no trailing slash requirement; Complete appends
 // "/chat/completions" itself, so BaseURL is exactly what
 // CALLER_LLM_URL/config.Worker.CallerLLMURL documents (e.g.
 // "http://host.docker.internal:11434/v1").
+//
+// APIKey (ADR-033), when set, is sent as "Authorization: Bearer" — for a
+// remote model behind a key; the bundled llama-server needs none. It is
+// never logged and never part of a returned error.
 type Client struct {
 	BaseURL    string
+	APIKey     string
+	Dialect    Dialect
 	HTTPClient *http.Client
+}
+
+// Options are NewClientWith's optional settings (ADR-033).
+type Options struct {
+	APIKey  string
+	Dialect Dialect
 }
 
 // NewClient returns a Client with a plain *http.Client — no implicit
@@ -99,7 +129,12 @@ type Client struct {
 // every other worker-side external call in this codebase already
 // follows.
 func NewClient(baseURL string) *Client {
-	return &Client{BaseURL: baseURL, HTTPClient: &http.Client{}}
+	return NewClientWith(baseURL, Options{})
+}
+
+// NewClientWith is NewClient with an API key and/or dialect.
+func NewClientWith(baseURL string, options Options) *Client {
+	return &Client{BaseURL: baseURL, APIKey: options.APIKey, Dialect: options.Dialect, HTTPClient: &http.Client{}}
 }
 
 // Complete sends req to POST {BaseURL}/chat/completions and returns its
@@ -111,6 +146,11 @@ func NewClient(baseURL string) *Client {
 // response body.
 func (c *Client) Complete(ctx context.Context, req Request) (Result, error) {
 	req.Stream = false
+	if c.Dialect == DialectOpenAI {
+		// llama.cpp's own extension; a strict OpenAI-compatible API
+		// may reject an unknown field.
+		req.RepeatPenalty = 0
+	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return Result{}, fmt.Errorf("llm: encode request: %w", err)
@@ -120,6 +160,9 @@ func (c *Client) Complete(ctx context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("llm: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
 	httpClient := c.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient

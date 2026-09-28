@@ -171,3 +171,61 @@ func TestClientCompleteSendsZeroTemperature(t *testing.T) {
 		t.Fatalf("temperature = %v, want 0", temperature)
 	}
 }
+
+// TestClientCompleteSendsBearerKeyAndOpenAIDialect (ADR-033): a remote
+// model gets the key as a Bearer header, and the strict OpenAI dialect
+// drops llama.cpp's own repeat_penalty; the bundled llama-server gets
+// neither a header nor a changed body.
+func TestClientCompleteSendsBearerKeyAndOpenAIDialect(t *testing.T) {
+	var gotAuth string
+	var raw map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		raw = nil
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Да."},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+	req := Request{Model: "m", Messages: []Message{{Role: "user", Content: "?"}}, RepeatPenalty: 1.1}
+
+	remote := NewClientWith(server.URL, Options{APIKey: "sk-test-secret", Dialect: DialectOpenAI})
+	if _, err := remote.Complete(context.Background(), req); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if gotAuth != "Bearer sk-test-secret" {
+		t.Fatalf("Authorization = %q", gotAuth)
+	}
+	if _, ok := raw["repeat_penalty"]; ok {
+		t.Fatalf("openai dialect must not send repeat_penalty: %v", raw)
+	}
+
+	local := NewClient(server.URL)
+	if _, err := local.Complete(context.Background(), req); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if gotAuth != "" {
+		t.Fatalf("local client must not send Authorization, got %q", gotAuth)
+	}
+	if raw["repeat_penalty"] != 1.1 {
+		t.Fatalf("llama dialect must keep repeat_penalty: %v", raw)
+	}
+}
+
+// TestClientCompleteErrorNeverCarriesAPIKey: a rejected key surfaces as
+// a status-only error, with neither the key nor the response body in it.
+func TestClientCompleteErrorNeverCarriesAPIKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid key sk-test-secret"}`))
+	}))
+	defer server.Close()
+	_, err := NewClientWith(server.URL, Options{APIKey: "sk-test-secret"}).Complete(context.Background(), Request{Model: "m"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if strings.Contains(err.Error(), "sk-test-secret") || !strings.Contains(err.Error(), "401") {
+		t.Fatalf("unexpected error text: %q", err.Error())
+	}
+}
