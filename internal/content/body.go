@@ -468,10 +468,15 @@ type Reference struct {
 	ExpectedChain    []Reaction        `json:"expected_chain"`
 	Call             Call              `json:"call"`
 	FieldCorrections []FieldCorrection `json:"field_corrections"`
-	PilotGoal        string            `json:"pilot_goal"`
-	GuideRefs        []string          `json:"guide_refs"`
-	Notes            string            `json:"notes"`
-	Scoring          *Scoring          `json:"scoring"`
+	// RequiredContacts is ДДС-3/ADR-032's own C_CALLS input: contact.key
+	// values that need a completed outgoing call regardless of Call
+	// (e.g. отдел контроля 112 when the scenario calls for it) —
+	// on top of, not instead of, Call.Required's own contact.
+	RequiredContacts []string `json:"required_contacts,omitempty"`
+	PilotGoal        string   `json:"pilot_goal"`
+	GuideRefs        []string `json:"guide_refs"`
+	Notes            string   `json:"notes"`
+	Scoring          *Scoring `json:"scoring"`
 }
 
 type PrimaryDecision struct {

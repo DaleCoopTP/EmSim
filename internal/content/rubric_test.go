@@ -2,17 +2,25 @@ package content
 
 import "testing"
 
-func TestRubricVersionForDDS(t *testing.T) {
+// TestRubricVersionForDDSIsV2 is ДДС-3/ADR-032: a newly created DDS
+// lesson must freeze dds/rubric-v2 (T_PROGRESS/S_SEQUENCE/C_CALLS), not
+// the pre-ADR-030 dds/rubric-v1 RubricVersion() still reads — that would
+// silently keep scoring a card-editing/call-log workflow the trainee no
+// longer performs.
+func TestRubricVersionForDDSIsV2(t *testing.T) {
 	got, err := RubricVersionFor(ExerciseTypeDDSProcessing)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := RubricVersion()
+	if got != "dds/rubric-v2" {
+		t.Fatalf("RubricVersionFor(dds_processing) = %q, want dds/rubric-v2", got)
+	}
+	legacy, err := RubricVersion()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
-		t.Fatalf("RubricVersionFor(dds) = %q, want %q (RubricVersion's own value)", got, want)
+	if legacy != "dds/rubric-v1" {
+		t.Fatalf("RubricVersion() = %q, want dds/rubric-v1 (rubric.default.json stays frozen for old lessons)", legacy)
 	}
 }
 

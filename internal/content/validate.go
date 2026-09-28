@@ -74,6 +74,9 @@ func Validate(body Body, catalog Catalog) error {
 	if err := validateCall(body.Reference.Call, contactKeys); err != nil {
 		return err
 	}
+	if err := validateRequiredContacts(body.Reference.RequiredContacts, contactKeys); err != nil {
+		return err
+	}
 	if err := validateWorkflowConsistency(body.Reference, target.Workflow); err != nil {
 		return err
 	}
@@ -740,6 +743,19 @@ func validateCall(call Call, contactKeys map[string]bool) error {
 	}
 	if call.To == "" || !contactKeys[call.To] {
 		return invalid("reference.call.to", "unknown_contact")
+	}
+	return nil
+}
+
+// validateRequiredContacts is ДДС-3/ADR-032: every reference.
+// required_contacts entry must name a contact the scenario actually
+// defines — the same rule validateCall already applies to reference.
+// call.to.
+func validateRequiredContacts(requiredContacts []string, contactKeys map[string]bool) error {
+	for i, key := range requiredContacts {
+		if key == "" || !contactKeys[key] {
+			return invalid(fmt.Sprintf("reference.required_contacts[%d]", i), "unknown_contact")
+		}
 	}
 	return nil
 }

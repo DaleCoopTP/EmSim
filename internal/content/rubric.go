@@ -8,15 +8,30 @@ import (
 	"emsim/design-docs/contracts"
 )
 
-// rubricCriterionIDs is the set of criterion ids rubric.default.json
-// defines (design-docs/contracts/rubric.default.json, ADR-013) — loaded
-// once from the same embedded contracts scenario.schema.json/
-// scenario-file.schema.json ride along in (contracts.Files). Validate
-// checks a scenario's reference.scoring overrides against this set: a
-// case may only re-weight, mark critical, or disable a criterion the
-// default rubric actually has.
+// rubricCriterionIDs is the union of criterion ids dds_processing's two
+// rubric versions define — rubric.default.json (dds/rubric-v1) and
+// rubric.dds.v2.json (dds/rubric-v2, ДДС-3/ADR-032) — loaded once from
+// the same embedded contracts scenario.schema.json/scenario-file.
+// schema.json ride along in (contracts.Files). Validate checks a
+// scenario's reference.scoring overrides against this set: a case may
+// only re-weight, mark critical, or disable a criterion at least one DDS
+// rubric version actually has, the same rule operator112RubricCriterionIDs
+// follows below — a scenario's own reference.scoring is authored once
+// and must stay valid regardless of which rubric version a future
+// lesson freezes for it (a v1-only id like G_ADDRESS stays valid to
+// disable even after v2 drops it).
 var rubricCriterionIDs = sync.OnceValues(func() (map[string]bool, error) {
-	return loadRubricCriterionIDs("rubric.default.json")
+	ids := make(map[string]bool)
+	for _, filename := range []string{"rubric.default.json", "rubric.dds.v2.json"} {
+		fileIDs, err := loadRubricCriterionIDs(filename)
+		if err != nil {
+			return nil, err
+		}
+		for id := range fileIDs {
+			ids[id] = true
+		}
+	}
+	return ids, nil
 })
 
 // operator112RubricCriterionIDs is rubricCriterionIDs' own counterpart for
@@ -79,13 +94,16 @@ func RubricVersion() (string, error) {
 // exercise_type (112-6/ADR-026's c4): operator112_intake's *current*
 // rubric version (today "operator112/rubric-v2") is what a newly
 // created 112 lesson freezes into lessons.rubric_version, exactly the
-// way DDS's own lesson creation already freezes RubricVersion(). An
-// existing lesson's own frozen version is never re-derived from this —
-// only a new lesson's creation ever calls it.
+// way DDS's own lesson creation already freezes RubricVersion() — which
+// now reads rubric.dds.v2.json (ДДС-3/ADR-032; RubricVersion() itself
+// keeps reading rubric.default.json for its own doc'd purpose, kept for
+// parity with older callers/tests). An existing lesson's own frozen
+// version is never re-derived from this — only a new lesson's creation
+// ever calls it.
 func RubricVersionFor(exerciseType ExerciseType) (string, error) {
 	switch exerciseType {
 	case ExerciseTypeDDSProcessing:
-		return readRubricVersion("rubric.default.json")
+		return readRubricVersion("rubric.dds.v2.json")
 	case ExerciseTypeOperator112Intake:
 		return readRubricVersion("rubric.operator112.json")
 	}

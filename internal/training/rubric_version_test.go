@@ -15,6 +15,12 @@ func TestRubricVersionForNewLessonDDSIgnoresJudgeFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// ДДС-3/ADR-032: a newly created DDS lesson freezes dds/rubric-v2,
+	// not the pre-ADR-030 dds/rubric-v1 an already-running lesson may
+	// still carry.
+	if want != "dds/rubric-v2" {
+		t.Fatalf("content.RubricVersionFor(dds_processing) = %q, want dds/rubric-v2", want)
+	}
 	for _, judgeEnabled := range []bool{false, true} {
 		got, err := rubricVersionForNewLesson(content.ExerciseTypeDDSProcessing, judgeEnabled)
 		if err != nil {
