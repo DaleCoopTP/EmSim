@@ -7,6 +7,7 @@ import (
 
 	"emsim/design-docs/contracts"
 	"emsim/internal/content"
+	"emsim/internal/training"
 )
 
 // Rubric is rubric.schema.json's own shape — the type contracts/
@@ -207,4 +208,67 @@ func Merge(base Rubric, scoring *content.Scoring) Rubric {
 		merged.Criteria = append(merged.Criteria, c)
 	}
 	return merged
+}
+
+// MergeLesson is Merge with ДДС-6/ADR-035's lesson layer between the base
+// rubric and the scenario's reference.scoring: a lesson's own weights and
+// pass threshold replace the rubric's, and from the scenario only
+// disabled/critical still apply — its weights apply only when the lesson
+// has none of its own. A nil lesson scoring is exactly Merge.
+func MergeLesson(base Rubric, lesson *training.LessonScoring, scenario *content.Scoring) Rubric {
+	if lesson == nil {
+		return Merge(base, scenario)
+	}
+	var withoutWeights *content.Scoring
+	if scenario != nil {
+		c := *scenario
+		c.Weights = nil
+		withoutWeights = &c
+	}
+	merged := Merge(base, withoutWeights)
+	merged.PassThreshold = lesson.PassThreshold
+	for i, c := range merged.Criteria {
+		if w, ok := lesson.Weights[c.ID]; ok {
+			merged.Criteria[i].Weight = w
+		}
+	}
+	return merged
+}
+
+// LessonRubricCriterion is one row of a lesson's rubric view.
+type LessonRubricCriterion struct {
+	ID            string
+	Title         string
+	Kind          string
+	Weight        float64
+	DefaultWeight float64
+	Critical      bool
+}
+
+// LessonRubricView is GET /lessons/{id}/rubric's read model: the lesson's
+// frozen rubric version with the lesson's own weights and threshold laid
+// over it, next to the version's own defaults for a "reset" control.
+type LessonRubricView struct {
+	RubricVersion        string
+	PassThreshold        float64
+	DefaultPassThreshold float64
+	Criteria             []LessonRubricCriterion
+}
+
+// LessonRubric builds a lesson's rubric view from its frozen rubric_version
+// and its own scoring; it reads only the lesson, never a scenario.
+func LessonRubric(lesson training.Lesson) (LessonRubricView, error) {
+	base, err := LoadRubric(lesson.ExerciseType, lesson.RubricVersion)
+	if err != nil {
+		return LessonRubricView{}, err
+	}
+	effective := MergeLesson(base, lesson.Scoring, nil)
+	view := LessonRubricView{
+		RubricVersion: lesson.RubricVersion, PassThreshold: effective.PassThreshold,
+		DefaultPassThreshold: base.PassThreshold, Criteria: make([]LessonRubricCriterion, len(effective.Criteria)),
+	}
+	for i, c := range effective.Criteria {
+		view.Criteria[i] = LessonRubricCriterion{ID: c.ID, Title: c.Title, Kind: c.Kind, Weight: c.Weight, DefaultWeight: base.Criteria[i].Weight, Critical: c.Critical}
+	}
+	return view, nil
 }

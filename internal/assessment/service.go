@@ -129,7 +129,8 @@ func (s *Service) SealAndPromote(ctx context.Context, tx pgx.Tx, task tasks.Wait
 // error — so SealAndPromote's caller still commits that terminal write
 // instead of rolling it back.
 func (s *Service) sealInputForItem(ctx context.Context, tx pgx.Tx, taskID, itemID uuid.UUID, payload evaluatePayload, workerID string) (uuid.UUID, error) {
-	if _, err := s.items.ItemByID(ctx, tx, itemID, training.LockUpdate); err != nil {
+	item, err := s.items.ItemByID(ctx, tx, itemID, training.LockUpdate)
+	if err != nil {
 		return uuid.Nil, err
 	}
 	evidenceBody, evidenceDigest, err := s.evidence.EvidenceByItem(ctx, tx, itemID)
@@ -154,7 +155,11 @@ func (s *Service) sealInputForItem(ctx context.Context, tx pgx.Tx, taskID, itemI
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("assessment: load rubric %s/%s: %w", evidenceBody.ExerciseType, payload.RubricVersion, err)
 	}
-	effective := Merge(base, ScoringFor(version.Body))
+	lesson, err := s.lessons.LessonByID(ctx, tx, item.LessonID, training.LockNone)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	effective := MergeLesson(base, lesson.Scoring, ScoringFor(version.Body))
 	evidenceDoc, _, err := s.evidence.EvidenceDocumentByItem(ctx, tx, itemID)
 	if err != nil {
 		return uuid.Nil, err
@@ -515,7 +520,7 @@ func (s *Service) CreateExpertRevision(ctx context.Context, itemID, createdBy uu
 			if err != nil {
 				return fmt.Errorf("assessment: load rubric %s/%s: %w", evidenceBody.ExerciseType, lesson.RubricVersion, err)
 			}
-			effective = Merge(base, ScoringFor(version.Body))
+			effective = MergeLesson(base, lesson.Scoring, ScoringFor(version.Body))
 		}
 
 		expectedBase := 0
@@ -672,7 +677,7 @@ func (s *Service) Get(ctx context.Context, itemID uuid.UUID) (Detail, error) {
 			if err != nil {
 				return err
 			}
-			effective = Merge(base, ScoringFor(version.Body))
+			effective = MergeLesson(base, lesson.Scoring, ScoringFor(version.Body))
 		}
 		if summary, err := s.tasks.ByDedupKey(ctx, tx, training.EvaluateDedupKey(itemID)); err == nil {
 			status := string(summary.Status)

@@ -52,6 +52,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 		return authhttp.SessionMiddleware(h.auth, h.cookieSecure)(authhttp.RequireRole(auth.GroupAssessment)(handler))
 	}
 	mux.Handle("GET /api/v1/lessons/{lessonId}/assessments", guard(h.list))
+	mux.Handle("GET /api/v1/lessons/{lessonId}/rubric", guard(h.lessonRubric))
 	mux.Handle("GET /api/v1/items/{itemId}/assessment", guard(h.get))
 	mux.Handle("POST /api/v1/items/{itemId}/assessment/revisions", guard(h.createRevision))
 }
@@ -92,6 +93,49 @@ func (h *Handlers) list(w http.ResponseWriter, r *http.Request) {
 	out := make([]lessonRowJSON, len(rows))
 	for i := range rows {
 		out[i] = toLessonRowJSON(rows[i])
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type lessonRubricCriterionJSON struct {
+	ID            string  `json:"id"`
+	Title         string  `json:"title"`
+	Kind          string  `json:"kind"`
+	Weight        float64 `json:"weight"`
+	DefaultWeight float64 `json:"default_weight"`
+	Critical      bool    `json:"critical"`
+}
+
+type lessonRubricJSON struct {
+	RubricVersion        string                      `json:"rubric_version"`
+	PassThreshold        float64                     `json:"pass_threshold"`
+	DefaultPassThreshold float64                     `json:"default_pass_threshold"`
+	Criteria             []lessonRubricCriterionJSON `json:"criteria"`
+}
+
+// lessonRubric is ДДС-6/ADR-035's GET /lessons/{id}/rubric: the lesson's
+// frozen rubric with its own weights and threshold laid over it, for the
+// instructor's weights editor. Ownership is training's own Lesson check.
+func (h *Handlers) lessonRubric(w http.ResponseWriter, r *http.Request) {
+	lessonID, ok := parseID(w, r, "lessonId", "lesson")
+	if !ok {
+		return
+	}
+	principal, _ := authhttp.PrincipalFromContext(r.Context())
+	lesson, _, err := h.training.Lesson(r.Context(), principal, lessonID)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	view, err := assessment.LessonRubric(lesson)
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to load the lesson rubric", nil)
+		return
+	}
+	out := lessonRubricJSON{RubricVersion: view.RubricVersion, PassThreshold: view.PassThreshold,
+		DefaultPassThreshold: view.DefaultPassThreshold, Criteria: make([]lessonRubricCriterionJSON, len(view.Criteria))}
+	for i, c := range view.Criteria {
+		out.Criteria[i] = lessonRubricCriterionJSON{ID: c.ID, Title: c.Title, Kind: c.Kind, Weight: c.Weight, DefaultWeight: c.DefaultWeight, Critical: c.Critical}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

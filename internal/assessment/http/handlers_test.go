@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,13 +31,14 @@ func (f fakeAuth) Authenticate(_ context.Context, token string) (auth.Principal,
 type fakeTraining struct {
 	itemErr   error
 	lessonErr error
+	lesson    training.Lesson
 }
 
 func (f fakeTraining) ItemForInstructor(context.Context, auth.Principal, uuid.UUID) (training.Item, []training.Action, []training.DeliveredEvent, content.Body, error) {
 	return training.Item{}, nil, nil, content.Body{}, f.itemErr
 }
 func (f fakeTraining) Lesson(context.Context, auth.Principal, uuid.UUID) (training.Lesson, []training.Assignment, error) {
-	return training.Lesson{}, nil, f.lessonErr
+	return f.lesson, nil, f.lessonErr
 }
 
 type fakeAssessment struct {
@@ -85,7 +87,7 @@ func requireCode(t *testing.T, w *httptest.ResponseRecorder, status int, code st
 
 func TestAssessmentRoutesRequireInstructor(t *testing.T) {
 	id := uuid.New().String()
-	routes := []struct{ method, path string }{{"GET", "/api/v1/lessons/" + id + "/assessments"}, {"GET", "/api/v1/items/" + id + "/assessment"}, {"POST", "/api/v1/items/" + id + "/assessment/revisions"}}
+	routes := []struct{ method, path string }{{"GET", "/api/v1/lessons/" + id + "/assessments"}, {"GET", "/api/v1/lessons/" + id + "/rubric"}, {"GET", "/api/v1/items/" + id + "/assessment"}, {"POST", "/api/v1/items/" + id + "/assessment/revisions"}}
 	for _, route := range routes {
 		w := httptest.NewRecorder()
 		assessmentMux(&fakeAssessment{}, fakeTraining{}, auth.RoleInstructor).ServeHTTP(w, assessmentRequest(route.method, route.path, "{}", false))
@@ -111,6 +113,56 @@ func TestAssessmentOwnershipAndClosedStateAreNotFound(t *testing.T) {
 			assessmentMux(&fakeAssessment{getErr: tc.assessmentErr}, fakeTraining{itemErr: tc.trainingErr, lessonErr: tc.trainingErr}, auth.RoleInstructor).ServeHTTP(w, assessmentRequest("GET", tc.path, "", true))
 			requireCode(t, w, 404, "not_found")
 		})
+	}
+}
+
+func TestLessonRubricAppliesLessonScoring(t *testing.T) {
+	base, err := assessment.LoadRubric(content.ExerciseTypeDDSProcessing, "dds/rubric-v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	weights := map[string]float64{}
+	for _, c := range base.Criteria {
+		weights[c.ID] = 0
+	}
+	weights["D_PRIMARY"] = 100
+	lesson := training.Lesson{ID: uuid.New(), ExerciseType: content.ExerciseTypeDDSProcessing, RubricVersion: "dds/rubric-v2",
+		Scoring: &training.LessonScoring{Weights: weights, PassThreshold: 85}}
+	w := httptest.NewRecorder()
+	assessmentMux(&fakeAssessment{}, fakeTraining{lesson: lesson}, auth.RoleInstructor).ServeHTTP(w, assessmentRequest("GET", "/api/v1/lessons/"+lesson.ID.String()+"/rubric", "", true))
+	requireCode(t, w, 200, "")
+	var got lessonRubricJSON
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.RubricVersion != "dds/rubric-v2" || got.PassThreshold != 85 || got.DefaultPassThreshold != base.PassThreshold || len(got.Criteria) != len(base.Criteria) {
+		t.Fatalf("unexpected rubric view: %+v", got)
+	}
+	for i, c := range got.Criteria {
+		wantWeight := 0.0
+		if c.ID == "D_PRIMARY" {
+			wantWeight = 100
+		}
+		if c.Weight != wantWeight || c.DefaultWeight != base.Criteria[i].Weight || c.Title == "" {
+			t.Fatalf("criterion %s: %+v (default weight should be %v)", c.ID, c, base.Criteria[i].Weight)
+		}
+	}
+
+	// A lesson without its own scoring shows the rubric's own values.
+	lesson.Scoring = nil
+	w = httptest.NewRecorder()
+	assessmentMux(&fakeAssessment{}, fakeTraining{lesson: lesson}, auth.RoleInstructor).ServeHTTP(w, assessmentRequest("GET", "/api/v1/lessons/"+lesson.ID.String()+"/rubric", "", true))
+	got = lessonRubricJSON{}
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.PassThreshold != base.PassThreshold {
+		t.Fatalf("threshold=%v want rubric default %v", got.PassThreshold, base.PassThreshold)
+	}
+	for i, c := range got.Criteria {
+		if c.Weight != c.DefaultWeight || c.Weight != base.Criteria[i].Weight {
+			t.Fatalf("criterion %s not at its default: %+v", c.ID, c)
+		}
 	}
 }
 
