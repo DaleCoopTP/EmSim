@@ -4,6 +4,7 @@
   "version": 1,
   "title": "Полный кейс: запах газа рядом с ДТП",
   "origin": "manual",
+  "archived": true,
   "body": {
     "schema": "emsim/scenario/v1",
     "exercise_type": "operator112_intake",

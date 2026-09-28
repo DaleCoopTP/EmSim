@@ -4,6 +4,7 @@
   "version": 1,
   "title": "Взрыв газа и ДТП с пламенем",
   "origin": "manual",
+  "archived": true,
   "body": {
     "schema": "emsim/scenario/v1",
     "exercise_type": "operator112_intake",

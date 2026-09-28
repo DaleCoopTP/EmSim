@@ -42,7 +42,8 @@ test("operator 112: three card-only cases show profiles only after type selectio
 
   const instructorAPI = await apiRequest.newContext({ baseURL });
   await ok(await instructorAPI.post("/api/v1/auth/login", { data: { login: "e2e-112-profile-instructor", password } }));
-  const catalogue = await (await ok(await instructorAPI.get("/api/v1/scenarios?status=approved&exercise_type=operator112_intake&page=1&page_size=200"))).json();
+  const catalogue = await (await ok(await instructorAPI.get("/api/v1/scenarios?status=archived&exercise_type=operator112_intake&page=1&page_size=200"))).json();
+  const activeCatalogue = await (await ok(await instructorAPI.get("/api/v1/scenarios?status=approved&exercise_type=operator112_intake&page=1&page_size=200"))).json();
   const cases = [
     { key: "pilot-112-gas-explosion-01", type: "gas_explosion", name: "Взрыв газа", profiles: 1, services: 1 },
     { key: "pilot-112-road-traffic-fire-01", type: "road_traffic_fire", name: "ДТП с пламенем", profiles: 1, services: 2 },
@@ -50,6 +51,11 @@ test("operator 112: three card-only cases show profiles only after type selectio
   ];
   const scenarios = cases.map((entry) => catalogue.items.find((candidate: { source_key?: string }) => candidate.source_key === entry.key));
   for (const scenario of scenarios) expect(scenario).toBeTruthy();
+  const versionIds = await Promise.all(scenarios.map(async (scenario) =>
+    (await (await ok(await instructorAPI.get(`/api/v1/scenarios/${scenario.id}`))).json()).version_id as string));
+  const activeScenarios = ["pilot-112-ai-toyota-fire-01", "pilot-112-ai-car-in-water-01", "pilot-112-ai-mobile-shop-01"]
+    .map((key) => activeCatalogue.items.find((candidate: { source_key?: string }) => candidate.source_key === key));
+  for (const scenario of activeScenarios) expect(scenario).toBeTruthy();
 
   await page.goto(`${baseURL}/login`);
   await page.getByLabel("Логин").fill("e2e-112-profile-instructor");
@@ -68,12 +74,12 @@ test("operator 112: three card-only cases show profiles only after type selectio
     const row = rows.nth(index);
     await row.getByLabel("Рабочее место").selectOption(String(905 + index));
     await row.getByLabel("Обучаемый").selectOption(trainees[index].id);
-    await row.locator(".queue-editor select").selectOption(scenarios[index].id);
+    await row.locator(".queue-editor select").selectOption(activeScenarios[index].id);
     await row.getByRole("button", { name: "+ В очередь" }).click();
     if (index === 0) {
       await expect(row.locator(".queue-editor select")).not.toHaveValue("");
       await expect(row.getByRole("button", { name: "+ В очередь" })).toBeEnabled();
-      await row.locator(".queue-editor select").selectOption(scenarios[1].id);
+      await row.locator(".queue-editor select").selectOption(activeScenarios[1].id);
       await row.getByRole("button", { name: "+ В очередь" }).click();
       await expect(row.locator(".queue-editor li")).toHaveCount(2);
     }
@@ -81,12 +87,19 @@ test("operator 112: three card-only cases show profiles only after type selectio
   await page.getByRole("button", { name: "Сохранить назначения" }).click();
   await expect(page.getByText("Назначения сохранены.")).toBeVisible();
   await expect(rows.first().getByText(/Сохранено кейсов: 2/)).toBeVisible();
-  await rows.first().locator(".queue-editor select").selectOption(scenarios[2].id);
+  await rows.first().locator(".queue-editor select").selectOption(activeScenarios[2].id);
   await rows.first().getByRole("button", { name: "+ В очередь" }).click();
   await page.getByRole("button", { name: "Сохранить назначения" }).click();
   await expect(rows.first().getByText(/Сохранено кейсов: 3/)).toBeVisible();
   const savedAssignments = await (await ok(await instructorAPI.get(`/api/v1/lessons/${new URL(page.url()).pathname.split("/").at(-1)}`))).json();
   expect(savedAssignments.assignments[0].scenario_version_ids).toHaveLength(3);
+  // The selector exercise above uses active AI cases; replace them with
+  // archived card-only fixtures so this test still covers profile behavior.
+  const lessonId = new URL(page.url()).pathname.split("/").at(-1)!;
+  await ok(await page.request.put(`/api/v1/lessons/${lessonId}/assignments`, { data: trainees.map((trainee, index) => ({
+    workstation_no: 905 + index, user_id: trainee.id, scenario_version_ids: [versionIds[index]],
+  })) }));
+  await page.reload();
   await page.getByRole("button", { name: /Запустить занятие/ }).click();
   await expect(page.locator(".lesson-heading .status-badge")).toHaveText("Идёт");
   await page.getByRole("button", { name: "Выйти" }).click();

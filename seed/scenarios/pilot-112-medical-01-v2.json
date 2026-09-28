@@ -4,6 +4,7 @@
   "version": 2,
   "title": "Первый вызов 112 — обращение за медицинской помощью",
   "origin": "manual",
+  "archived": true,
   "body": {
     "schema": "emsim/scenario/v1",
     "exercise_type": "operator112_intake",

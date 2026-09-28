@@ -4,6 +4,7 @@
   "version": 1,
   "title": "112 — уточнение числа пострадавших",
   "origin": "manual",
+  "archived": true,
   "body": {
     "schema": "emsim/scenario/v1", "exercise_type": "operator112_intake", "difficulty": 1,
     "intake112": {

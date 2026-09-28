@@ -3433,3 +3433,15 @@ Validation: `go build`/`go vet -tags=integration ./test/integration/...`; `make 
 - `design-docs/contracts/check.py`'s JSON Schema и DDL проверки не выполнялись в этом окружении (нет `pip install jsonschema`, нет `DATABASE_URL`) — стоит перепроверить там, где они доступны.
 
 Next: ДДС-4 — ИИ-судья ДДС (`dds/rubric-v3` = v2 + `D_COMMENT_CONTENT` + `G_GRAMMAR`, паттерн ADR-028).
+
+## 2026-09-28 — Архив не-ИИ сценариев 112
+
+Status: completed. В девяти файлах восьми сценариев 112 без профиля ИИ-заявителя (`pilot-112-medical-01` v1/v2, `address`, `victims`, три `card_only`, подготовленный `full_case`, технический `free-text-chat`) выставлен `archived: true`. Тела и версии не менялись; после повторного импорта обычный каталог содержит только три сценария `pilot-112-ai-*` (по две версии). Старые занятия и регрессионные фикстуры сохраняются.
+
+Changed: `seed/scenarios/pilot-112-*.json` (только девять названных файлов), `test/integration/{content_import_test.go,api_process_test.go}`, `web/e2e/{operator112.spec.ts,operator112-profiles.spec.ts}`, `seed/README.md`, `README.md`, `LOG.MD`. Браузерные проверки старых режимов берут архивную утверждённую версию через API; проверка редактора очереди использует активные ИИ-сценарии.
+
+Validation: `make verify` (после разрешения локальных тестовых сокетов), `python3 design-docs/contracts/check.py`, `make verify-web`, `cd web && npm run lint` (только прежние предупреждения), `cd web && npx playwright test --list`, целевые интеграционные `TestContentImportSeedEndToEnd`, `TestAPIProcessContentCatalogAccess`, все `TestOperator112*` — прошли. Полный `make test-integration` не прошёл из-за текущих несовпадений ожиданий тестов ДДС с новой рубрикой v2 (например, `TestAssessmentPipelineThroughAPIAndWorker`), вне этого изменения. Браузерный e2e не запускался: локальный compose-стек не запущен.
+
+Risk/next: изменение статуса в уже развёрнутой БД применяется повторным `emsim import seed`; затем проверить браузерный e2e на запущенном стеке. Следующий содержательный шаг — заполнить эталоны трёх активных ИИ-кейсов и заменить заглушечные типы/службы там, где они не соответствуют ситуации.
+
+Note: запись выше зафиксирована до слияния c8/c9 ДДС-3 в эту ветку; `TestAssessmentPipelineThroughAPIAndWorker` и остальные несовпадения рубрики ДДС, упомянутые здесь, уже исправлены записью «ДДС-3: рубрика v2 завершена» выше.

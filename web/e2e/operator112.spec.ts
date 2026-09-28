@@ -38,9 +38,10 @@ test("operator 112: instructor assignment → incoming call → saved draft → 
 
   const instructorAPI = await apiRequest.newContext({ baseURL });
   await ok(await instructorAPI.post("/api/v1/auth/login", { data: { login: "e2e-112-instructor", password } }));
-  const catalogue = await (await ok(await instructorAPI.get("/api/v1/scenarios?status=approved&exercise_type=operator112_intake&page=1&page_size=20"))).json();
+  const catalogue = await (await ok(await instructorAPI.get("/api/v1/scenarios?status=archived&exercise_type=operator112_intake&page=1&page_size=20"))).json();
   const scenario = catalogue.items.find((candidate: { source_key?: string }) => candidate.source_key === "pilot-112-medical-01");
   expect(scenario).toBeTruthy();
+  const scenarioDetail = await (await ok(await instructorAPI.get(`/api/v1/scenarios/${scenario.id}`))).json();
   await instructorAPI.dispose();
 
   await page.goto(`${baseURL}/login`);
@@ -54,12 +55,12 @@ test("operator 112: instructor assignment → incoming call → saved draft → 
   await page.getByRole("button", { name: "Создать", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Первый вызов 112 E2E" })).toBeVisible();
   const lessonId = new URL(page.url()).pathname.split("/").at(-1)!;
-  await page.getByLabel("Рабочее место").selectOption("902");
-  await page.getByLabel("Обучаемый").selectOption(trainee.id);
-  await page.locator(".queue-editor select").selectOption(scenario.id);
-  await page.getByRole("button", { name: "+ В очередь" }).click();
-  await page.getByRole("button", { name: "Сохранить назначения" }).click();
-  await expect(page.getByText("Назначения сохранены.")).toBeVisible();
+  // Archived regression fixture is assignable by its approved version ID,
+  // while the instructor's normal queue selector shows only active cases.
+  await ok(await page.request.put(`/api/v1/lessons/${lessonId}/assignments`, { data: [{
+    workstation_no: 902, user_id: trainee.id, scenario_version_ids: [scenarioDetail.version_id],
+  }] }));
+  await page.reload();
   await page.getByRole("button", { name: /Запустить занятие/ }).click();
   await expect(page.locator(".lesson-heading .status-badge")).toHaveText("Идёт");
   await page.getByRole("button", { name: "Выйти" }).click();
@@ -218,7 +219,7 @@ test("operator 112: no contact and dropped call close without dispatch", async (
 
   const instructor = await apiRequest.newContext({ baseURL });
   await ok(await instructor.post("/api/v1/auth/login", { data: { login: "e2e-112-outcomes-instructor", password } }));
-  const catalogue = await (await ok(await instructor.get("/api/v1/scenarios?status=approved&exercise_type=operator112_intake&page=1&page_size=20"))).json();
+  const catalogue = await (await ok(await instructor.get("/api/v1/scenarios?status=archived&exercise_type=operator112_intake&page=1&page_size=20"))).json();
   const scenario = catalogue.items.find((candidate: { source_key?: string }) => candidate.source_key === "pilot-112-medical-01");
   expect(scenario).toBeTruthy();
   const scenarioDetail = await (await ok(await instructor.get(`/api/v1/scenarios/${scenario.id}`))).json();
@@ -273,9 +274,10 @@ test("operator 112: full case — call, questions, incident types, profile cards
 
   const instructorAPI = await apiRequest.newContext({ baseURL });
   await ok(await instructorAPI.post("/api/v1/auth/login", { data: { login: "e2e-112-full-case-instructor", password } }));
-  const catalogue = await (await ok(await instructorAPI.get("/api/v1/scenarios?status=approved&exercise_type=operator112_intake&page=1&page_size=200"))).json();
+  const catalogue = await (await ok(await instructorAPI.get("/api/v1/scenarios?status=archived&exercise_type=operator112_intake&page=1&page_size=200"))).json();
   const scenario = catalogue.items.find((candidate: { source_key?: string }) => candidate.source_key === "pilot-112-full-gas-road-traffic-fire-01");
   expect(scenario).toBeTruthy();
+  const scenarioDetail = await (await ok(await instructorAPI.get(`/api/v1/scenarios/${scenario.id}`))).json();
   await instructorAPI.dispose();
 
   await page.goto(`${baseURL}/login`);
@@ -288,12 +290,11 @@ test("operator 112: full case — call, questions, incident types, profile cards
   await page.getByLabel("Упражнение").selectOption("operator112_intake");
   await page.getByRole("button", { name: "Создать", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Полный кейс 112 E2E" })).toBeVisible();
-  await page.getByLabel("Рабочее место").selectOption("908");
-  await page.getByLabel("Обучаемый").selectOption(trainee.id);
-  await page.locator(".queue-editor select").selectOption(scenario.id);
-  await page.getByRole("button", { name: "+ В очередь" }).click();
-  await page.getByRole("button", { name: "Сохранить назначения" }).click();
-  await expect(page.getByText("Назначения сохранены.")).toBeVisible();
+  const lessonId = new URL(page.url()).pathname.split("/").at(-1)!;
+  await ok(await page.request.put(`/api/v1/lessons/${lessonId}/assignments`, { data: [{
+    workstation_no: 908, user_id: trainee.id, scenario_version_ids: [scenarioDetail.version_id],
+  }] }));
+  await page.reload();
   await page.getByRole("button", { name: /Запустить занятие/ }).click();
   await expect(page.locator(".lesson-heading .status-badge")).toHaveText("Идёт");
   await page.getByRole("button", { name: "Выйти" }).click();
@@ -409,9 +410,10 @@ test("operator 112: free-text caller chat — async stub replies, draft survives
 
   const instructorAPI = await apiRequest.newContext({ baseURL });
   await ok(await instructorAPI.post("/api/v1/auth/login", { data: { login: "e2e-112-chat-instructor", password } }));
-  const catalogue = await (await ok(await instructorAPI.get("/api/v1/scenarios?status=approved&exercise_type=operator112_intake&page=1&page_size=200"))).json();
+  const catalogue = await (await ok(await instructorAPI.get("/api/v1/scenarios?status=archived&exercise_type=operator112_intake&page=1&page_size=200"))).json();
   const scenario = catalogue.items.find((candidate: { source_key?: string }) => candidate.source_key === "pilot-112-free-text-chat-01");
   expect(scenario).toBeTruthy();
+  const scenarioDetail = await (await ok(await instructorAPI.get(`/api/v1/scenarios/${scenario.id}`))).json();
   await instructorAPI.dispose();
 
   await page.goto(`${baseURL}/login`);
@@ -425,12 +427,10 @@ test("operator 112: free-text caller chat — async stub replies, draft survives
   await page.getByRole("button", { name: "Создать", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Чат с заявителем 112 E2E" })).toBeVisible();
   const lessonId = new URL(page.url()).pathname.split("/").at(-1)!;
-  await page.getByLabel("Рабочее место").selectOption("909");
-  await page.getByLabel("Обучаемый").selectOption(trainee.id);
-  await page.locator(".queue-editor select").selectOption(scenario.id);
-  await page.getByRole("button", { name: "+ В очередь" }).click();
-  await page.getByRole("button", { name: "Сохранить назначения" }).click();
-  await expect(page.getByText("Назначения сохранены.")).toBeVisible();
+  await ok(await page.request.put(`/api/v1/lessons/${lessonId}/assignments`, { data: [{
+    workstation_no: 909, user_id: trainee.id, scenario_version_ids: [scenarioDetail.version_id],
+  }] }));
+  await page.reload();
   await page.getByRole("button", { name: /Запустить занятие/ }).click();
   await expect(page.locator(".lesson-heading .status-badge")).toHaveText("Идёт");
   await page.getByRole("button", { name: "Выйти" }).click();

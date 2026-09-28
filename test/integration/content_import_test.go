@@ -157,10 +157,10 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	// scenarios/21 versions. ADR-031 (ДДС-2) added a version 2 to each
 	// of those two and the pipe-burst scenario: 18 scenarios/24
 	// versions. The four slice 2–7 DDS pilots carry
-	// "archived": true, so the first import moves each of them from
-	// approved to archived.
-	if scenarioResult.NewScenarios != 18 || scenarioResult.NewVersions != 24 || scenarioResult.Unchanged != 0 || scenarioResult.StatusChanged != 4 {
-		t.Fatalf("ImportScenarios = %+v, want NewScenarios=18 NewVersions=24 Unchanged=0 StatusChanged=4", scenarioResult)
+	// "archived": true on the four DDS pilots and eight non-AI 112 cases
+	// hides them from the default catalogue without changing their versions.
+	if scenarioResult.NewScenarios != 18 || scenarioResult.NewVersions != 24 || scenarioResult.Unchanged != 0 || scenarioResult.StatusChanged != 12 {
+		t.Fatalf("ImportScenarios = %+v, want NewScenarios=18 NewVersions=24 Unchanged=0 StatusChanged=12", scenarioResult)
 	}
 	scenarioResult2, err := svc.ImportScenarios(ctx, openScenarioDir(t, "../../seed/scenarios"), actorID, actorRole, "req-6")
 	if err != nil {
@@ -175,24 +175,39 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListScenarios: %v", err)
 	}
-	if total != 14 || len(items) != 14 {
-		t.Fatalf("ListScenarios: total=%d len=%d, want 11 operator 112 and 3 DDS scenarios; the 4 archived DDS pilots are hidden (ADR-030)", total, len(items))
+	if total != 6 || len(items) != 6 {
+		t.Fatalf("ListScenarios: total=%d len=%d, want 3 AI-caller 112 and 3 DDS scenarios", total, len(items))
 	}
 	archivedItems, archivedTotal, err := svc.ListScenarios(ctx, content.ScenarioFilter{Status: "archived"})
-	if err != nil || archivedTotal != 4 || len(archivedItems) != 4 {
-		t.Fatalf("archived catalogue: items=%+v total=%d err=%v, want the 4 DDS pilots", archivedItems, archivedTotal, err)
+	if err != nil || archivedTotal != 12 || len(archivedItems) != 12 {
+		t.Fatalf("archived catalogue: items=%+v total=%d err=%v, want 4 DDS pilots and 8 non-AI 112 cases", archivedItems, archivedTotal, err)
 	}
 
 	var case02ID uuid.UUID
 	var intakeID uuid.UUID
+	archived112 := map[string]bool{
+		"pilot-112-medical-01":                    false,
+		"pilot-112-address-01":                    false,
+		"pilot-112-victims-01":                    false,
+		"pilot-112-gas-explosion-01":              false,
+		"pilot-112-road-traffic-fire-01":          false,
+		"pilot-112-gas-road-traffic-fire-01":      false,
+		"pilot-112-full-gas-road-traffic-fire-01": false,
+		"pilot-112-free-text-chat-01":             false,
+	}
+	active112 := map[string]bool{
+		"pilot-112-ai-toyota-fire-01":  false,
+		"pilot-112-ai-car-in-water-01": false,
+		"pilot-112-ai-mobile-shop-01":  false,
+	}
 	for _, it := range archivedItems {
 		if it.SourceKey != nil && *it.SourceKey == "pilot-tree-02" {
 			case02ID = it.ID
 		}
-	}
-	for _, it := range items {
-		if it.SourceKey != nil && *it.SourceKey == "pilot-tree-02" {
-			t.Fatalf("archived pilot-tree-02 listed in the default catalogue: %+v", it)
+		if it.SourceKey != nil {
+			if _, expected := archived112[*it.SourceKey]; expected {
+				archived112[*it.SourceKey] = true
+			}
 		}
 		if it.SourceKey != nil && *it.SourceKey == "pilot-112-medical-01" {
 			intakeID = it.ID
@@ -201,14 +216,34 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 			}
 		}
 	}
+	for _, it := range items {
+		if it.SourceKey != nil && (*it.SourceKey == "pilot-tree-02" || *it.SourceKey == "pilot-112-medical-01") {
+			t.Fatalf("archived scenario listed in the default catalogue: %+v", it)
+		}
+		if it.SourceKey != nil {
+			if _, expected := active112[*it.SourceKey]; expected {
+				active112[*it.SourceKey] = true
+			}
+		}
+	}
+	for key, found := range archived112 {
+		if !found {
+			t.Fatalf("%s missing from archived catalogue", key)
+		}
+	}
+	for key, found := range active112 {
+		if !found {
+			t.Fatalf("%s missing from active catalogue", key)
+		}
+	}
 	if case02ID == uuid.Nil {
 		t.Fatalf("pilot-tree-02 not found in the archived catalogue: %+v", archivedItems)
 	}
 	if intakeID == uuid.Nil {
-		t.Fatalf("pilot-112-medical-01 not found in ListScenarios: %+v", items)
+		t.Fatalf("pilot-112-medical-01 not found in archived ListScenarios: %+v", archivedItems)
 	}
 	intakeItems, intakeTotal, err := svc.ListScenarios(ctx, content.ScenarioFilter{ExerciseType: content.ExerciseTypeOperator112Intake})
-	if err != nil || intakeTotal != 11 || len(intakeItems) != 11 {
+	if err != nil || intakeTotal != 3 || len(intakeItems) != 3 {
 		t.Fatalf("112 catalogue filter: items=%+v total=%d err=%v", intakeItems, intakeTotal, err)
 	}
 	intakeDetail, err := svc.ScenarioDetail(ctx, intakeID)

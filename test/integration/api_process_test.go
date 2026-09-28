@@ -473,18 +473,17 @@ func TestAPIProcessContentCatalogAccess(t *testing.T) {
 		Total int `json:"total"`
 	}
 	response = jsonRequest(t, ctx, instructorClient, baseURL, http.MethodGet, "/api/v1/scenarios", nil, &scenarioList)
-	// The 112 intake fixtures (including 112-5b's three AI-caller
-	// scenarios) and the three DDS scenarios (ADR-030's two full-cycle
-	// ones and ДДС-2's pipe burst, ADR-031) make up the default catalogue;
+	// The three AI-caller 112 scenarios and three DDS scenarios make up
+	// the default catalogue;
 	// assert that the full offline seed loaded.
-	if response.StatusCode != http.StatusOK || scenarioList.Total != 14 || len(scenarioList.Items) != 14 {
+	if response.StatusCode != http.StatusOK || scenarioList.Total != 6 || len(scenarioList.Items) != 6 {
 		t.Fatalf("instructor GET /scenarios status = %d, body = %+v", response.StatusCode, scenarioList)
 	}
-	// The four slice 2–7 DDS pilots are archived (ADR-030): listed only
-	// under status=archived, and their preview still works.
+	// Four DDS pilots and eight non-AI 112 cases are archived: listed
+	// only under status=archived, and their preview still works.
 	scenarioList.Items = nil
 	response = jsonRequest(t, ctx, instructorClient, baseURL, http.MethodGet, "/api/v1/scenarios?status=archived", nil, &scenarioList)
-	if response.StatusCode != http.StatusOK || scenarioList.Total != 4 || len(scenarioList.Items) != 4 {
+	if response.StatusCode != http.StatusOK || scenarioList.Total != 12 || len(scenarioList.Items) != 12 {
 		t.Fatalf("instructor GET /scenarios?status=archived status = %d, body = %+v", response.StatusCode, scenarioList)
 	}
 
