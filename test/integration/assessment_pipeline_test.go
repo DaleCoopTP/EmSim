@@ -205,10 +205,12 @@ func mustAssessmentTaskRegistry(t *testing.T) *tasks.Registry {
 
 // TestAssessmentAutoPipelineEndToEnd covers plan item (a): close ->
 // waiting -> sealed input -> pending -> a single claimed worker handler
-// run produces auto rev=1, needs_review, score/passed NULL (JUDGE=off's
-// G_GRAMMAR criterion is unconditionally unavailable, so every slice 6
-// auto assessment is needs_review by construction) — and the recorded
-// criteria ids/statuses match the sealed input's own rule_results.
+// run produces auto rev=1. Under dds/rubric-v2 (ДДС-3, ADR-032) the pilot
+// fixture's applicable criteria (T_OPEN/T_PRIMARY/D_PRIMARY) are all met
+// and the rest not_applicable, so the auto is ready with a full score —
+// unlike dds/rubric-v1 where G_GRAMMAR was unconditionally unavailable
+// under JUDGE=off and forced needs_review by construction — and the
+// recorded criteria ids/statuses match the sealed input's own rule_results.
 func TestAssessmentAutoPipelineEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := openTestDatabase(t, ctx)
@@ -261,8 +263,8 @@ func TestAssessmentAutoPipelineEndToEnd(t *testing.T) {
 		t.Fatalf("assessments for item = %d rows, want exactly 1 auto", len(rows))
 	}
 	auto := rows[0]
-	if auto.Kind != "auto" || auto.Revision != 1 || auto.Status != "needs_review" || auto.Score != nil || auto.Passed != nil {
-		t.Fatalf("auto assessment = %+v, want kind=auto revision=1 status=needs_review score/passed=nil", auto)
+	if auto.Kind != "auto" || auto.Revision != 1 || auto.Status != "ready" || auto.Score == nil || *auto.Score != 100 || auto.Passed == nil || !*auto.Passed {
+		t.Fatalf("auto assessment = %+v, want kind=auto revision=1 status=ready score=100 passed=true", auto)
 	}
 	if auto.InputID == nil || *auto.InputID != inputID {
 		t.Fatalf("auto.input_id = %v, want %s", auto.InputID, inputID)
@@ -271,9 +273,9 @@ func TestAssessmentAutoPipelineEndToEnd(t *testing.T) {
 	if !ok || primary.Status != assessment.CriterionMet {
 		t.Fatalf("D_PRIMARY = %+v, want met (pilot's reference primary_decision is accepted, and the item was accepted)", primary)
 	}
-	grammar, ok := criterionByID(auto.Criteria, "G_GRAMMAR")
-	if !ok || grammar.Status != assessment.CriterionUnavailable {
-		t.Fatalf("G_GRAMMAR = %+v, want unavailable (JUDGE=off)", grammar)
+	progress, ok := criterionByID(auto.Criteria, "T_PROGRESS")
+	if !ok || progress.Status != assessment.CriterionNotApplicable {
+		t.Fatalf("T_PROGRESS = %+v, want not_applicable (no crew reports on this pilot fixture)", progress)
 	}
 	for _, rr := range inputBody.RuleResults {
 		got, ok := criterionByID(auto.Criteria, rr.ID)
@@ -349,12 +351,18 @@ func TestAssessmentEvaluateRetryDoesNotDuplicateAuto(t *testing.T) {
 
 // TestAssessmentFinalizerRecordsAutoOnExhaustion covers plan item (c):
 // a task whose lease keeps expiring without ever being handled must,
-// once its retry budget (max_attempts=3) is exhausted, get a needs_review
-// auto rev=1 recorded atomically with the task's own dead_letter write —
-// the shared assessment-finalizer's exhaustion path (RFC-001 §7.4/
-// ADR-019), driven here through the real Recovery.ReapExpired the same
-// way test/integration/task_finalizer_test.go exercises a generic
-// finalizer kind.
+// once its retry budget (max_attempts=3) is exhausted, get an auto rev=1
+// recorded atomically with the task's own dead_letter write — the shared
+// assessment-finalizer's exhaustion path (RFC-001 §7.4/ADR-019), driven
+// here through the real Recovery.ReapExpired the same way
+// test/integration/task_finalizer_test.go exercises a generic finalizer
+// kind. Under dds/rubric-v2 (ДДС-3) every criterion is deterministic and
+// already resolved at seal time (mustRunCoordinatorTick), so the
+// exhaustion path — which never runs Service.Handle's own semantic
+// step, because there is none to run — legitimately produces the same
+// ready result a normal Handle would have; what this test actually
+// guards is that exactly one auto gets recorded, atomically with
+// dead_letter, however the task got there.
 func TestAssessmentFinalizerRecordsAutoOnExhaustion(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := openTestDatabase(t, ctx)
@@ -418,8 +426,8 @@ func TestAssessmentFinalizerRecordsAutoOnExhaustion(t *testing.T) {
 		t.Fatalf("task status = %q, want dead_letter after exhausting max_attempts=3", status)
 	}
 	rows := readAssessments(t, ctx, pool, itemID)
-	if len(rows) != 1 || rows[0].Kind != "auto" || rows[0].Status != "needs_review" {
-		t.Fatalf("assessments after exhaustion = %+v, want exactly one needs_review auto", rows)
+	if len(rows) != 1 || rows[0].Kind != "auto" || rows[0].Revision != 1 || rows[0].Status != "ready" || rows[0].Score == nil || *rows[0].Score != 100 {
+		t.Fatalf("assessments after exhaustion = %+v, want exactly one ready auto rev=1 score=100", rows)
 	}
 }
 
@@ -568,18 +576,19 @@ func TestAssessmentExpertRevisionAfterAutoRecordsTrainingExamples(t *testing.T) 
 	auto := readAssessments(t, ctx, pool, itemID)[0]
 
 	criteria := resolveAllCriteria(auto.Criteria)
-	// Deliberately disagree with auto's own G_GRAMMAR resolution (auto:
-	// unavailable -> resolveAllCriteria already turned it into met) by
-	// instead marking it not_met, so at least one criterion differs.
+	// Deliberately disagree with auto's own D_PRIMARY resolution (met,
+	// dds/rubric-v2 has no llm criterion left to disagree with, unlike
+	// v1's G_GRAMMAR) by instead marking it not_met, so at least one
+	// criterion differs.
 	for i := range criteria {
-		if criteria[i].ID == "G_GRAMMAR" {
+		if criteria[i].ID == "D_PRIMARY" {
 			criteria[i].Status = assessment.CriterionNotMet
 		}
 	}
 
 	instructorID := insertInstructor(t, ctx, pool, "assessment-instructor-"+uuid.NewString()).ID
 	expert, err := assessmentService.CreateExpertRevision(ctx, itemID, instructorID, assessment.RevisionInput{
-		Reason: "не согласен с автооценкой по грамматике", BaseRevision: auto.Revision, Criteria: criteria,
+		Reason: "не согласен с автооценкой по первичному решению", BaseRevision: auto.Revision, Criteria: criteria,
 	}, "req-expert-disagree")
 	if err != nil {
 		t.Fatalf("CreateExpertRevision: %v", err)
@@ -645,10 +654,12 @@ func TestAssessmentInputPreparationFailureAllowsManualAssessment(t *testing.T) {
 
 	// Manual assessment does not depend on rubric_effective coming from
 	// a sealed input at all — the reviewer supplies every applicable
-	// criterion directly.
-	base, err := assessment.LoadDefault()
+	// criterion directly, matching whatever rubric this item's own
+	// lesson actually froze (dds/rubric-v2 since ДДС-3/c3, not
+	// LoadDefault's fixed dds/rubric-v1).
+	base, err := assessment.LoadDefaultFor(content.ExerciseTypeDDSProcessing)
 	if err != nil {
-		t.Fatalf("LoadDefault: %v", err)
+		t.Fatalf("LoadDefaultFor: %v", err)
 	}
 	criteria := make([]assessment.CriterionResult, 0, len(base.Criteria))
 	for _, c := range base.Criteria {

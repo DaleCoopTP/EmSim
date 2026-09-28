@@ -97,11 +97,19 @@ func TestWorkerProcessDrivesLessonCloseThroughRealQueue(t *testing.T) {
 	// training close for assessment purposes.  The same real worker must
 	// therefore run the coordinator and create the auto review, while all
 	// timing criteria become not_applicable under the interruption marker.
+	// dds/rubric-v2 (ДДС-3) has no llm criteria left, so an item
+	// interrupted before it was even opened has every criterion resolve
+	// not_applicable (D_PRIMARY included: no decision was ever due) and
+	// nothing left unavailable to force needs_review — unlike dds/
+	// rubric-v1, where G_GRAMMAR was unconditionally unavailable under
+	// JUDGE=off and needs_review was unconditional. The auto assessment
+	// is legitimately ready with an all-not_applicable criteria set.
 	waitFor("interrupted item auto-assessed by the real worker process",
 		`SELECT EXISTS (
 			SELECT FROM assessments a
-			WHERE a.item_id=$1 AND a.kind='auto' AND a.revision=1 AND a.status='needs_review'
+			WHERE a.item_id=$1 AND a.kind='auto' AND a.revision=1 AND a.status='ready'
 			  AND (a.criteria @> '[{"id":"T_OPEN","status":"not_applicable"}]'::jsonb)
+			  AND (a.criteria @> '[{"id":"D_PRIMARY","status":"not_applicable"}]'::jsonb)
 		)`, item.ID)
 
 	worker.stop(t, false)

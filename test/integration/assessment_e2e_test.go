@@ -53,9 +53,15 @@ func TestAssessmentPipelineThroughAPIAndWorker(t *testing.T) {
 		t.Fatalf("close = %d %+v", response.StatusCode, receipt)
 	}
 
+	// pilot-tree-01 closes through the old pilot_completed path with no
+	// crew reports/calls, so under dds/rubric-v2 (ДДС-3) T_PROGRESS/
+	// S_SEQUENCE/D_COMMENT_REQUIRED/C_CALLS all resolve not_applicable
+	// and only T_OPEN/T_PRIMARY/D_PRIMARY (all met) remain — a clean
+	// ready with full score, unlike dds/rubric-v1 where G_GRAMMAR was
+	// unconditionally unavailable under JUDGE=off and forced needs_review.
 	detail := waitAssessmentDetail(t, f.ctx, instructor, f.baseURL, itemID)
-	if detail.Final == nil || detail.Final.Kind != "auto" || detail.Final.Revision != 1 || detail.Final.Status != "needs_review" || detail.Final.Score != nil {
-		t.Fatalf("automatic assessment = %+v, want auto rev=1 needs_review with null score", detail.Final)
+	if detail.Final == nil || detail.Final.Kind != "auto" || detail.Final.Revision != 1 || detail.Final.Status != "ready" || detail.Final.Score == nil || *detail.Final.Score != 100 {
+		t.Fatalf("automatic assessment = %+v, want auto rev=1 ready with score=100", detail.Final)
 	}
 	if detail.AutomaticState != "done" || len(detail.Final.Criteria) == 0 {
 		t.Fatalf("detail automatic_state=%q criteria=%d, want done and rules", detail.AutomaticState, len(detail.Final.Criteria))
