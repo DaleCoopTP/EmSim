@@ -3318,3 +3318,23 @@ Browser e2e: `npm run test:e2e` не выполнился — сборка об�
 - В сценарии 03 нет отдельного доклада о прибытии, а `expected_chain` содержит `arrived` (так задумано, см. `notes`); v1-рубрика засчитает пропуск.
 
 Next: ДДС-2 — панель «Связь с бригадой», `phone_incoming`, контакты «отдел контроля 112» и «заявитель», `expects.comment_facts`. Отдельно: `push` веток (`main` перемотан локально, ждёт подтверждения).
+
+## 2026-09-28 — ДДС-2: план и ADR-031 (связь с бригадой)
+
+Status: in progress. Ветка `dds-2` от `main` (после слияния PR #1).
+
+- [ADR-031](design-docs/adr/031-dds-crew-communication.md):
+  - якорь `since: call_ended` + `since_contact` (первый исходящий звонок контакту);
+  - `contact.role` (`crew | control_112 | applicant | other`);
+  - входящий звонок: 30 с звонит, `answer_incoming {event_key}`, `call_missed`, текст только после ответа;
+  - обязательный звонок — только исходящий;
+  - `expects.comment_facts` (оценка в ДДС-4);
+  - реакция на доклад в мониторе.
+- RFC-001 §7.2 получил ссылку на новый якорь.
+- [`slice-dds-2-plan.md`](slice-dds-2-plan.md): коммиты c1–c13. Решения 1–6 плана подтверждены пользователем.
+
+Changed: `design-docs/adr/{031-dds-crew-communication.md,README.md}`, `design-docs/rfc-001-emsim.md`, `slice-dds-2-plan.md`, `slice-planning-dds.md`, LOG.MD.
+
+Validation: `python3 design-docs/contracts/check.py`.
+
+Next: c2 — контракты.
