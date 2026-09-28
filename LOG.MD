@@ -3616,3 +3616,13 @@ Status: c2 выполнен.
 - `assessment-inputs.schema.json`: описание форм `semantic_input` для ДДС.
 
 Validation: `python3 design-docs/contracts/check.py` — all checks passed; `go build ./design-docs/contracts/`.
+
+## 2026-09-28 — ДДС-4 c3: выбор версии рубрики
+
+Status: c3 выполнен.
+
+- `content.RubricVersionForJudge(exerciseType, judgeEnabled)`; `Operator112RubricVersion` — обёртка. `rubricCriterionIDs` включает v3. `training.Service`: поле `judgeEnabled` (было `operator112JudgeEnabled`), `rubricVersionForNewLesson` вызывает общую функцию для обоих типов.
+- `assessment.LoadRubric("dds/rubric-v3")`.
+- Внимание: `ASSESSMENT_JUDGE` по умолчанию `llm` (ADR-029), поэтому с этого коммита новые занятия ДДС замораживают v3; до c4 llm-критерии v3 `unavailable` (оценка `needs_review`). Интеграционные тесты ДДС должны идти с `ASSESSMENT_JUDGE=off` — проверить в c9.
+
+Validation: `go test ./internal/content/... ./internal/training/... ./internal/assessment/`.

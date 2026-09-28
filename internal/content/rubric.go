@@ -8,9 +8,10 @@ import (
 	"emsim/design-docs/contracts"
 )
 
-// rubricCriterionIDs is the union of criterion ids dds_processing's two
+// rubricCriterionIDs is the union of criterion ids dds_processing's three
 // rubric versions define — rubric.default.json (dds/rubric-v1) and
-// rubric.dds.v2.json (dds/rubric-v2, ДДС-3/ADR-032) — loaded once from
+// rubric.dds.v2.json (dds/rubric-v2, ДДС-3/ADR-032) and rubric.dds.v3.json
+// (dds/rubric-v3, ДДС-4/ADR-034) — loaded once from
 // the same embedded contracts scenario.schema.json/scenario-file.
 // schema.json ride along in (contracts.Files). Validate checks a
 // scenario's reference.scoring overrides against this set: a case may
@@ -22,7 +23,7 @@ import (
 // disable even after v2 drops it).
 var rubricCriterionIDs = sync.OnceValues(func() (map[string]bool, error) {
 	ids := make(map[string]bool)
-	for _, filename := range []string{"rubric.default.json", "rubric.dds.v2.json"} {
+	for _, filename := range []string{"rubric.default.json", "rubric.dds.v2.json", "rubric.dds.v3.json"} {
 		fileIDs, err := loadRubricCriterionIDs(filename)
 		if err != nil {
 			return nil, err
@@ -110,20 +111,33 @@ func RubricVersionFor(exerciseType ExerciseType) (string, error) {
 	return "", fmt.Errorf("content: unsupported exercise_type %q", exerciseType)
 }
 
-// Operator112RubricVersion is ADR-028's own version selector for a new
-// operator112_intake lesson/preview run — RubricVersionFor's own
-// operator112 case (rubric-v2) stays the safe, judge-independent
-// default; judgeEnabled=true instead freezes rubric-v3 (adds the LLM
-// DESCRIPTION_CONTENT criterion), so a lesson only ever gets a rubric
-// version its own deployment can actually score. training.Service is
-// the only caller — it derives judgeEnabled from its own process
-// configuration (ASSESSMENT_JUDGE), never from "whichever rubric file
-// happens to be newest".
-func Operator112RubricVersion(judgeEnabled bool) (string, error) {
+// RubricVersionForJudge is ADR-028/ADR-034's version selector for a new
+// lesson (or preview run) — RubricVersionFor stays the safe, judge-
+// independent default (dds/rubric-v2, operator112/rubric-v2);
+// judgeEnabled=true instead freezes the exercise type's own judge-scored
+// rubric (dds/rubric-v3 adding D_COMMENT_CONTENT/G_GRAMMAR,
+// operator112/rubric-v3 adding DESCRIPTION_CONTENT), so a lesson only
+// ever gets a rubric version its own deployment can actually score.
+// training.Service is the only caller — it derives judgeEnabled from its
+// own process configuration (ASSESSMENT_JUDGE), never from "whichever
+// rubric file happens to be newest".
+func RubricVersionForJudge(exerciseType ExerciseType, judgeEnabled bool) (string, error) {
 	if !judgeEnabled {
-		return RubricVersionFor(ExerciseTypeOperator112Intake)
+		return RubricVersionFor(exerciseType)
 	}
-	return readRubricVersion("rubric.operator112.v3.json")
+	switch exerciseType {
+	case ExerciseTypeDDSProcessing:
+		return readRubricVersion("rubric.dds.v3.json")
+	case ExerciseTypeOperator112Intake:
+		return readRubricVersion("rubric.operator112.v3.json")
+	}
+	return "", fmt.Errorf("content: unsupported exercise_type %q", exerciseType)
+}
+
+// Operator112RubricVersion is RubricVersionForJudge for operator112_intake
+// (ADR-028), kept for its existing callers and tests.
+func Operator112RubricVersion(judgeEnabled bool) (string, error) {
+	return RubricVersionForJudge(ExerciseTypeOperator112Intake, judgeEnabled)
 }
 
 func readRubricVersion(filename string) (string, error) {

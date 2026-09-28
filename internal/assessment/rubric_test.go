@@ -98,6 +98,9 @@ func TestLoadRubricByExactVersion(t *testing.T) {
 		wantKind     string
 	}{
 		{content.ExerciseTypeDDSProcessing, "dds/rubric-v1", "D_FIELD_CORRECTIONS", "deterministic"},
+		{content.ExerciseTypeDDSProcessing, "dds/rubric-v2", "T_PROGRESS", "deterministic"},
+		{content.ExerciseTypeDDSProcessing, "dds/rubric-v3", "D_COMMENT_CONTENT", "llm"},
+		{content.ExerciseTypeDDSProcessing, "dds/rubric-v3", "G_GRAMMAR", "llm"},
 		{content.ExerciseTypeOperator112Intake, "operator112/rubric-v1", "INTAKE_COMPLETENESS", "manual"},
 		{content.ExerciseTypeOperator112Intake, "operator112/rubric-v2", "ADDRESS_FIELDS", "deterministic"},
 	}
@@ -159,5 +162,46 @@ func TestScoringForDispatchesByExerciseType(t *testing.T) {
 	}
 	if got := ScoringFor(body112); got != intakeScoring {
 		t.Fatal("ScoringFor must read body.Intake112.Reference.Scoring for operator112_intake")
+	}
+}
+
+// TestLoadRubricDDSV3KeepsV2Untouched is ADR-034's freeze guarantee: v3
+// adds the two LLM criteria and re-weights, but v2 — what every lesson
+// frozen before ДДС-4 (or with the judge off) scores against — still has
+// no LLM criterion and its own weights; both sum to 100.
+func TestLoadRubricDDSV3KeepsV2Untouched(t *testing.T) {
+	v2, err := LoadRubric(content.ExerciseTypeDDSProcessing, "dds/rubric-v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v3, err := LoadRubric(content.ExerciseTypeDDSProcessing, "dds/rubric-v3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range v2.Criteria {
+		if c.Kind == "llm" {
+			t.Fatalf("dds/rubric-v2 gained an llm criterion %q; it must stay deterministic-only", c.ID)
+		}
+		if _, ok := v3.ByID(c.ID); !ok {
+			t.Fatalf("dds/rubric-v3 dropped v2's criterion %q", c.ID)
+		}
+	}
+	for name, r := range map[string]Rubric{"v2": v2, "v3": v3} {
+		total := 0.0
+		for _, c := range r.Criteria {
+			total += c.Weight
+		}
+		if total != 100 {
+			t.Fatalf("dds/rubric-%s weights sum to %v, want 100", name, total)
+		}
+	}
+	if d, _ := v2.ByID("D_PRIMARY"); d.Weight != 25 {
+		t.Fatalf("dds/rubric-v2 D_PRIMARY weight = %v, want 25 (unchanged)", d.Weight)
+	}
+	for _, id := range []string{"D_COMMENT_CONTENT", "G_GRAMMAR"} {
+		c, _ := v3.ByID(id)
+		if c.Prompt == "" {
+			t.Fatalf("%s has no prompt", id)
+		}
 	}
 }

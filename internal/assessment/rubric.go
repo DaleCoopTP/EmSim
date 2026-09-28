@@ -77,6 +77,12 @@ var loadedDefault = sync.OnceValues(func() (Rubric, error) { return loadEmbedded
 // it before this slice keeps scoring against it (ADR-013).
 var loadedDDSv2 = sync.OnceValues(func() (Rubric, error) { return loadEmbeddedRubric("rubric.dds.v2.json") })
 
+// loadedDDSv3 is dds/rubric-v3 (ДДС-4/ADR-034) — v2 plus the LLM
+// D_COMMENT_CONTENT/G_GRAMMAR criteria, only ever frozen into a lesson
+// when its own process is configured with a working judge
+// (content.RubricVersionForJudge, training.Service).
+var loadedDDSv3 = sync.OnceValues(func() (Rubric, error) { return loadEmbeddedRubric("rubric.dds.v3.json") })
+
 // loaded112v1/loaded112v2 are operator112_intake's own two rubric
 // versions (112-6/ADR-026): v1 is the pre-112-6 manual-only rubric,
 // preserved unchanged so lessons still running on it are unaffected;
@@ -110,6 +116,8 @@ func LoadRubric(exerciseType content.ExerciseType, version string) (Rubric, erro
 			return loadedDefault()
 		case "dds/rubric-v2":
 			return loadedDDSv2()
+		case "dds/rubric-v3":
+			return loadedDDSv3()
 		}
 	case content.ExerciseTypeOperator112Intake:
 		switch version {

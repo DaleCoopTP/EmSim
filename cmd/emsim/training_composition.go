@@ -20,19 +20,19 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// operator112JudgeEnabled (ADR-028) is each process's own
+// judgeEnabled (ADR-028) is each process's own
 // ASSESSMENT_JUDGE reduced to a bool — api.go passes its config.API
 // value (the only process that actually calls CreateLesson/
 // StartPreview); worker_composition.go passes its own config.Worker
 // value too, for consistency, even though the worker's own
 // training.Service never creates a lesson.
-func newTrainingService(pool *pgxpool.Pool, taskEnqueuer training.TaskEnqueuer, operator112JudgeEnabled bool) *training.Service {
+func newTrainingService(pool *pgxpool.Pool, taskEnqueuer training.TaskEnqueuer, judgeEnabled bool) *training.Service {
 	authStore := authpg.NewStore(pool)
 	contentStore := contentpg.NewStore(pool)
 	return training.NewService(
 		trainingpg.NewStore(pool), authStore, authStore, contentStore, contentStore, taskEnqueuer,
 		map[content.ExerciseType]training.Exercise{content.ExerciseTypeDDSProcessing: dds.Exercise,
 			content.ExerciseTypeOperator112Intake: operator112.New()},
-		operator112JudgeEnabled,
+		judgeEnabled,
 	)
 }

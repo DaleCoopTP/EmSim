@@ -6,29 +6,31 @@ import (
 	"emsim/internal/content"
 )
 
-// TestRubricVersionForNewLessonDDSIgnoresJudgeFlag is ADR-028's own
-// isolation requirement: judgeEnabled must never change dds_processing's
-// own rubric version — only content.RubricVersionFor decides it, exactly
-// as before this ADR.
-func TestRubricVersionForNewLessonDDSIgnoresJudgeFlag(t *testing.T) {
+// TestRubricVersionForNewLessonDDSSelectsByJudge is ADR-034's selector
+// for dds_processing: judge off keeps content.RubricVersionFor's own
+// dds/rubric-v2 exactly as before ДДС-4 (never the pre-ADR-030 v1 an
+// already-running lesson may still carry), judge on freezes dds/rubric-v3.
+func TestRubricVersionForNewLessonDDSSelectsByJudge(t *testing.T) {
 	want, err := content.RubricVersionFor(content.ExerciseTypeDDSProcessing)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// ДДС-3/ADR-032: a newly created DDS lesson freezes dds/rubric-v2,
-	// not the pre-ADR-030 dds/rubric-v1 an already-running lesson may
-	// still carry.
 	if want != "dds/rubric-v2" {
 		t.Fatalf("content.RubricVersionFor(dds_processing) = %q, want dds/rubric-v2", want)
 	}
-	for _, judgeEnabled := range []bool{false, true} {
-		got, err := rubricVersionForNewLesson(content.ExerciseTypeDDSProcessing, judgeEnabled)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != want {
-			t.Fatalf("rubricVersionForNewLesson(dds, %v) = %q, want %q", judgeEnabled, got, want)
-		}
+	off, err := rubricVersionForNewLesson(content.ExerciseTypeDDSProcessing, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off != want {
+		t.Fatalf("rubricVersionForNewLesson(dds, false) = %q, want %q", off, want)
+	}
+	on, err := rubricVersionForNewLesson(content.ExerciseTypeDDSProcessing, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on != "dds/rubric-v3" {
+		t.Fatalf("rubricVersionForNewLesson(dds, true) = %q, want dds/rubric-v3", on)
 	}
 }
 

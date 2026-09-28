@@ -595,6 +595,20 @@ func TestValidateAllowsKnownScoringCriterion(t *testing.T) {
 	}
 }
 
+// TestValidateAllowsScoringKnownDDSV3Criterion is ADR-034's counterpart of
+// the operator112 v3 test: D_COMMENT_CONTENT/G_GRAMMAR only exist in
+// dds/rubric-v3 (v1 has them under other prompts, v2 not at all), yet a
+// scenario authored before a lesson decides its rubric version must be
+// able to re-weight or disable them — rubricCriterionIDs is the union of
+// every DDS version.
+func TestValidateAllowsScoringKnownDDSV3Criterion(t *testing.T) {
+	body := validPilotBody()
+	body.Reference.Scoring = &Scoring{Disabled: []string{"D_COMMENT_CONTENT", "G_GRAMMAR"}}
+	if err := Validate(body, pilotCatalog()); err != nil {
+		t.Fatalf("Validate = %v, want nil", err)
+	}
+}
+
 func assertInvalidField(t *testing.T, err error, wantField string) {
 	t.Helper()
 	if err == nil {

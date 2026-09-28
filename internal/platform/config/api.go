@@ -24,14 +24,14 @@ type API struct {
 	CookieSecure bool
 	// AssessmentJudge (ADR-028) is api's own half of ASSESSMENT_JUDGE —
 	// the same enum Worker.AssessmentJudge reads, read here only to
-	// decide which operator112_intake rubric version (content.
-	// Operator112RubricVersion) a newly created lesson/preview run
+	// decide which rubric version (content.RubricVersionForJudge, both
+	// exercise types since ADR-034) a newly created lesson/preview run
 	// freezes at CreateLesson/StartPreview time. It never wires an LLM
 	// client here: the api process never calls assessment.Service.Handle,
 	// only the worker does. Unset means AssessmentJudgeLLM since ADR-029
 	// (a stock `docker compose up` ships the judge's model, so new
-	// lessons freeze rubric-v3); ASSESSMENT_JUDGE=off keeps freezing
-	// rubric-v2 and must be set on the worker the same way.
+	// lessons freeze rubric-v3 — dds/rubric-v3 for DDS too since
+	// ADR-034); ASSESSMENT_JUDGE=off keeps freezing rubric-v2 and must be set on the worker the same way.
 	AssessmentJudge string
 	// CallerWarmup and CallerOpeningDelay are ADR-029's api-side AI
 	// caller settings (training.CallerTiming): CALLER_WARMUP (default

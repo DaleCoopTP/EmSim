@@ -69,3 +69,33 @@ func TestOperator112RubricVersionSelectsByJudge(t *testing.T) {
 		t.Fatalf("Operator112RubricVersion(true) = %q, want operator112/rubric-v3", on)
 	}
 }
+
+// TestRubricVersionForJudgeDDS is ADR-034's selector for dds_processing:
+// judge off must exactly match RubricVersionFor (never a silent v3
+// without a configured judge), judge on freezes dds/rubric-v3; an
+// unsupported exercise_type errors with either flag value.
+func TestRubricVersionForJudgeDDS(t *testing.T) {
+	off, err := RubricVersionForJudge(ExerciseTypeDDSProcessing, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := RubricVersionFor(ExerciseTypeDDSProcessing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off != want {
+		t.Fatalf("RubricVersionForJudge(dds, false) = %q, want %q", off, want)
+	}
+	on, err := RubricVersionForJudge(ExerciseTypeDDSProcessing, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on != "dds/rubric-v3" {
+		t.Fatalf("RubricVersionForJudge(dds, true) = %q, want dds/rubric-v3", on)
+	}
+	for _, judgeEnabled := range []bool{false, true} {
+		if _, err := RubricVersionForJudge(ExerciseType("not_a_real_type"), judgeEnabled); err == nil {
+			t.Fatalf("RubricVersionForJudge(unknown, %v) must error", judgeEnabled)
+		}
+	}
+}

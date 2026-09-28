@@ -81,7 +81,7 @@ func (s *Service) StartPreview(ctx context.Context, actorID, scenarioID, version
 		// previewing their own scenario while this process has a judge
 		// configured sees the same rubric-v3 auto-assessment a real
 		// judge-enabled lesson would produce, not a permanently-frozen v2.
-		rubricVersion, err := rubricVersionForNewLesson(content.ExerciseTypeOperator112Intake, s.operator112JudgeEnabled)
+		rubricVersion, err := rubricVersionForNewLesson(content.ExerciseTypeOperator112Intake, s.judgeEnabled)
 		if err != nil {
 			return err
 		}
