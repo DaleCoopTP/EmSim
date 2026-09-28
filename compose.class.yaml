@@ -1,0 +1,46 @@
+# Classroom profile (ADR-033): HTTPS for every workstation in the class.
+#
+#   EMSIM_HOST=emsim.local docker compose -f compose.yaml -f compose.class.yaml up -d --build
+#   make class-ca        # exports emsim-root.crt for the classroom PCs
+#
+# Caddy is the only service published on the LAN: it terminates TLS with a
+# certificate from its own internal CA and proxies everything to api. The
+# api no longer publishes its public port, and its session cookie becomes
+# Secure (it is only ever sent over TLS). The health/metrics admin ports
+# stay bound to 127.0.0.1 on the server itself.
+#
+# Combine with compose.no-llm.yaml the usual way when running without the
+# bundled model:
+#   docker compose -f compose.yaml -f compose.no-llm.yaml -f compose.class.yaml up -d
+
+services:
+  api:
+    environment:
+      COOKIE_SECURE: "true"
+    ports: !override
+      - "127.0.0.1:${API_ADMIN_PORT:-8081}:8081"
+
+  caddy:
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    environment:
+      EMSIM_HOST: ${EMSIM_HOST:?set EMSIM_HOST to the server name and/or IP the classroom opens, e.g. emsim.local}
+    ports:
+      # Keep the defaults: Caddy redirects http:// to https:// on port 443.
+      # With a non-default HTTPS_PORT, open https://<host>:<port>/ directly.
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The internal CA (root key and certificate) and issued certificates.
+      # Keep this volume across upgrades, or every PC has to trust a new
+      # root certificate.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

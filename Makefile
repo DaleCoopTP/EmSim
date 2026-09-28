@@ -1,4 +1,4 @@
-.PHONY: format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build seed model web-install web-build web-check verify-web
+.PHONY: class-up class-ca format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build seed model web-install web-build web-check verify-web
 
 GO_FILES := $(shell git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do test -f "$$file" && printf '%s\n' "$$file"; done)
 
@@ -32,6 +32,19 @@ verify-integration: verify test-integration
 compose-config:
 	docker compose config --quiet
 	docker compose -f compose.yaml -f compose.no-llm.yaml config --quiet
+	EMSIM_HOST=emsim.local docker compose -f compose.yaml -f compose.class.yaml config --quiet
+
+# Classroom profile (ADR-033): Caddy with HTTPS from its internal CA in
+# front of api. EMSIM_HOST (the name/IP the classroom opens) comes from
+# .env or the environment. class-ca exports the CA's root certificate to
+# ./emsim-root.crt for installing on every classroom PC.
+CLASS_COMPOSE = docker compose -f compose.yaml -f compose.class.yaml
+
+class-up:
+	$(CLASS_COMPOSE) up -d --build
+
+class-ca:
+	$(CLASS_COMPOSE) cp caddy:/data/caddy/pki/authorities/local/root.crt ./emsim-root.crt
 
 compose-build: compose-config
 	docker compose build

@@ -1,0 +1,24 @@
+# Classroom profile (ADR-033): Caddy terminates TLS for the whole class and
+# is the only published service. compose.class.yaml mounts this file.
+#
+# EMSIM_HOST is the name and/or IP the workstations open, e.g.
+# "emsim.local" or "emsim.local, 192.168.10.5". Caddy's internal CA
+# issues a certificate for it; `make class-ca` exports the CA's root
+# certificate, which is installed once on every classroom PC.
+{
+	# The CA lives only in the caddy-data volume; never touch the
+	# container's own trust store.
+	skip_install_trust
+}
+
+{$EMSIM_HOST} {
+	tls internal
+
+	# The api checks Origin against Host on every mutation
+	# (httpapi.RequireSameOrigin): the original Host is passed through,
+	# which reverse_proxy does by default. flush_interval -1 keeps SSE
+	# (/api/v1/my/stream, /api/v1/lessons/{id}/stream) unbuffered.
+	reverse_proxy api:8080 {
+		flush_interval -1
+	}
+}

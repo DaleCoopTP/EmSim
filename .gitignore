@@ -40,3 +40,6 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Classroom CA root certificate exported by `make class-ca` (ADR-033)
+/emsim-root.crt
