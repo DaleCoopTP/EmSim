@@ -420,6 +420,10 @@ function ItemWorkplace({ me, item }: { me: Me; item: DDSItem }) {
 // reload therefore has the explicitly documented "missing recording" outcome.
 function PhonePanel({ item, onChanged }: { item: DDSItem; onChanged: () => Promise<void> }) {
   const contacts = item.card.contacts ?? [];
+  // ДДС-3/ADR-032: an outgoing call's «Кто принял»/«Суть сообщения» is
+  // only still required on a legacy (pre-ADR-030 pilot) service — the
+  // same terminal_statuses check ServiceStatusBlock's own "legacy" uses.
+  const legacy = (item.terminal_statuses ?? []).length === 0;
   // ADR-031: an answered incoming call occupies the line.
   const incomingActive = item.calls.some((call) => call.direction === "incoming" && !call.ended_at);
   const phraseText = (key: string, phrase: "greeting" | "ack") => contacts.find((candidate) => candidate.key === key)?.phrases?.[phrase];
@@ -544,7 +548,7 @@ function PhonePanel({ item, onChanged }: { item: DDSItem; onChanged: () => Promi
   };
 
   const end = async () => {
-    if (!callId || callEndSeq === null || !acceptedBy.trim() || !summary.trim()) return;
+    if (!callId || callEndSeq === null || (legacy && (!acceptedBy.trim() || !summary.trim()))) return;
     setError("");
     setIsEnding(true);
     try {
@@ -615,9 +619,9 @@ function PhonePanel({ item, onChanged }: { item: DDSItem; onChanged: () => Promi
           <div className="phone-call-control">
             <div className="phone-call-state"><span className={isRecording ? "phone-recording" : undefined}>●</span>{isRecording ? "Запись доклада" : "Звонок без записи"}</div>
             <button type="button" aria-pressed={muted} onClick={toggleMute} disabled={!isRecording}>{muted ? "Включить микрофон" : "Mute"}</button>
-            <label>Кто принял<input value={acceptedBy} onChange={(event) => setAcceptedBy(event.target.value)} /></label>
-            <label>Суть сообщения<textarea value={summary} onChange={(event) => setSummary(event.target.value)} /></label>
-            <button type="button" className="phone-end-button" onClick={() => void end()} disabled={isEnding || !acceptedBy.trim() || !summary.trim()}>Завершить</button>
+            <label>Кто принял{!legacy && " (необязательно)"}<input value={acceptedBy} onChange={(event) => setAcceptedBy(event.target.value)} /></label>
+            <label>Суть сообщения{!legacy && " (необязательно)"}<textarea value={summary} onChange={(event) => setSummary(event.target.value)} /></label>
+            <button type="button" className="phone-end-button" onClick={() => void end()} disabled={isEnding || (legacy && (!acceptedBy.trim() || !summary.trim()))}>Завершить</button>
           </div>
         )}
         {pendingUpload && <button type="button" className="phone-retry-button" onClick={() => void uploadRecording(pendingUpload)}>Повторить загрузку записи</button>}

@@ -7,6 +7,7 @@ import {
 } from "../../api/reporting";
 import { formatDateTime } from "../../format";
 import { useLesson } from "../../api/training";
+import { cardStatusLabel } from "../../labels";
 
 const assessmentLabels: Record<AssessmentStatus, string> = {
   ready: "Готова",
@@ -58,6 +59,8 @@ export function LessonReportRoute() {
   if (lesson.isError) return <p className="error">{errorMessage(lesson.error)}</p>;
   const value = report.data;
   const intake = lesson.data.exercise_type === "operator112_intake";
+  // ДДС-3/ADR-032: card_status has no operator112_intake equivalent.
+  const dds = !intake;
 
   return (
     <section>
@@ -92,10 +95,11 @@ export function LessonReportRoute() {
 
       <h2>Карточки</h2>
       <table>
-        <thead><tr><th>Обучаемый</th><th>РМ</th><th>Сценарий</th><th>Карточка</th><th>Балл</th><th>Оценка</th><th>Время</th><th>Ошибки</th>{intake && <><th>Блоки 112</th><th>Штрафы 112</th></>}</tr></thead>
+        <thead><tr><th>Обучаемый</th><th>РМ</th><th>Сценарий</th><th>Карточка</th>{dds && <th>Статус карточки</th>}<th>Балл</th><th>Оценка</th><th>Время</th><th>Ошибки</th>{intake && <><th>Блоки 112</th><th>Штрафы 112</th></>}</tr></thead>
         <tbody>{value.items.map((item) => (
           <tr key={item.item_id}>
             <td>{item.full_name}</td><td>№ {item.workstation_no}</td><td>{item.scenario_title}</td><td>{item.card_number}</td>
+            {dds && <td>{cardStatusLabel(item.card_status)}</td>}
             <td>{score(item.score)}</td><td>{assessmentLabels[item.assessment_status]}</td>
             <td>{seconds(item.total_seconds)}</td><td>{item.errors.map((error) => error.label).join("; ") || "—"}</td>
             {intake && <><td>{intakeBlocksText(item.intake_blocks)}</td><td>{intakePenaltyText(item.intake_penalty_total)}</td></>}

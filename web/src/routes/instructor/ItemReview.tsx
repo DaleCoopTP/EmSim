@@ -71,7 +71,7 @@ export function ItemReviewRoute() {
 		<DDSStatusHistory actions={(evidence.actions ?? []) as DDSReviewAction[]} />
 		<DDSCommsReview item={item.data} />
 		<h2>Автоматическая проверка</h2>
-		<CriteriaTable criteria={autoCriteria} />
+		<CriteriaTable criteria={autoCriteria} rubricByID={rubricByID} />
 	</>}
     <h2>Журнал и звонки</h2>
     <ul>{evidence.actions?.map((action) => <li key={action.action_id}>{formatDateTime(action.server_at)} · {action.type} · {action.accepted ? "принято" : "отклонено"}</li>)}</ul>
@@ -98,7 +98,7 @@ export function ItemReviewRoute() {
         })}</tbody></table>
       </> : <>
         <p>«Не проверено» нужно разрешить вручную, прежде чем сохранить итог.</p>
-        <table><thead><tr><th>Критерий</th><th>Статус</th></tr></thead><tbody>{sourceCriteria.map((criterion) => <tr key={criterion.id}><td>{criterion.id}</td><td><select value={changes[criterion.id] ?? (criterion.status === "unavailable" ? "not_met" : criterion.status)} onChange={(event) => setChanges({ ...changes, [criterion.id]: event.target.value as CriterionStatus })}>{manualStatuses.map((status) => <option key={status} value={status}>{labels[status]}</option>)}</select></td></tr>)}</tbody></table>
+        <table><thead><tr><th>Критерий</th><th>Статус</th></tr></thead><tbody>{sourceCriteria.map((criterion) => <tr key={criterion.id}><td>{rubricByID[criterion.id]?.title ?? criterion.id}</td><td><select value={changes[criterion.id] ?? (criterion.status === "unavailable" ? "not_met" : criterion.status)} onChange={(event) => setChanges({ ...changes, [criterion.id]: event.target.value as CriterionStatus })}>{manualStatuses.map((status) => <option key={status} value={status}>{labels[status]}</option>)}</select></td></tr>)}</tbody></table>
       </>}
       <label>Причина<textarea required minLength={3} maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
       <label>Итоговый балл (необязательно)<input type="number" min="0" max="100" step="0.01" value={override} onChange={(event) => setOverride(event.target.value)} /></label>
@@ -111,7 +111,12 @@ export function ItemReviewRoute() {
 
 function useItem(itemId: string) { return useQuery({ queryKey: ["training", "item", itemId], queryFn: () => api.get<Item>(`/items/${encodeURIComponent(itemId)}`), enabled: itemId !== "" }); }
 
-function CriteriaTable({ criteria }: { criteria: CriterionResult[] }) { if (criteria.length === 0) return <p>Автооценка ещё не готова.</p>; return <table><thead><tr><th>Критерий</th><th>Статус</th><th>Основание</th></tr></thead><tbody>{criteria.map((criterion) => <tr key={criterion.id}><td>{criterion.id}{criterion.critical ? " · критичный" : ""}</td><td>{labels[criterion.status]}</td><td>{criterion.explanation || "—"}{criterion.evidence_refs?.length ? ` (${criterion.evidence_refs.join(", ")})` : ""}</td></tr>)}</tbody></table>; }
+// CriteriaTable's own "Критерий" column shows rubric_effective's title
+// for the criterion's id (ДДС-3: dds/rubric-v1 and dds/rubric-v2 share
+// the review UI, so a v2 lesson's T_PROGRESS/C_CALLS — and v1's own
+// C_CALL_MADE/G_ADDRESS — read as their own titles, not bare ids), the
+// bare id itself only as a fallback when rubric_effective has none.
+function CriteriaTable({ criteria, rubricByID }: { criteria: CriterionResult[]; rubricByID: Record<string, RubricEffectiveCriterion> }) { if (criteria.length === 0) return <p>Автооценка ещё не готова.</p>; return <table><thead><tr><th>Критерий</th><th>Статус</th><th>Основание</th></tr></thead><tbody>{criteria.map((criterion) => <tr key={criterion.id}><td>{rubricByID[criterion.id]?.title ?? criterion.id}{criterion.critical ? " · критичный" : ""}</td><td>{labels[criterion.status]}</td><td>{criterion.explanation || "—"}{criterion.evidence_refs?.length ? ` (${criterion.evidence_refs.join(", ")})` : ""}</td></tr>)}</tbody></table>; }
 
 function round2(value: number): number { return Math.round(value * 100) / 100; }
 

@@ -25,6 +25,9 @@ export interface ReportItem {
   difficulty: number;
   closed_at: string;
   item_state: "closed" | "interrupted";
+  // ДДС-3/ADR-032: set only for a dds_processing row, undefined for
+  // operator112_intake (it has no equivalent notion).
+  card_status?: "registered" | "not_notified" | "in_progress" | "refused" | "completed" | "not_completed";
   assessment_status: AssessmentStatus;
   assessment_kind: "auto" | "expert" | null;
   score: number | null;
