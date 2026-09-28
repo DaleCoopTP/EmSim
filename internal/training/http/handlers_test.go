@@ -281,7 +281,7 @@ func TestTraineeItemHasExactPublicShapeAndNoReferenceLeak(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
-	wantKeys := []string{"actions", "address_short", "allowed_transitions", "calls", "card", "card_number", "card_status", "close_reason", "closed_at", "deadlines", "events", "id", "incident_type", "interruptions", "mode", "offered_at", "opened_at", "primary_at", "reaction", "seq", "server_time", "state", "terminal_statuses"}
+	wantKeys := []string{"actions", "address_short", "allowed_transitions", "calls", "card", "card_number", "card_status", "close_reason", "closed_at", "deadlines", "events", "id", "incident_type", "incoming_call", "interruptions", "mode", "offered_at", "opened_at", "primary_at", "reaction", "seq", "server_time", "state", "terminal_statuses"}
 	gotKeys := make([]string, 0, len(got))
 	for k := range got {
 		gotKeys = append(gotKeys, k)
@@ -484,3 +484,81 @@ func TestRequestBodiesAreLimitedTo64KiB(t *testing.T) {
 
 var _ trainingService = (*fakeTraining)(nil)
 var _ authenticator = (*fakeAuth)(nil)
+
+// ADR-031: a phone_incoming event rings for 30 s; until it is answered the
+// trainee sees who calls but not what they say, while the instructor
+// always sees the text. An answered call's text is visible to both.
+func TestIncomingCallProjection(t *testing.T) {
+	svc := trainingFixture()
+	svc.item.Reaction = content.ReactionAccepted
+	svc.events = []training.DeliveredEvent{
+		{Key: "e1", Delivery: "notice", From: "crew_leader", Text: "Выехали", DeliveredAt: svc.now.Add(-50 * time.Second)},
+		{Key: "e2", Delivery: "phone_incoming", From: "crew_leader", Text: "Бригада на месте", DeliveredAt: svc.now.Add(-40 * time.Second)},
+		{Key: "e3", Delivery: "phone_incoming", From: "control", Text: "Почему нет статуса?", DeliveredAt: svc.now.Add(-10 * time.Second)},
+	}
+	ended := svc.now.Add(-30 * time.Second)
+	svc.item.Calls = []training.Call{{ID: uuid.New(), ContactKey: "crew_leader", Direction: training.CallIncoming, EventKey: "e2",
+		StartedAt: svc.now.Add(-35 * time.Second), EndedAt: &ended, RecordingState: training.RecordingAbsent}}
+
+	type eventView struct {
+		Key      string `json:"key"`
+		Text     string `json:"text"`
+		Answered *bool  `json:"answered"`
+	}
+	type view struct {
+		IncomingCall *struct {
+			EventKey  string `json:"event_key"`
+			From      string `json:"from"`
+			RingUntil string `json:"ring_until"`
+		} `json:"incoming_call"`
+		Events []eventView `json:"events"`
+		Calls  []struct {
+			Direction string  `json:"direction"`
+			EventKey  *string `json:"event_key"`
+		} `json:"calls"`
+	}
+	read := func(role auth.Role) view {
+		t.Helper()
+		response := httptest.NewRecorder()
+		trainingMux(svc, trainingPrincipal(role)).ServeHTTP(response, trainingRequest("GET", "/api/v1/items/"+svc.item.ID.String(), nil, true))
+		if response.Code != 200 {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+		var got view
+		if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	trainee := read(auth.RoleTrainee)
+	if trainee.IncomingCall == nil || trainee.IncomingCall.EventKey != "e3" || trainee.IncomingCall.From != "control" ||
+		trainee.IncomingCall.RingUntil != formatTime(svc.now.Add(20*time.Second)) {
+		t.Fatalf("incoming_call = %+v, want e3 from control ringing 20 s more", trainee.IncomingCall)
+	}
+	if len(trainee.Events) != 3 || trainee.Events[0].Answered != nil || trainee.Events[0].Text != "Выехали" {
+		t.Fatalf("notice = %+v", trainee.Events)
+	}
+	if e := trainee.Events[1]; e.Answered == nil || !*e.Answered || e.Text != "Бригада на месте" {
+		t.Fatalf("answered call = %+v", e)
+	}
+	if e := trainee.Events[2]; e.Answered == nil || *e.Answered || e.Text != "" {
+		t.Fatalf("ringing call leaked its text to the trainee: %+v", e)
+	}
+	if len(trainee.Calls) != 1 || trainee.Calls[0].Direction != "incoming" || trainee.Calls[0].EventKey == nil || *trainee.Calls[0].EventKey != "e2" {
+		t.Fatalf("calls = %+v", trainee.Calls)
+	}
+
+	instructor := read(auth.RoleInstructor)
+	if e := instructor.Events[2]; e.Text != "Почему нет статуса?" {
+		t.Fatalf("instructor must see the ringing call's text: %+v", e)
+	}
+
+	// Past its 30 s window the call is missed: nothing rings, and its text
+	// stays hidden from the trainee.
+	svc.now = svc.now.Add(25 * time.Second)
+	missed := read(auth.RoleTrainee)
+	if missed.IncomingCall != nil || missed.Events[2].Text != "" {
+		t.Fatalf("missed call = %+v / %+v", missed.IncomingCall, missed.Events[2])
+	}
+}

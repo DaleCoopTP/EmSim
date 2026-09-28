@@ -1002,6 +1002,7 @@ type itemJSON struct {
 	TerminalStatuses        *[]string                       `json:"terminal_statuses,omitempty"`
 	AllowedTransitions      []string                        `json:"allowed_transitions"`
 	Actions                 []actionJSON                    `json:"actions"`
+	IncomingCall            *incomingCallJSON               `json:"incoming_call"`
 	Events                  []deliveredEventJSON            `json:"events"`
 	Calls                   []callJSON                      `json:"calls"`
 	Comments                []commentJSON                   `json:"comments,omitempty"`
@@ -1057,12 +1058,26 @@ type deliveredEventJSON struct {
 	Delivery    string  `json:"delivery"`
 	From        string  `json:"from,omitempty"`
 	Text        string  `json:"text"`
+	Answered    *bool   `json:"answered,omitempty"`
 	VoiceURL    *string `json:"voice_url"`
 	DeliveredAt string  `json:"delivered_at"`
 	Late        bool    `json:"late"`
 }
 
-func toDeliveredEventsJSON(events []training.DeliveredEvent) []deliveredEventJSON {
+// incomingCallJSON is openapi.yaml's IncomingCall (ADR-031).
+type incomingCallJSON struct {
+	EventKey    string `json:"event_key"`
+	From        string `json:"from"`
+	DeliveredAt string `json:"delivered_at"`
+	RingUntil   string `json:"ring_until"`
+}
+
+// toDeliveredEventsJSON projects delivered events. A phone_incoming event
+// (ADR-031) carries answered; its text — the caller's words — reaches a
+// trainee only once the call was answered, while the instructor always
+// sees it.
+func toDeliveredEventsJSON(events []training.DeliveredEvent, calls []training.Call, traineeView bool) []deliveredEventJSON {
+	answeredKeys := dds.AnsweredEvents(calls)
 	out := make([]deliveredEventJSON, len(events))
 	for i, e := range events {
 		// Voice rendering (Piper TTS) is a later slice — e.Voice is
@@ -1071,6 +1086,13 @@ func toDeliveredEventsJSON(events []training.DeliveredEvent) []deliveredEventJSO
 		out[i] = deliveredEventJSON{
 			Key: e.Key, Delivery: e.Delivery, From: e.From, Text: e.Text,
 			VoiceURL: nil, DeliveredAt: formatTime(e.DeliveredAt), Late: e.Late,
+		}
+		if e.Delivery == "phone_incoming" {
+			answered := answeredKeys[e.Key]
+			out[i].Answered = &answered
+			if traineeView && !answered {
+				out[i].Text = ""
+			}
 		}
 	}
 	return out
@@ -1165,12 +1187,24 @@ func toItemJSON(item training.Item, actions []training.Action, events []training
 		TerminalStatuses:   terminalStatuses(item.Workflow),
 		AllowedTransitions: allowed,
 		Actions:            actionItems,
-		Events:             toDeliveredEventsJSON(events),
+		IncomingCall:       toIncomingCallJSON(item, events, now),
+		Events:             toDeliveredEventsJSON(events, item.Calls, traineeView),
 		Calls:              toCallsJSON(item.Calls, now),
 		Comments:           buildComments(actions),
 		Reference:          reference,
 		ServerTime:         formatTime(now),
 	}
+}
+
+// toIncomingCallJSON is the DDS item's ringing phone_incoming, if any
+// (ADR-031); nil otherwise.
+func toIncomingCallJSON(item training.Item, events []training.DeliveredEvent, now time.Time) *incomingCallJSON {
+	item.IncomingRings = training.IncomingRings(events)
+	ring := dds.RingingCall(item, now)
+	if ring == nil {
+		return nil
+	}
+	return &incomingCallJSON{EventKey: ring.EventKey, From: ring.From, DeliveredAt: formatTime(ring.DeliveredAt), RingUntil: formatTime(dds.RingUntil(*ring))}
 }
 
 func formatTime(t time.Time) string {

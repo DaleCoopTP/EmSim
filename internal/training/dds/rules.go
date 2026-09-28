@@ -62,6 +62,8 @@ func (exercise) Decide(item training.Item, cmd training.Command, now time.Time) 
 		return decideCallStart(item, cmd, now), nil
 	case training.CommandCallEnd:
 		return decideCallEnd(item, cmd), nil
+	case training.CommandAnswerIncoming:
+		return decideAnswerIncoming(item, cmd, now), nil
 	default:
 		return rejectDecision(item, training.RejectTransitionNotAllowed), nil
 	}
@@ -344,12 +346,25 @@ type callEndPayload struct {
 
 func decideCallEnd(item training.Item, cmd training.Command) training.Decision {
 	var payload callEndPayload
-	if err := json.Unmarshal(cmd.Payload, &payload); err != nil || payload.CallID == uuid.Nil || strings.TrimSpace(payload.AcceptedBy) == "" || strings.TrimSpace(payload.Summary) == "" {
+	if err := json.Unmarshal(cmd.Payload, &payload); err != nil || payload.CallID == uuid.Nil {
 		return rejectDecision(item, training.RejectInvalidPayload)
 	}
 	active := activeCall(item)
 	if active == nil || active.ID != payload.CallID {
 		return rejectDecision(item, training.RejectCallNotActive)
+	}
+	// ADR-031: an incoming call carries no call log and no recording; an
+	// outgoing one still needs «Кто принял»/«Суть сообщения» (ДДС-3 may
+	// relax this).
+	if !active.Outgoing() {
+		if payload.Recording != nil {
+			return rejectDecision(item, training.RejectInvalidPayload)
+		}
+		return training.Decision{Accepted: true, Reaction: item.Reaction, State: item.State, Card: item.Card,
+			EndCall: &training.CallEnd{CallID: payload.CallID, AcceptedBy: strings.TrimSpace(payload.AcceptedBy), Summary: strings.TrimSpace(payload.Summary)}}
+	}
+	if strings.TrimSpace(payload.AcceptedBy) == "" || strings.TrimSpace(payload.Summary) == "" {
+		return rejectDecision(item, training.RejectInvalidPayload)
 	}
 	var manifest *training.RecordingManifest
 	if payload.Recording != nil {

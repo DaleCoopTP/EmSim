@@ -1396,6 +1396,15 @@ func (s *Service) Execute(ctx context.Context, actor auth.Principal, itemID uuid
 				return err
 			}
 			item.Contacts, item.CallPolicy = version.Body.Contacts, version.Body.Reference.Call
+			if lesson.ExerciseType == content.ExerciseTypeDDSProcessing {
+				// ADR-031: answer_incoming needs the delivered
+				// phone_incoming events, read under the item lock above.
+				delivered, err := s.deliveredEventsForItem(ctx, tx, item.ID, item.ScenarioVersionID)
+				if err != nil {
+					return err
+				}
+				item.IncomingRings = IncomingRings(delivered)
+			}
 			if version.Body.Intake112 != nil {
 				if version.Body.Intake112.Call != nil {
 					item.IntakeScript = version.Body.Intake112.Call.Script

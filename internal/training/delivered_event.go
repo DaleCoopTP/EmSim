@@ -28,6 +28,25 @@ type DeliveredEvent struct {
 	Late        bool
 }
 
+// IncomingRing is one delivered phone_incoming event (ADR-031): the call
+// a DDS trainee may answer while it still rings.
+type IncomingRing struct {
+	EventKey    string
+	From        string
+	DeliveredAt time.Time
+}
+
+// IncomingRings picks the delivered phone_incoming events out of events.
+func IncomingRings(events []DeliveredEvent) []IncomingRing {
+	var out []IncomingRing
+	for _, e := range events {
+		if e.Delivery == "phone_incoming" {
+			out = append(out, IncomingRing{EventKey: e.Key, From: e.From, DeliveredAt: e.DeliveredAt})
+		}
+	}
+	return out
+}
+
 // deliveredEventsForItem loads itemID's own delivered events (scheduled/
 // skipped ones are never shown to the trainee — a scheduled event would
 // leak the scenario's future timeline) and resolves each against its

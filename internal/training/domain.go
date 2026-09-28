@@ -172,10 +172,14 @@ type Item struct {
 	Workflow content.Workflow
 	// PilotGoal is the reference.pilot_goal snapshot (ADR-017); "" means
 	// the ordinary DDS completion rules in dds.decideClose apply.
-	PilotGoal        string
-	Contacts         []content.Contact
-	CallPolicy       content.Call
-	Calls            []Call
+	PilotGoal  string
+	Contacts   []content.Contact
+	CallPolicy content.Call
+	Calls      []Call
+	// IncomingRings (ADR-031, DDS only) are the item's delivered
+	// phone_incoming events — not persisted on items, loaded by the
+	// application service so the pure dds rules can answer them.
+	IncomingRings    []IncomingRing
 	Mode             Mode
 	Seq              int64
 	LogSeq           int64
@@ -352,6 +356,8 @@ const (
 	RejectCallRequired   Rejection = "call_required"
 	RejectCallInProgress Rejection = "call_in_progress"
 	RejectCallNotActive  Rejection = "call_not_active"
+	// RejectCallMissed is answer_incoming after the ring ended (ADR-031).
+	RejectCallMissed Rejection = "call_missed"
 )
 
 // HTTPStatus is the fixed status a new (non-replay) decision carries,
