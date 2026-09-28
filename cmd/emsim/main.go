@@ -16,10 +16,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"emsim/internal/platform/backup"
 )
 
 var (
-	errCommandRequired = errors.New("subcommand is required: migrate | api | worker | bootstrap-admin | import | bench-llm")
+	errCommandRequired = errors.New("subcommand is required: migrate | api | worker | bootstrap-admin | import | bench-llm | backup | restore")
 	errUnknownCommand  = errors.New("unknown subcommand")
 	errNotImplemented  = errors.New("subcommand is not implemented yet")
 )
@@ -56,6 +58,10 @@ func run(ctx context.Context, args []string) error {
 		return runImport(ctx, rest)
 	case "bench-llm":
 		return runBenchLLM(ctx, rest)
+	case "backup":
+		return runBackup(ctx, rest, os.Stdout)
+	case "restore":
+		return runRestore(ctx, rest, os.Stdout)
 	default:
 		return errUnknownCommand
 	}
@@ -71,6 +77,22 @@ func errorCode(err error) string {
 		return "invalid_invocation"
 	case errors.Is(err, errNotImplemented):
 		return "not_implemented"
+	case errors.Is(err, errBackupUsage), errors.Is(err, errRestoreUsage), errors.Is(err, errRestoreNotConfirmed):
+		return "invalid_invocation"
+	case errors.Is(err, backup.ErrNotConfigured):
+		return "backup_not_configured"
+	case errors.Is(err, backup.ErrDump):
+		return "backup_dump_failed"
+	case errors.Is(err, backup.ErrBlobs):
+		return "backup_blobs_failed"
+	case errors.Is(err, backup.ErrManifest):
+		return "backup_manifest_mismatch"
+	case errors.Is(err, backup.ErrSchemaNewer):
+		return "backup_schema_newer"
+	case errors.Is(err, backup.ErrRestore):
+		return "restore_failed"
+	case errors.Is(err, backup.ErrWrite):
+		return "backup_write_failed"
 	default:
 		return "operational_error"
 	}

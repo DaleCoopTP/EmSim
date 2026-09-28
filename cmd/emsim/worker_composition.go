@@ -23,9 +23,11 @@ import (
 	"emsim/internal/assessment/operator112/descjudge"
 	"emsim/internal/content"
 	"emsim/internal/platform/audit"
+	"emsim/internal/platform/backup"
 	"emsim/internal/platform/config"
 	"emsim/internal/platform/llm"
 	"emsim/internal/platform/observability"
+	pgstore "emsim/internal/platform/postgres"
 	"emsim/internal/platform/tasks"
 	"emsim/internal/reporting"
 	reportingpg "emsim/internal/reporting/postgres"
@@ -50,6 +52,11 @@ const kindAuditPrune tasks.Kind = "audit.prune"
 
 // auditPruneBatch bounds one DELETE statement of audit.prune.
 const auditPruneBatch = 5000
+
+// kindBackupRun (ADR-033) makes one copy of the database and blob store
+// into BACKUP_DIR; the scheduler enqueues it daily, POST /admin/backup on
+// demand.
+const kindBackupRun tasks.Kind = "backup.run"
 
 // registerKinds is the single place every task kind's Spec is declared
 // (docs/technical-discovery.md §6), shared by both processes that touch
@@ -116,6 +123,15 @@ func registerKinds(registry *tasks.Registry) error {
 	if err := registry.Register(tasks.Spec{
 		Name: kindAuditPrune, Pool: "short", MaxAttempts: 3,
 		Lease: 10 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 5,
+	}); err != nil {
+		return err
+	}
+	// ADR-033: backup shares the single "report" slot with PDF builds, so
+	// a long dump never holds a short worker lesson.close needs. The lease
+	// is renewed by heartbeats while pg_dump runs.
+	if err := registry.Register(tasks.Spec{
+		Name: kindBackupRun, Pool: "report", MaxAttempts: 2,
+		Lease: 10 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 10,
 	}); err != nil {
 		return err
 	}
@@ -190,6 +206,65 @@ func auditPruneHandler(pool *pgxpool.Pool, store *tasks.Store, retentionDays int
 		}
 		return nil
 	})
+}
+
+// backupHandler is kindBackupRun's worker side (ADR-033). The copy is made
+// outside any transaction; its audit row and the task's terminal state
+// then commit together. A copy made by an attempt whose terminal commit
+// fails stays on disk and is simply one more copy that rotation handles.
+func backupHandler(pool *pgxpool.Pool, store *tasks.Store, cfg backup.Config) tasks.Handler {
+	return tasks.HandlerFunc(func(ctx context.Context, lease tasks.Lease) error {
+		made, err := backup.Run(ctx, cfg, pgstore.ExpectedSchemaVersion, time.Now())
+		if err != nil {
+			retryability, code := tasks.Retryable, tasks.ErrorCode("backup_write_failed")
+			switch {
+			case errors.Is(err, backup.ErrNotConfigured):
+				retryability, code = tasks.Permanent, "backup_not_configured"
+			case errors.Is(err, backup.ErrDump):
+				code = "backup_dump_failed"
+			case errors.Is(err, backup.ErrBlobs):
+				code = "backup_blobs_failed"
+			}
+			failure, ferr := tasks.NewHandlerFailure(retryability, code)
+			if ferr != nil {
+				return ferr
+			}
+			return failure
+		}
+		result, err := json.Marshal(made)
+		if err != nil {
+			return errors.New("backup.run result encoding failed")
+		}
+		tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+		if err != nil {
+			return errors.New("backup.run transaction failed")
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if err := audit.Record(ctx, tx, audit.Entry{
+			ActorRole: "system", Action: "backup.run", ResourceType: "backup", Outcome: audit.OutcomeOK,
+			Details: map[string]any{"name": made.Name, "size_bytes": made.SizeBytes},
+		}); err != nil {
+			return errors.New("backup.run record failed")
+		}
+		if _, err := store.Terminal(ctx, tx, tasks.TerminalRequest{
+			Lease: lease, Now: time.Now().UTC(), Outcome: tasks.Done(result),
+		}); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return errors.New("backup.run commit failed")
+		}
+		return nil
+	})
+}
+
+// backupConfig is backup.Config for this process; BLOB_ROOT is read from
+// the environment like every other blob user in this binary.
+func backupConfig(processConfig config.Worker) backup.Config {
+	return backup.Config{
+		Dir: processConfig.BackupDir, BlobRoot: os.Getenv("BLOB_ROOT"),
+		DatabaseURL: processConfig.DatabaseURL, Keep: processConfig.BackupKeep,
+	}
 }
 
 // lessonCloseHandler is training.KindLessonClose's worker side (C8): the
@@ -570,6 +645,9 @@ func composePools(
 	if err := handlers.Register(kindAuditPrune, auditPruneHandler(pool, store, processConfig.AuditRetentionDays)); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
+	if err := handlers.Register(kindBackupRun, backupHandler(pool, store, backupConfig(processConfig))); err != nil {
+		return nil, errors.New("handler configuration is invalid")
+	}
 	if err := handlers.Register(training.KindAssessmentEvaluate, assessmentService); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
@@ -693,7 +771,12 @@ func composeMaintenance(
 // maintenanceSchedules lists the daily tasks the maintenance scheduler
 // enqueues (ADR-033).
 func maintenanceSchedules(processConfig config.Worker) []tasks.Schedule {
-	return []tasks.Schedule{{Kind: kindAuditPrune, At: processConfig.AuditPruneAt}}
+	schedules := []tasks.Schedule{{Kind: kindAuditPrune, At: processConfig.AuditPruneAt}}
+	// No BACKUP_DIR (development, tests): no daily backup is scheduled.
+	if processConfig.BackupDir != "" {
+		schedules = append(schedules, tasks.Schedule{Kind: kindBackupRun, At: processConfig.BackupAt})
+	}
+	return schedules
 }
 
 func e2eRecoveryPolicy() tasks.Policy {

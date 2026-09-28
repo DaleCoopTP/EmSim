@@ -33,6 +33,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -trimpath -ldflags="-s -w" -o /out/emsim ./cmd/emsim
 
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS runtime
+# pg_dump/pg_restore for backup.run and `emsim restore` (ADR-033): the
+# same major version as compose's postgres:16 server — a newer client's
+# restore emits settings an older server rejects.
+RUN apk add --no-cache postgresql16-client
 WORKDIR /app
 COPY --from=build /out/emsim /app/emsim
 # seed/ (slice 2's C3 pilot catalogue) is read by "emsim import seed

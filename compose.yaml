@@ -82,6 +82,16 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # One-shot (ADR-033): the host backup directory is created by Docker as
+  # root; hand it to the emsim user (uid 65532) the worker runs as.
+  backup-dir:
+    image: emsim:local
+    user: "0:0"
+    entrypoint: ["chown", "65532:65532", "/backups"]
+    volumes:
+      - ${BACKUP_HOST_DIR:-./backups}:/backups
+    restart: "no"
+
   api:
     image: emsim:local
     command: ["api"]
@@ -167,10 +177,16 @@ services:
       SCHEDULE_TZ: ${SCHEDULE_TZ:-Europe/Moscow}
       AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-183}
       AUDIT_PRUNE_AT: ${AUDIT_PRUNE_AT:-04:00}
+      # ADR-033: daily copy of the database and blobs into the host
+      # directory BACKUP_HOST_DIR (mounted at /backups), BACKUP_KEEP kept.
+      BACKUP_DIR: /backups
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+      BACKUP_AT: ${BACKUP_AT:-03:00}
     ports:
       - "127.0.0.1:${WORKER_ADMIN_PORT:-8082}:8081"
     volumes:
       - blob-data:/app/blobs
+      - ${BACKUP_HOST_DIR:-./backups}:/backups
     # host.docker.internal stays for compose.no-llm.yaml's Ollama-on-the-
     # host development mode.
     extra_hosts:
@@ -180,6 +196,8 @@ services:
       - inference
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      backup-dir:
         condition: service_completed_successfully
       # required: false lets compose.no-llm.yaml switch the llm service
       # off; with the stock file the worker waits until the model is

@@ -50,6 +50,8 @@ const (
 	defaultScheduleTZ         = "Europe/Moscow"
 	defaultAuditRetentionDays = 183
 	defaultAuditPruneAt       = "04:00"
+	defaultBackupKeep         = 14
+	defaultBackupAt           = "03:00"
 )
 
 // Caller generation defaults mirror the local MVP's own tuned values
@@ -167,7 +169,14 @@ type Worker struct {
 	// is when that runs each day.
 	AuditRetentionDays int
 	AuditPruneAt       time.Duration
-	LocalTestPolicy    string
+	// BackupDir (ADR-033, BACKUP_DIR) is where backup.run writes copies;
+	// empty disables the daily backup (development, tests). BackupKeep
+	// (BACKUP_KEEP, default 14) copies are retained; BackupAt
+	// (BACKUP_AT, "HH:MM", default 03:00) is the daily slot.
+	BackupDir       string
+	BackupKeep      int
+	BackupAt        time.Duration
+	LocalTestPolicy string
 }
 
 func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker, error) {
@@ -262,6 +271,14 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 	if err != nil {
 		return Worker{}, fmt.Errorf("%w: AUDIT_PRUNE_AT must be HH:MM", ErrInvalidWorkerConfiguration)
 	}
+	backupKeep, err := parseIntOrDefault(lookup("BACKUP_KEEP"), defaultBackupKeep)
+	if err != nil {
+		return Worker{}, ErrInvalidWorkerConfiguration
+	}
+	backupAt, err := parseTimeOfDayOrDefault(lookup("BACKUP_AT"), defaultBackupAt)
+	if err != nil {
+		return Worker{}, fmt.Errorf("%w: BACKUP_AT must be HH:MM", ErrInvalidWorkerConfiguration)
+	}
 	sharedAPIKey := strings.TrimSpace(lookup("LLM_API_KEY"))
 	llmDialect := llmclient.Dialect(strings.TrimSpace(lookup("LLM_DIALECT")))
 	if llmDialect == "" {
@@ -285,6 +302,7 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 		JudgeLLMAPIKey:   firstNonEmpty(strings.TrimSpace(lookup("JUDGE_LLM_API_KEY")), sharedAPIKey),
 		LLMDialect:       llmDialect,
 		ScheduleLocation: scheduleLocation, AuditRetentionDays: auditRetentionDays, AuditPruneAt: auditPruneAt,
+		BackupDir: strings.TrimSpace(lookup("BACKUP_DIR")), BackupKeep: backupKeep, BackupAt: backupAt,
 		LocalTestPolicy: strings.TrimSpace(lookup("WORKER_LOCAL_TEST_POLICY")),
 	}
 	if err := config.Validate(); err != nil {
@@ -365,7 +383,8 @@ func (c Worker) Validate() error {
 	if c.JudgeTimeout <= 0 || c.JudgeMaxTokens < 1 {
 		return ErrInvalidWorkerConfiguration
 	}
-	if c.ScheduleLocation == nil || c.AuditRetentionDays < 0 || c.AuditPruneAt < 0 || c.AuditPruneAt >= 24*time.Hour {
+	if c.ScheduleLocation == nil || c.AuditRetentionDays < 0 || c.AuditPruneAt < 0 || c.AuditPruneAt >= 24*time.Hour ||
+		c.BackupKeep < 1 || c.BackupAt < 0 || c.BackupAt >= 24*time.Hour {
 		return ErrInvalidWorkerConfiguration
 	}
 	if !llmclient.ValidDialect(c.LLMDialect) {

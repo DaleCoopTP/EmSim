@@ -43,3 +43,6 @@ venv/
 
 # Classroom CA root certificate exported by `make class-ca` (ADR-033)
 /emsim-root.crt
+
+# Backup copies written by the worker (ADR-033, BACKUP_HOST_DIR)
+/backups/
