@@ -160,16 +160,16 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	// "archived": true on the four DDS pilots and eight non-AI 112 cases
 	// hides them from the default catalogue without changing their versions.
 	// The eleven 112 cases with full references (2026-09-28: gas smell ×3,
-	// fire ×6, injury ×2) bring it to 29 scenarios/35 versions.
-	if scenarioResult.NewScenarios != 29 || scenarioResult.NewVersions != 35 || scenarioResult.Unchanged != 0 || scenarioResult.StatusChanged != 12 {
-		t.Fatalf("ImportScenarios = %+v, want NewScenarios=29 NewVersions=35 Unchanged=0 StatusChanged=12", scenarioResult)
+	// fire ×6, injury ×2) bring it to 29 scenarios/35 versions; case 8 gained a version 2 (the child's full name and birth date) — 36 versions.
+	if scenarioResult.NewScenarios != 29 || scenarioResult.NewVersions != 36 || scenarioResult.Unchanged != 0 || scenarioResult.StatusChanged != 12 {
+		t.Fatalf("ImportScenarios = %+v, want NewScenarios=29 NewVersions=36 Unchanged=0 StatusChanged=12", scenarioResult)
 	}
 	scenarioResult2, err := svc.ImportScenarios(ctx, openScenarioDir(t, "../../seed/scenarios"), actorID, actorRole, "req-6")
 	if err != nil {
 		t.Fatalf("ImportScenarios (replay): %v", err)
 	}
-	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 35 || scenarioResult2.StatusChanged != 0 {
-		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=35", scenarioResult2)
+	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 36 || scenarioResult2.StatusChanged != 0 {
+		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=36", scenarioResult2)
 	}
 
 	// --- read side ---

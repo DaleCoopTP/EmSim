@@ -3574,3 +3574,7 @@ Validation:
 - `go test ./internal/content/` — включает `TestSeedFilesAreValid`;
 - `ValidateDetailed` — ошибок нет, только прежние предупреждения об общем образце «адрес»;
 - интеграционные `TestContentImportSeedEndToEnd`, `TestAPIProcessContentCatalogAccess`, `TestOperator112*`.
+
+## 2026-09-28 — 112: кейс 8, версия 2
+
+После проверки пользователем в кейс `112-injury-eye-playground-01` добавлены ФИО пострадавшего ребёнка (Морозов Артём Дмитриевич) и дата рождения (12.05.2020): новый факт, вопрос к описанию и строка в `case_description`. Счётчики импорта в `content_import_test`: 36 версий. Validation: `go test ./internal/content/`, `TestContentImportSeedEndToEnd`, `TestAPIProcessContentCatalogAccess`; импортировано в локальный стек.
