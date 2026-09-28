@@ -6,6 +6,8 @@ import (
 
 	"emsim/internal/content"
 	"emsim/internal/training"
+
+	"github.com/google/uuid"
 )
 
 // districtWorkflow and ambulanceWorkflow mirror seed/services.json's
@@ -167,5 +169,20 @@ func TestAmbulanceHasNoNotAcceptedAndClosesWithoutTeam(t *testing.T) {
 	}
 	if d.PrimaryAt == nil {
 		t.Fatal("a closing first decision still fixes primary_at")
+	}
+}
+
+// ДДС-3/ADR-032: an outgoing call's «Кто принял»/«Суть сообщения» is no
+// longer required on a terminal-workflow service — dds/rubric-v2 dropped
+// C_CALL_LOG. TestOutgoingCallEndStillNeedsCallLog (rules_test.go) covers
+// the old pilot services, whose workflow has no Terminal statuses and
+// still needs both fields (still scored by dds/rubric-v1).
+func TestTerminalWorkflowCallEndAllowsEmptyCallLog(t *testing.T) {
+	item := terminalItem(t, districtWorkflow())
+	call := training.Call{ID: uuid.New(), ContactKey: "crew_leader", Direction: training.CallOutgoing, StartedAt: item.OfferedAt}
+	item.Calls = []training.Call{call}
+	decision, err := Exercise.Decide(item, training.Command{Type: training.CommandCallEnd, Payload: mustJSON(t, map[string]any{"call_id": call.ID, "accepted_by": "", "summary": "", "recording": nil})}, item.OfferedAt)
+	if err != nil || !decision.Accepted || decision.EndCall == nil {
+		t.Fatalf("terminal-workflow outgoing call_end with an empty call log = %+v, %v, want accepted", decision, err)
 	}
 }

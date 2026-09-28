@@ -353,9 +353,7 @@ func decideCallEnd(item training.Item, cmd training.Command) training.Decision {
 	if active == nil || active.ID != payload.CallID {
 		return rejectDecision(item, training.RejectCallNotActive)
 	}
-	// ADR-031: an incoming call carries no call log and no recording; an
-	// outgoing one still needs «Кто принял»/«Суть сообщения» (ДДС-3 may
-	// relax this).
+	// ADR-031: an incoming call carries no call log and no recording.
 	if !active.Outgoing() {
 		if payload.Recording != nil {
 			return rejectDecision(item, training.RejectInvalidPayload)
@@ -363,7 +361,13 @@ func decideCallEnd(item training.Item, cmd training.Command) training.Decision {
 		return training.Decision{Accepted: true, Reaction: item.Reaction, State: item.State, Card: item.Card,
 			EndCall: &training.CallEnd{CallID: payload.CallID, AcceptedBy: strings.TrimSpace(payload.AcceptedBy), Summary: strings.TrimSpace(payload.Summary)}}
 	}
-	if strings.TrimSpace(payload.AcceptedBy) == "" || strings.TrimSpace(payload.Summary) == "" {
+	// ДДС-3/ADR-032: an outgoing call still needs «Кто принял»/«Суть
+	// сообщения» on the old pilot services (no terminal workflow status,
+	// still scored by dds/rubric-v1's own C_CALL_LOG). A service with a
+	// terminal-status workflow (dds_district_chertanovo, dds_ambulance_
+	// 03, …) no longer has that criterion under dds/rubric-v2 — the
+	// fields stay in the command body, but empty strings are accepted.
+	if len(item.Workflow.Terminal) == 0 && (strings.TrimSpace(payload.AcceptedBy) == "" || strings.TrimSpace(payload.Summary) == "") {
 		return rejectDecision(item, training.RejectInvalidPayload)
 	}
 	var manifest *training.RecordingManifest
