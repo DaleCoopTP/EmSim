@@ -3670,3 +3670,14 @@ Status: c7 выполнен.
 - Trainee: эндпоинты оценки ему недоступны (403); `/my/results` отдаёт только `PublicError` с названием критерия — тест `TestPublicErrorsNameJudgedDDSCriteria` фиксирует, что текст вопроса (эталон) туда не попадает. `StripExpected` остаётся защитой в глубину (вопрос лежит в `Expected`).
 
 Validation: `go test ./internal/...`, `python3 design-docs/contracts/check.py`.
+
+## 2026-09-28 — ДДС-4 c8: разбор и отчёт в вебе
+
+Status: c8 выполнен.
+
+- `web/src/components/CriteriaTable.tsx` (вынесен из `ItemReview.tsx`): раскрываемые «Подробности» у критериев с `details` — для `D_COMMENT_CONTENT` вопрос («Ожидалось: …»), комментарий, ответ судьи и баллы; для `G_GRAMMAR` текст комментария с подсвеченными фрагментами и списком «фрагмент → исправление (вид)». Имя модели судьи в разборе уже показывалось (`detail.final.model`).
+- `LessonReport.tsx`: колонка «Ошибок в комментариях» (только если хоть у одной карточки судили `G_GRAMMAR`); `api/reporting.ts`: `comment_errors`.
+- Форма экспертной ревизии ДДС не менялась (статус на критерий целиком).
+- `schema.d.ts` в `.gitignore` (генерируется `npm run generate:api`).
+
+Validation: `make verify-web` (tsc + vite build), `npm run lint` (те же 4 прежних предупреждения). Браузерный e2e в песочнице не запускался: `web/e2e/run.mjs` поднимает Docker Compose, а Docker-демона здесь нет (см. c9/c10).

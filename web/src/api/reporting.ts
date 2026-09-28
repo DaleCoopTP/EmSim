@@ -50,6 +50,9 @@ export interface ReportItem {
   // ready assessment on rubric-v2 — undefined/empty for a DDS row.
   intake_blocks?: IntakeBlockScore[];
   intake_penalty_total?: number | null;
+  // ДДС-4/ADR-034: G_GRAMMAR's error count; null/undefined unless the
+  // item was judged on dds/rubric-v3.
+  comment_errors?: number | null;
 }
 
 export interface ReportParticipant {

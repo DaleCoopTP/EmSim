@@ -9,6 +9,7 @@ import { formatDateTime } from "../../format";
 import { cardStatusLabel, reactionLabel } from "../../labels";
 import { expectedProfileText, profileFieldVisible } from "../../intakeProfile";
 import { IntakeAutoAssessment, isPenaltyCriterion, criterionStatusLabels, type RubricEffectiveCriterion } from "../../components/IntakeAutoAssessment";
+import { CriteriaTable } from "../../components/CriteriaTable";
 
 type CriterionStatus = CriterionResult["status"];
 type Item = components["schemas"]["Item"];
@@ -111,13 +112,6 @@ export function ItemReviewRoute() {
 }
 
 function useItem(itemId: string) { return useQuery({ queryKey: ["training", "item", itemId], queryFn: () => api.get<Item>(`/items/${encodeURIComponent(itemId)}`), enabled: itemId !== "" }); }
-
-// CriteriaTable's own "Критерий" column shows rubric_effective's title
-// for the criterion's id (ДДС-3: dds/rubric-v1 and dds/rubric-v2 share
-// the review UI, so a v2 lesson's T_PROGRESS/C_CALLS — and v1's own
-// C_CALL_MADE/G_ADDRESS — read as their own titles, not bare ids), the
-// bare id itself only as a fallback when rubric_effective has none.
-function CriteriaTable({ criteria, rubricByID }: { criteria: CriterionResult[]; rubricByID: Record<string, RubricEffectiveCriterion> }) { if (criteria.length === 0) return <p>Автооценка ещё не готова.</p>; return <table><thead><tr><th>Критерий</th><th>Статус</th><th>Основание</th></tr></thead><tbody>{criteria.map((criterion) => <tr key={criterion.id}><td>{rubricByID[criterion.id]?.title ?? criterion.id}{criterion.critical ? " · критичный" : ""}</td><td>{labels[criterion.status]}</td><td>{criterion.explanation || "—"}{criterion.evidence_refs?.length ? ` (${criterion.evidence_refs.join(", ")})` : ""}</td></tr>)}</tbody></table>; }
 
 function round2(value: number): number { return Math.round(value * 100) / 100; }
 
