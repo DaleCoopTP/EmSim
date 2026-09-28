@@ -38,6 +38,7 @@ import (
 	"emsim/internal/platform/observability"
 	pgstore "emsim/internal/platform/postgres"
 	"emsim/internal/platform/realtime"
+	"emsim/internal/platform/status"
 	"emsim/internal/platform/tasks"
 	"emsim/internal/reporting"
 	reportinghttp "emsim/internal/reporting/http"
@@ -207,6 +208,18 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.
 	assessmenthttp.NewHandlers(assessmentService, trainingService, authService, cfg.CookieSecure).Register(apiMux)
 	reportingService := reporting.NewService(reportingpg.NewStore(pool), mustTaskEnqueuer(pool))
 	reportinghttp.NewHandlers(reportingService, trainingService, authService, cfg.CookieSecure).Register(apiMux)
+	// ADR-033: the administrator's status screen and manual backup. The
+	// status package is platform code and knows nothing of sessions; the
+	// admin-only guard and the actor come from the auth module here.
+	adminOnly := func(handler http.HandlerFunc) http.Handler {
+		return authhttp.SessionMiddleware(authService, cfg.CookieSecure)(authhttp.RequireRole(auth.GroupAdmin)(handler))
+	}
+	sessionActor := func(ctx context.Context) (uuid.UUID, string, bool) {
+		principal, ok := authhttp.PrincipalFromContext(ctx)
+		return principal.UserID, string(principal.Role), ok
+	}
+	status.NewHandlers(pool, mustTaskEnqueuer(pool), kindBackupRun, os.Getenv("BLOB_ROOT"), pgstore.ExpectedSchemaVersion, sessionActor).
+		Register(apiMux, adminOnly)
 
 	root := http.NewServeMux()
 	root.Handle("/api/", apiMux)

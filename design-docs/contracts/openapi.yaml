@@ -136,26 +136,26 @@ paths:
   /admin/backup:
     post:
       tags: [admin]
-      summary: Запустить backup (pg_dump + blobs) — фоновая задача
+      summary: Сделать резервную копию сейчас (pg_dump + blobs) — фоновая задача backup.run (ADR-033)
+      description: Копия пишется worker'ом в BACKUP_DIR. 409 с details.reason=backup_not_configured, пока ни один worker не сообщил о каталоге копий; backup_in_progress, пока другая копия в очереди или выполняется.
       responses:
         '202': { $ref: '#/components/responses/Accepted' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /admin/status:
     get:
       tags: [admin]
-      summary: Состояние системы
+      summary: Состояние системы (ADR-033)
+      description: Только администратор. Задачи показываются без payload/result — администратор не видит содержимого занятий.
       responses:
         '200':
           description: OK
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  db_schema_version: { type: integer }
-                  tasks: { type: object, additionalProperties: { type: object, additionalProperties: { type: integer } }, description: kind → status → count }
-                  models: { type: object, properties: { llm: { type: string }, stt: { type: string }, tts: { type: string } } }
-                  disk_free_bytes: { type: integer }
-                  last_backup_at: { type: string, format: date-time, nullable: true }
+              schema: { $ref: '#/components/schemas/AdminStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   # ------------------------------------------------------------ content
   /services:
@@ -2659,6 +2659,71 @@ components:
         lagging: { type: array, items: { type: string, format: uuid } }
         top_errors: { type: array, items: { type: object, properties: { criterion_id: { type: string }, count: { type: integer } } } }
 
+    AdminStatus:
+      type: object
+      required: [server_time, db_schema_version, expected_schema_version, tasks, models, disk_free_bytes, last_backup_at, backup, workers, failed_tasks]
+      properties:
+        server_time: { type: string, format: date-time }
+        db_schema_version: { type: integer }
+        expected_schema_version: { type: integer, description: Версия схемы, которую ждёт эта сборка }
+        tasks: { type: object, additionalProperties: { type: object, additionalProperties: { type: integer } }, description: kind → status → count }
+        models:
+          type: object
+          description: llm — по последней проверке worker'а (null, если модель не используется); stt/tts пока всегда null
+          properties:
+            llm: { $ref: '#/components/schemas/AdminModelStatus' }
+            stt: { $ref: '#/components/schemas/AdminModelStatus' }
+            tts: { $ref: '#/components/schemas/AdminModelStatus' }
+        disk_free_bytes: { type: [integer, 'null'], description: Свободно на диске блобов (BLOB_ROOT api) }
+        last_backup_at: { type: [string, 'null'], format: date-time }
+        backup: { $ref: '#/components/schemas/AdminBackupStatus' }
+        workers:
+          type: array
+          items:
+            type: object
+            required: [id, checked_at]
+            properties:
+              id: { type: string }
+              role: { type: string }
+              checked_at: { type: string, format: date-time }
+        failed_tasks: { type: array, items: { $ref: '#/components/schemas/AdminTaskSummary' }, description: failed/dead_letter, до 50 последних }
+    AdminModelStatus:
+      type: [object, 'null']
+      required: [status, checked_at]
+      properties:
+        status: { type: string, enum: [ok, unavailable] }
+        model: { type: string }
+        checked_at: { type: string, format: date-time }
+    AdminBackupStatus:
+      type: object
+      required: [enabled, free_bytes, checked_at, last_backup_at, copies, runs]
+      properties:
+        enabled: { type: boolean, description: Worker сообщил о каталоге копий (BACKUP_DIR задан) }
+        free_bytes: { type: [integer, 'null'] }
+        checked_at: { type: [string, 'null'], format: date-time }
+        last_backup_at: { type: [string, 'null'], format: date-time }
+        copies:
+          type: array
+          items:
+            type: object
+            required: [name, created_at, size_bytes]
+            properties:
+              name: { type: string }
+              created_at: { type: string, format: date-time }
+              size_bytes: { type: integer }
+        runs: { type: array, items: { $ref: '#/components/schemas/AdminTaskSummary' }, description: Последние 10 задач backup.run }
+    AdminTaskSummary:
+      type: object
+      required: [id, kind, status, attempts, max_attempts, last_error_code, created_at, terminal_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string }
+        status: { type: string, enum: [waiting, pending, leased, done, failed, dead_letter, cancelled] }
+        attempts: { type: integer }
+        max_attempts: { type: integer }
+        last_error_code: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        terminal_at: { type: [string, 'null'], format: date-time }
     Task:
       type: object
       required:

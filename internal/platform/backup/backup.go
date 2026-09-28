@@ -130,6 +130,14 @@ func Run(ctx context.Context, cfg Config, schemaVersion int64, now time.Time) (C
 		return Copy{}, ErrWrite
 	}
 	name := namePrefix + now.UTC().Format(nameLayout)
+	// Two copies within one second (a scheduled and a manual one) get a
+	// suffix instead of failing.
+	for n := 2; ; n++ {
+		if _, err := os.Stat(filepath.Join(cfg.Dir, name)); errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+		name = fmt.Sprintf("%s%s-%d", namePrefix, now.UTC().Format(nameLayout), n)
+	}
 	if err := os.Rename(tmp, filepath.Join(cfg.Dir, name)); err != nil {
 		return Copy{}, ErrWrite
 	}

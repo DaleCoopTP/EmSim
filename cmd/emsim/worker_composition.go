@@ -28,6 +28,7 @@ import (
 	"emsim/internal/platform/llm"
 	"emsim/internal/platform/observability"
 	pgstore "emsim/internal/platform/postgres"
+	"emsim/internal/platform/status"
 	"emsim/internal/platform/tasks"
 	"emsim/internal/reporting"
 	reportingpg "emsim/internal/reporting/postgres"
@@ -254,6 +255,9 @@ func backupHandler(pool *pgxpool.Pool, store *tasks.Store, cfg backup.Config) ta
 		if err := tx.Commit(ctx); err != nil {
 			return errors.New("backup.run commit failed")
 		}
+		probe := backupProbe(cfg.Dir)
+		copyStatus, detail := probe.Check(ctx)
+		_ = status.NewStore(pool).UpsertHeartbeat(ctx, probe.Component, copyStatus, detail)
 		return nil
 	})
 }
@@ -765,7 +769,84 @@ func composeMaintenance(
 	if err != nil {
 		return nil, errors.New("maintenance configuration is invalid")
 	}
-	return tasks.Composite(reaper, sampler, scheduler)
+	prober := status.NewProber(statusProbes(processConfig), status.NewStore(pool), 30*time.Second, 5*time.Second,
+		func(interval time.Duration) status.Ticker { return tasks.SystemTickerFactory{}.NewTicker(interval) })
+	return tasks.Composite(reaper, sampler, scheduler, prober)
+}
+
+// statusProbes are what this worker reports for the admin status screen
+// (ADR-033): that it is alive, whether its model answers, and the backup
+// directory's free space and copies — things the api cannot see itself.
+func statusProbes(processConfig config.Worker) []status.Probe {
+	probes := []status.Probe{{
+		Component: status.ComponentWorkerPrefix + heartbeatID(processConfig.WorkerID),
+		Check: func(context.Context) (string, map[string]any) {
+			return status.StatusOK, map[string]any{"role": string(processConfig.Role)}
+		},
+	}}
+	if url, model, key := modelEndpoint(processConfig); url != "" {
+		probeURL := strings.TrimSuffix(strings.TrimSuffix(url, "/"), "/v1") + "/health"
+		if processConfig.LLMDialect == llm.DialectOpenAI {
+			probeURL = strings.TrimSuffix(url, "/") + "/models"
+		}
+		probes = append(probes, status.Probe{Component: status.ComponentLLM, Check: status.HTTPCheck(probeURL, key, map[string]any{"model": model})})
+	}
+	if processConfig.BackupDir != "" {
+		probes = append(probes, backupProbe(processConfig.BackupDir))
+	}
+	return probes
+}
+
+// backupProbe reports the backup directory's free space and its copies.
+// backupHandler also runs it right after a copy, so the status screen
+// lists a new copy without waiting for the next probe round.
+func backupProbe(dir string) status.Probe {
+	return status.Probe{Component: status.ComponentBackup, Check: func(context.Context) (string, map[string]any) {
+		free, err := status.FreeBytes(dir)
+		if err != nil {
+			return status.StatusUnavailable, map[string]any{}
+		}
+		copies, err := backup.List(dir)
+		if err != nil {
+			return status.StatusUnavailable, map[string]any{"free_bytes": free}
+		}
+		if copies == nil {
+			copies = []backup.Copy{}
+		}
+		return status.StatusOK, map[string]any{"free_bytes": free, "copies": copies}
+	}}
+}
+
+// modelEndpoint is the model this worker calls — the caller's if the AI
+// caller is on, otherwise the judge's — or empty when neither is.
+func modelEndpoint(processConfig config.Worker) (url, model, key string) {
+	switch {
+	case processConfig.CallerReplier == config.CallerReplierLLM:
+		return processConfig.CallerLLMURL, processConfig.CallerLLMModel, processConfig.CallerLLMAPIKey
+	case processConfig.AssessmentJudge == config.AssessmentJudgeLLM:
+		return processConfig.JudgeLLMURL, processConfig.JudgeLLMModel, processConfig.JudgeLLMAPIKey
+	}
+	return "", "", ""
+}
+
+// heartbeatID fits a WORKER_ID into platform_heartbeats.component's
+// alphabet.
+func heartbeatID(workerID string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(workerID) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+		if b.Len() >= 56 {
+			break
+		}
+	}
+	if b.Len() == 0 {
+		return "worker"
+	}
+	return b.String()
 }
 
 // maintenanceSchedules lists the daily tasks the maintenance scheduler
