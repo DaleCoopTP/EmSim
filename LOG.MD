@@ -3595,3 +3595,14 @@ Status: plan only, кода нет.
 Validation: не требуется (только документы).
 
 Next: c1 — ADR-034.
+
+## 2026-09-28 — ДДС-4 c1: ADR-034
+
+Status: c1 выполнен.
+
+- `design-docs/adr/034-dds-llm-judge.md` (+ строка в `adr/README.md`): `dds/rubric-v3`, вопросы строит backend из `comment_must_mention`/`comment_facts`, `G_GRAMMAR` в балле (вес 5, порог `partial_max_errors`), вопросы без требований → `not_applicable`, выбор версии через `content.RubricVersionForJudge`.
+- `slice-dds-4-plan.md` и `slice-planning-dds.md`: ДДС-4 → «в работе».
+
+Validation: `python3 design-docs/contracts/check.py` (потребовалось `pip install jsonschema` — без него проверка схем не выполняется).
+
+Next: c2 — контракты (`rubric.dds.v3.json`).
