@@ -92,3 +92,36 @@ func TestRenderPDFIncludesCommentErrorCount(t *testing.T) {
 		t.Fatalf("not a PDF: %q", body[:min(len(body), 12)])
 	}
 }
+
+func TestLessonSettingsLine(t *testing.T) {
+	threshold := 85.0
+	for name, tc := range map[string]struct {
+		lesson Lesson
+		want   string
+	}{
+		"no settings": {Lesson{}, ""},
+		"timing only": {Lesson{Timing: &LessonTiming{OpenS: 30, PrimaryS: 45, CompleteS: 180}}, "Нормативы: открытие 30 с, решение 45 с, отработка 180 с"},
+		"custom scoring": {
+			Lesson{Timing: &LessonTiming{OpenS: 30, PrimaryS: 30, CompleteS: 180}, PassThreshold: &threshold, CustomWeights: true},
+			"Нормативы: открытие 30 с, решение 30 с, отработка 180 с; порог зачёта 85 (задан преподавателем); веса критериев изменены преподавателем",
+		},
+	} {
+		if got := lessonSettingsLine(tc.lesson); got != tc.want {
+			t.Errorf("%s: got %q want %q", name, got, tc.want)
+		}
+	}
+}
+
+func TestRenderPDFWithLessonSettings(t *testing.T) {
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	threshold := 90.0
+	snapshot := Snapshot{Version: 1, CapturedAt: now, Report: LessonReport{Lesson: Lesson{ID: uuid.New(), Title: "ДДС", FinishedAt: now,
+		Timing: &LessonTiming{OpenS: 30, PrimaryS: 45, CompleteS: 240}, PassThreshold: &threshold, CustomWeights: true}}}
+	body, err := RenderPDF(snapshot, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(body, []byte("%PDF-")) {
+		t.Fatalf("not a PDF: %q", body[:min(len(body), 12)])
+	}
+}

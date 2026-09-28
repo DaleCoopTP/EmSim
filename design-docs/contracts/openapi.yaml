@@ -2729,6 +2729,11 @@ components:
         title: { type: string }
         mode: { type: string, enum: [intro, training, preview] }
         finished_at: { type: string, format: date-time }
+        timing:
+          description: 'ДДС-6/ADR-035: норматив занятия ДДС; у занятия 112 отсутствует.'
+          allOf: [ { $ref: '#/components/schemas/LessonTiming' } ]
+        pass_threshold: { type: number, description: 'Порог зачёта, заданный преподавателем; отсутствует, если занятие оценивалось по порогу рубрики.' }
+        custom_weights: { type: boolean, description: Преподаватель изменил веса критериев для занятия. }
 
     PublicError:
       type: object

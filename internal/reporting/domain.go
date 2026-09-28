@@ -213,6 +213,21 @@ type Lesson struct {
 	Title      string    `json:"title"`
 	Mode       string    `json:"mode"`
 	FinishedAt time.Time `json:"finished_at"`
+	// ДДС-6/ADR-035: the lesson's own settings, omitted for a lesson
+	// without them (112, or a report snapshot taken before this slice).
+	// Timing is the DDS norm; PassThreshold/CustomWeights are set only when
+	// the instructor changed the rubric's threshold/weights for the lesson.
+	Timing        *LessonTiming `json:"timing,omitempty"`
+	PassThreshold *float64      `json:"pass_threshold,omitempty"`
+	CustomWeights bool          `json:"custom_weights,omitempty"`
+}
+
+// LessonTiming is a DDS lesson's frozen time norm, in seconds.
+type LessonTiming struct {
+	OpenS       int  `json:"open_s"`
+	PrimaryS    int  `json:"primary_s"`
+	CompleteS   int  `json:"complete_s"`
+	SpawnEveryS *int `json:"spawn_every_s,omitempty"`
 }
 
 type LessonReport struct {

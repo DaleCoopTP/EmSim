@@ -3,6 +3,7 @@ package reporting
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,9 @@ func RenderPDF(snapshot Snapshot, generatedAt time.Time) ([]byte, error) {
 	pdf.CellFormat(0, 5, fmt.Sprintf("Карточек: %d   Готовых оценок: %d   Требуют проверки: %d   Прервано: %d", len(snapshot.Report.Items), snapshot.Report.Aggregates.ReadyAssessments, snapshot.Report.Aggregates.PendingAssessments, snapshot.Report.Aggregates.InterruptedItems), "", 1, "L", false, 0, "")
 	if snapshot.Report.Aggregates.AvgScore != nil {
 		pdf.CellFormat(0, 5, fmt.Sprintf("Средний балл по готовым оценкам: %.2f", *snapshot.Report.Aggregates.AvgScore), "", 1, "L", false, 0, "")
+	}
+	if line := lessonSettingsLine(snapshot.Report.Lesson); line != "" {
+		pdf.CellFormat(0, 5, line, "", 1, "L", false, 0, "")
 	}
 	pdf.Ln(2)
 	section(pdf, "Участники")
@@ -111,4 +115,22 @@ func seconds(value *float64) string {
 		return "-"
 	}
 	return fmt.Sprintf("%.1f с", *value)
+}
+
+// lessonSettingsLine is the report header's line about the lesson's own
+// settings (ДДС-6/ADR-035): the DDS time norm, and — only when the
+// instructor changed them — the pass threshold and weights. Empty when the
+// lesson carries none.
+func lessonSettingsLine(lesson Lesson) string {
+	var parts []string
+	if t := lesson.Timing; t != nil {
+		parts = append(parts, fmt.Sprintf("Нормативы: открытие %d с, решение %d с, отработка %d с", t.OpenS, t.PrimaryS, t.CompleteS))
+	}
+	if lesson.PassThreshold != nil {
+		parts = append(parts, fmt.Sprintf("порог зачёта %s (задан преподавателем)", strconv.FormatFloat(*lesson.PassThreshold, 'f', -1, 64)))
+	}
+	if lesson.CustomWeights {
+		parts = append(parts, "веса критериев изменены преподавателем")
+	}
+	return strings.Join(parts, "; ")
 }

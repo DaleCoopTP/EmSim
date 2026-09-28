@@ -122,3 +122,30 @@ func TestPublicErrorsNameJudgedDDSCriteria(t *testing.T) {
 		t.Fatalf("public errors leak the reference fact: %s", raw)
 	}
 }
+
+func TestApplyLessonSettings(t *testing.T) {
+	var lesson reporting.Lesson
+	if err := applyLessonSettings(&lesson, []byte(`{"open_s":30,"primary_s":45,"complete_s":180}`), nil); err != nil {
+		t.Fatal(err)
+	}
+	if lesson.Timing == nil || lesson.Timing.PrimaryS != 45 || lesson.PassThreshold != nil || lesson.CustomWeights {
+		t.Fatalf("timing only: %+v", lesson)
+	}
+
+	lesson = reporting.Lesson{}
+	if err := applyLessonSettings(&lesson, []byte(`{"open_s":30,"primary_s":30,"complete_s":180}`), []byte(`{"weights":{"T_OPEN":100},"pass_threshold":85}`)); err != nil {
+		t.Fatal(err)
+	}
+	if lesson.PassThreshold == nil || *lesson.PassThreshold != 85 || !lesson.CustomWeights {
+		t.Fatalf("custom scoring: %+v", lesson)
+	}
+
+	// A 112 lesson's zero timing is not a norm.
+	lesson = reporting.Lesson{}
+	if err := applyLessonSettings(&lesson, []byte(`{"open_s":0,"primary_s":0,"complete_s":0}`), nil); err != nil {
+		t.Fatal(err)
+	}
+	if lesson.Timing != nil {
+		t.Fatalf("zero timing must be omitted: %+v", lesson.Timing)
+	}
+}

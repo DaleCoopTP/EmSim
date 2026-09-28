@@ -281,11 +281,15 @@ FROM lesson_report_rows WHERE lesson_id=$1 ORDER BY full_name, ordinal, item_id`
 
 func (s *Store) LessonReport(ctx context.Context, lessonID uuid.UUID) (reporting.LessonReport, error) {
 	var report reporting.LessonReport
-	if err := s.pool.QueryRow(ctx, `SELECT id, title, mode, finished_at FROM lessons WHERE id=$1 AND state='finished'`, lessonID).Scan(&report.Lesson.ID, &report.Lesson.Title, &report.Lesson.Mode, &report.Lesson.FinishedAt); err != nil {
+	var timingJSON, scoringJSON []byte
+	if err := s.pool.QueryRow(ctx, `SELECT id, title, mode, finished_at, timing, scoring FROM lessons WHERE id=$1 AND state='finished'`, lessonID).Scan(&report.Lesson.ID, &report.Lesson.Title, &report.Lesson.Mode, &report.Lesson.FinishedAt, &timingJSON, &scoringJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return reporting.LessonReport{}, reporting.ErrNotFound
 		}
 		return reporting.LessonReport{}, fmt.Errorf("reporting: lesson: %w", err)
+	}
+	if err := applyLessonSettings(&report.Lesson, timingJSON, scoringJSON); err != nil {
+		return reporting.LessonReport{}, err
 	}
 	items, err := s.items(ctx, rowQuery, lessonID)
 	if err != nil {
@@ -294,6 +298,30 @@ func (s *Store) LessonReport(ctx context.Context, lessonID uuid.UUID) (reporting
 	report.Items = items
 	report.Participants, report.Aggregates = reporting.Enrich(items)
 	return report, nil
+}
+
+// applyLessonSettings decodes lessons.timing/scoring into the report's
+// lesson header (ДДС-6/ADR-035). A zero timing (112 lessons carry none) is
+// left out.
+func applyLessonSettings(lesson *reporting.Lesson, timingJSON, scoringJSON []byte) error {
+	var timing reporting.LessonTiming
+	if err := json.Unmarshal(timingJSON, &timing); err != nil {
+		return fmt.Errorf("reporting: lesson timing: %w", err)
+	}
+	if timing.OpenS > 0 {
+		lesson.Timing = &timing
+	}
+	if scoringJSON != nil {
+		var scoring struct {
+			PassThreshold float64 `json:"pass_threshold"`
+		}
+		if err := json.Unmarshal(scoringJSON, &scoring); err != nil {
+			return fmt.Errorf("reporting: lesson scoring: %w", err)
+		}
+		lesson.PassThreshold = &scoring.PassThreshold
+		lesson.CustomWeights = true
+	}
+	return nil
 }
 
 func (s *Store) Results(ctx context.Context, userID uuid.UUID) ([]reporting.ItemResult, error) {
