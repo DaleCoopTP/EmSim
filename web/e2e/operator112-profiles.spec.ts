@@ -97,7 +97,9 @@ test("operator 112: three card-only cases show profiles only after type selectio
   // archived card-only fixtures so this test still covers profile behavior.
   const lessonId = new URL(page.url()).pathname.split("/").at(-1)!;
   await ok(await page.request.put(`/api/v1/lessons/${lessonId}/assignments`, { data: trainees.map((trainee, index) => ({
-    workstation_no: 905 + index, user_id: trainee.id, scenario_version_ids: [versionIds[index]],
+    // Workstation 905 keeps a three-case queue, as before the archiving,
+    // so the queue checks after its first case still have a next card.
+    workstation_no: 905 + index, user_id: trainee.id, scenario_version_ids: index === 0 ? versionIds : [versionIds[index]],
   })) }));
   await page.reload();
   await page.getByRole("button", { name: /Запустить занятие/ }).click();
