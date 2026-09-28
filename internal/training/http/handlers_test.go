@@ -253,6 +253,33 @@ func TestUpdateLessonSettingsPassesTimingAndMapsErrors(t *testing.T) {
 	}
 }
 
+func TestUpdateLessonSettingsScoringAbsentNullAndSet(t *testing.T) {
+	path := func(svc *fakeTraining) string { return "/api/v1/lessons/" + svc.lesson.ID.String() }
+	patch := func(body string) *fakeTraining {
+		svc := trainingFixture()
+		response := httptest.NewRecorder()
+		trainingMux(svc, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("PATCH", path(svc), []byte(body), true))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s: status=%d body=%s", body, response.Code, response.Body.String())
+		}
+		return svc
+	}
+	if svc := patch(`{"timing":{"open_s":30,"primary_s":30,"complete_s":180}}`); svc.lastPatch.ScoringSet {
+		t.Fatal("absent scoring must leave the setting alone")
+	}
+	if svc := patch(`{"scoring":null}`); !svc.lastPatch.ScoringSet || svc.lastPatch.Scoring != nil {
+		t.Fatalf("null scoring must reset: %+v", svc.lastPatch)
+	}
+	svc := patch(`{"scoring":{"weights":{"T_OPEN":100},"pass_threshold":80}}`)
+	if got := svc.lastPatch.Scoring; !svc.lastPatch.ScoringSet || got == nil || got.PassThreshold != 80 || got.Weights["T_OPEN"] != 100 {
+		t.Fatalf("scoring not passed through: %+v", svc.lastPatch)
+	}
+	response := httptest.NewRecorder()
+	bad := trainingFixture()
+	trainingMux(bad, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("PATCH", path(bad), []byte(`{"scoring":{"pass_threshold":80}}`), true))
+	requireError(t, response, 400, "invalid_request")
+}
+
 func TestOwnershipAndWorkstationErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

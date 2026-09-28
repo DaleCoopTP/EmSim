@@ -156,3 +156,46 @@ func readRubricVersion(filename string) (string, error) {
 	}
 	return rubric.Version, nil
 }
+
+// RubricDefaults is one DDS rubric version's own criterion weights and pass
+// threshold — what a lesson without its own scoring (ADR-035) is scored by.
+type RubricDefaults struct {
+	Version       string
+	PassThreshold float64
+	Weights       map[string]float64
+}
+
+var ddsRubricFiles = map[string]string{
+	"dds/rubric-v1": "rubric.default.json",
+	"dds/rubric-v2": "rubric.dds.v2.json",
+	"dds/rubric-v3": "rubric.dds.v3.json",
+}
+
+// DDSRubricDefaults reads a frozen dds_processing rubric version's weights
+// and threshold from the embedded contracts, for validating a lesson's own
+// scoring (ADR-035). An unknown version is an error.
+func DDSRubricDefaults(version string) (RubricDefaults, error) {
+	filename, ok := ddsRubricFiles[version]
+	if !ok {
+		return RubricDefaults{}, fmt.Errorf("content: unknown dds rubric version %q", version)
+	}
+	raw, err := contracts.Files.ReadFile(filename)
+	if err != nil {
+		return RubricDefaults{}, fmt.Errorf("read %s: %w", filename, err)
+	}
+	var rubric struct {
+		PassThreshold float64 `json:"pass_threshold"`
+		Criteria      []struct {
+			ID     string  `json:"id"`
+			Weight float64 `json:"weight"`
+		} `json:"criteria"`
+	}
+	if err := json.Unmarshal(raw, &rubric); err != nil {
+		return RubricDefaults{}, fmt.Errorf("parse %s: %w", filename, err)
+	}
+	out := RubricDefaults{Version: version, PassThreshold: rubric.PassThreshold, Weights: make(map[string]float64, len(rubric.Criteria))}
+	for _, c := range rubric.Criteria {
+		out.Weights[c.ID] = c.Weight
+	}
+	return out, nil
+}

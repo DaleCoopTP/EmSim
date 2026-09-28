@@ -347,6 +347,14 @@ func (h *Handlers) getLesson(w http.ResponseWriter, r *http.Request) {
 
 type lessonSettingsRequest struct {
 	Timing *timingJSON `json:"timing,omitempty"`
+	// Scoring stays raw so an absent field (unchanged) and an explicit null
+	// (reset to the rubric's own values) can be told apart.
+	Scoring json.RawMessage `json:"scoring,omitempty"`
+}
+
+type lessonScoringJSON struct {
+	Weights       map[string]float64 `json:"weights"`
+	PassThreshold float64            `json:"pass_threshold"`
 }
 
 func (h *Handlers) updateLessonSettings(w http.ResponseWriter, r *http.Request) {
@@ -365,6 +373,17 @@ func (h *Handlers) updateLessonSettings(w http.ResponseWriter, r *http.Request) 
 	if body.Timing != nil {
 		timing := fromTimingJSON(*body.Timing)
 		patch.Timing = &timing
+	}
+	if len(body.Scoring) > 0 {
+		patch.ScoringSet = true
+		if string(body.Scoring) != "null" {
+			var scoring lessonScoringJSON
+			if err := json.Unmarshal(body.Scoring, &scoring); err != nil || scoring.Weights == nil {
+				httpapi.WriteError(w, r, httpapi.CodeInvalidRequest, "malformed scoring", nil)
+				return
+			}
+			patch.Scoring = &training.LessonScoring{Weights: scoring.Weights, PassThreshold: scoring.PassThreshold}
+		}
 	}
 	lesson, err := h.training.UpdateLessonSettings(r.Context(), principal, lessonID, patch, httpapi.RequestIDFromContext(r.Context()))
 	if err != nil {
@@ -738,19 +757,20 @@ func toAssignmentJSON(a training.Assignment) assignmentJSON {
 // (GET /lessons/{id}); the list endpoint passes nil and the field is
 // omitted, matching Lesson.assignments being optional in the contract.
 type lessonJSON struct {
-	ID            string           `json:"id"`
-	ExerciseType  string           `json:"exercise_type"`
-	Title         string           `json:"title"`
-	Mode          string           `json:"mode"`
-	Level         string           `json:"level"`
-	State         string           `json:"state"`
-	Epoch         int64            `json:"epoch"`
-	Timing        timingJSON       `json:"timing"`
-	RubricVersion string           `json:"rubric_version,omitempty"`
-	Assignments   []assignmentJSON `json:"assignments,omitempty"`
-	StartedAt     *string          `json:"started_at"`
-	StoppedAt     *string          `json:"stopped_at"`
-	StopReason    *string          `json:"stop_reason,omitempty"`
+	ID            string             `json:"id"`
+	ExerciseType  string             `json:"exercise_type"`
+	Title         string             `json:"title"`
+	Mode          string             `json:"mode"`
+	Level         string             `json:"level"`
+	State         string             `json:"state"`
+	Epoch         int64              `json:"epoch"`
+	Timing        timingJSON         `json:"timing"`
+	RubricVersion string             `json:"rubric_version,omitempty"`
+	Scoring       *lessonScoringJSON `json:"scoring"`
+	Assignments   []assignmentJSON   `json:"assignments,omitempty"`
+	StartedAt     *string            `json:"started_at"`
+	StoppedAt     *string            `json:"stopped_at"`
+	StopReason    *string            `json:"stop_reason,omitempty"`
 }
 
 func toLessonJSON(l training.Lesson, assignments []training.Assignment) lessonJSON {
@@ -759,6 +779,9 @@ func toLessonJSON(l training.Lesson, assignments []training.Assignment) lessonJS
 		Mode: string(l.Mode), Level: string(l.Level), State: string(l.State),
 		Epoch: l.Epoch, Timing: toTimingJSON(l.Timing), RubricVersion: l.RubricVersion,
 		StartedAt: formatTimePtr(l.StartedAt), StoppedAt: formatTimePtr(l.StoppedAt), StopReason: l.StopReason,
+	}
+	if l.Scoring != nil {
+		out.Scoring = &lessonScoringJSON{Weights: l.Scoring.Weights, PassThreshold: l.Scoring.PassThreshold}
 	}
 	if assignments != nil {
 		out.Assignments = make([]assignmentJSON, len(assignments))

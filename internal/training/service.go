@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -186,6 +187,42 @@ func validateTiming(t Timing, level auth.Level) error {
 // unchanged.
 type LessonSettingsPatch struct {
 	Timing *Timing
+	// ScoringSet marks the scoring field as present in the request; a nil
+	// Scoring with ScoringSet resets the lesson to its rubric's own values.
+	ScoringSet bool
+	Scoring    *LessonScoring
+}
+
+// validateLessonScoring checks a lesson's own weights against its frozen
+// rubric version (ADR-035): exactly that version's criteria, each weight
+// >= 0, summing to 100, and a threshold within 0..100.
+func validateLessonScoring(rubricVersion string, sc LessonScoring) error {
+	defaults, err := content.DDSRubricDefaults(rubricVersion)
+	if err != nil {
+		return fmt.Errorf("training: read rubric: %w", err)
+	}
+	if sc.PassThreshold < 0 || sc.PassThreshold > 100 {
+		return validationErr("scoring.pass_threshold", "must be between 0 and 100")
+	}
+	var sum float64
+	for id, w := range sc.Weights {
+		if _, ok := defaults.Weights[id]; !ok {
+			return validationErr("scoring.weights."+id, "unknown criterion")
+		}
+		if w < 0 {
+			return validationErr("scoring.weights."+id, "must not be negative")
+		}
+		sum += w
+	}
+	for id := range defaults.Weights {
+		if _, ok := sc.Weights[id]; !ok {
+			return validationErr("scoring.weights."+id, "required")
+		}
+	}
+	if math.Abs(sum-100) > 0.01 {
+		return validationErr("scoring.weights", "must sum to 100")
+	}
+	return nil
 }
 
 // UpdateLessonSettings changes a draft DDS lesson's timing norm (ADR-035).
@@ -212,6 +249,14 @@ func (s *Service) UpdateLessonSettings(ctx context.Context, actor auth.Principal
 				return err
 			}
 			lesson.Timing = *patch.Timing
+		}
+		if patch.ScoringSet {
+			if patch.Scoring != nil {
+				if err := validateLessonScoring(lesson.RubricVersion, *patch.Scoring); err != nil {
+					return err
+				}
+			}
+			lesson.Scoring = patch.Scoring
 		}
 		if err := s.store.UpdateLessonSettings(ctx, tx, lesson); err != nil {
 			return err

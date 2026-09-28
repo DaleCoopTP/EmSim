@@ -24,16 +24,19 @@ const (
 // redeclaring it — the same reasoning domain.go documents for reusing
 // content.Reaction/content.Workflow.
 type Lesson struct {
-	ID                   uuid.UUID
-	ExerciseType         content.ExerciseType
-	InstructorID         uuid.UUID
-	Title                string
-	Mode                 Mode
-	Level                auth.Level
-	State                LessonState
-	Epoch                int64
-	Timing               Timing
-	RubricVersion        string
+	ID            uuid.UUID
+	ExerciseType  content.ExerciseType
+	InstructorID  uuid.UUID
+	Title         string
+	Mode          Mode
+	Level         auth.Level
+	State         LessonState
+	Epoch         int64
+	Timing        Timing
+	RubricVersion string
+	// Scoring is the lesson's own criterion weights and pass threshold
+	// (ДДС-6/ADR-035); nil keeps the frozen rubric version's values.
+	Scoring              *LessonScoring
 	RecordingGraceS      int
 	IntakeCatalogVersion *int
 	CreatedAt            time.Time
@@ -41,6 +44,13 @@ type Lesson struct {
 	StoppedAt            *time.Time
 	StopReason           *string
 	FinishedAt           *time.Time
+}
+
+// LessonScoring is lessons.scoring: weights for every criterion of the
+// lesson's frozen rubric version (summing to 100) and the pass threshold.
+type LessonScoring struct {
+	Weights       map[string]float64 `json:"weights"`
+	PassThreshold float64            `json:"pass_threshold"`
 }
 
 // LessonCreate is CreateLesson's input (openapi.yaml's LessonCreate). A
