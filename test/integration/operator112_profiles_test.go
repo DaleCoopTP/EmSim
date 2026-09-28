@@ -126,15 +126,17 @@ func TestOperator112ProfileCases(t *testing.T) {
 	if _, err := trainingService.ReplaceAssignments(ctx, principal(actor, uuid.Nil), lesson.ID, assignments, "profile-assign"); err != nil {
 		t.Fatal(err)
 	}
-	started, err := trainingService.Start(ctx, principal(actor, uuid.Nil), lesson.ID, "profile-start")
-	if err != nil || started.IntakeCatalogVersion == nil || *started.IntakeCatalogVersion != 1 {
-		t.Fatalf("catalog pin: %+v, %v", started, err)
-	}
-	updatedCatalog, err := content.DecodeIntakeCatalog(openSeedFile(t, "../../seed/intake-catalog.json"))
+	seedCatalog, err := content.DecodeIntakeCatalog(openSeedFile(t, "../../seed/intake-catalog.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	updatedCatalog.Version = 2
+	started, err := trainingService.Start(ctx, principal(actor, uuid.Nil), lesson.ID, "profile-start")
+	if err != nil || started.IntakeCatalogVersion == nil || *started.IntakeCatalogVersion != seedCatalog.Version {
+		t.Fatalf("catalog pin: %+v, %v", started, err)
+	}
+	updatedCatalog := seedCatalog
+	updatedCatalog.Types = append([]content.IntakeIncidentType(nil), seedCatalog.Types...)
+	updatedCatalog.Version = seedCatalog.Version + 1
 	updatedCatalog.Types[0].Name = "Обновлённое название для следующего занятия"
 	updatedJSON, err := json.Marshal(updatedCatalog)
 	if err != nil {
@@ -151,7 +153,7 @@ func TestOperator112ProfileCases(t *testing.T) {
 				t.Fatalf("items: %+v, %v", items, err)
 			}
 			itemID := items[0].ID
-			if items[0].IntakeState.Mode != "card_only" || len(items[0].IntakeCard.Profiles) != 0 || len(items[0].IntakeCard.IncidentTypes) != 0 || items[0].IntakeState.Catalog.Version != 1 {
+			if items[0].IntakeState.Mode != "card_only" || len(items[0].IntakeCard.Profiles) != 0 || len(items[0].IntakeCard.IncidentTypes) != 0 || items[0].IntakeState.Catalog.Version != seedCatalog.Version {
 				t.Fatalf("initial profile state: %+v", items[0])
 			}
 			if items[0].IntakeState.Catalog.Types[0].Name != "Взрыв газа" {

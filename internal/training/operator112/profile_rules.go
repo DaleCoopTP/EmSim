@@ -102,6 +102,21 @@ func validProfileAnswer(answer training.IntakeProfileAnswer, field content.Intak
 	return false
 }
 
+// knownProfileValues exposes a card's known answers in the shape
+// content.IntakeFieldVisible expects.
+func knownProfileValues(profile training.IntakeProfile) func(string) []string {
+	return func(fieldID string) []string {
+		answer := profile.Answers[fieldID]
+		if answer.State != "known" {
+			return nil
+		}
+		if answer.Value != "" {
+			return []string{answer.Value}
+		}
+		return answer.Values
+	}
+}
+
 func validProfileDraft(card training.IntakeCard, c *content.IntakeCatalog) bool {
 	if c == nil || card.IncidentType.State != "unanswered" || card.IncidentType.Value != "" {
 		return false
@@ -130,6 +145,9 @@ func validProfileDraft(card training.IntakeCard, c *content.IntakeCatalog) bool 
 			}
 			answer, ok := profile.Answers[f.ID]
 			if !ok || !validProfileAnswer(answer, f) {
+				return false
+			}
+			if answer.State != "unanswered" && !content.IntakeFieldVisible(f, knownProfileValues(profile)) {
 				return false
 			}
 			count++

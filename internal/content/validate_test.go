@@ -1,6 +1,7 @@
 package content
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -724,6 +725,95 @@ func TestValidateExpectedProfilesValid(t *testing.T) {
 	}
 	if err := Validate(body, catalog); err != nil {
 		t.Fatalf("valid expected_profiles should validate: %v", err)
+	}
+}
+
+// conditionalIntakeCatalog extends pilotIntakeCatalog with a field shown
+// only for one "smell" answer, the shape АРМ-112's 101 card uses for its
+// "Где" branches.
+func conditionalIntakeCatalog() IntakeCatalog {
+	ic := pilotIntakeCatalog()
+	ic.Profiles[0].Fields = append(ic.Profiles[0].Fields, IntakeProfileField{
+		ID: "source", Label: "Источник", Kind: "single", Options: []string{"plate", "pipe"},
+		VisibleWhen: &IntakeFieldCondition{FieldID: "smell", AnyOf: []string{"yes"}},
+	})
+	return ic
+}
+
+func TestValidateExpectedProfilesConditionalAndUnknown(t *testing.T) {
+	ic := conditionalIntakeCatalog()
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	catalog.intakeCatalog = &ic
+	for name, tc := range map[string]struct {
+		answers map[string]Intake112ExpectedProfileValue
+		valid   bool
+	}{
+		"visible branch":           {map[string]Intake112ExpectedProfileValue{"smell": {Value: "yes"}, "source": {Value: "pipe"}}, true},
+		"expected unknown":         {map[string]Intake112ExpectedProfileValue{"smell": {Value: "yes"}, "source": {Unknown: true}}, true},
+		"hidden by parent answer":  {map[string]Intake112ExpectedProfileValue{"smell": {Value: "no"}, "source": {Value: "pipe"}}, false},
+		"hidden without parent":    {map[string]Intake112ExpectedProfileValue{"source": {Value: "pipe"}}, false},
+		"parent itself is unknown": {map[string]Intake112ExpectedProfileValue{"smell": {Unknown: true}, "source": {Unknown: true}}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := validFullCaseBody()
+			body.Intake112.Reference.ExpectedProfiles = map[string]map[string]Intake112ExpectedProfileValue{"104": tc.answers}
+			err := Validate(body, catalog)
+			if tc.valid && err != nil {
+				t.Fatalf("expected valid: %v", err)
+			}
+			if !tc.valid {
+				assertInvalidField(t, err, "intake112.reference.expected_profiles")
+			}
+		})
+	}
+}
+
+func TestValidateExpectedTypesMustExistInCatalog(t *testing.T) {
+	ic := pilotIntakeCatalog()
+	catalog := pilotCatalog()
+	catalog.services["pilot_gas_104"] = ServiceRecord{Active: true}
+	catalog.intakeCatalog = &ic
+	body := validFullCaseBody()
+	body.Intake112.Reference.ExpectedTypes = []string{"no_such_type"}
+	assertInvalidField(t, Validate(body, catalog), "intake112.reference.expected_types[0]")
+}
+
+func TestExpectedProfileValueJSON(t *testing.T) {
+	var got map[string]Intake112ExpectedProfileValue
+	if err := json.Unmarshal([]byte(`{"a":"x","b":["y"],"c":{"state":"unknown"}}`), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["a"].Value != "x" || len(got["b"].Values) != 1 || !got["c"].Unknown {
+		t.Fatalf("decoded %+v", got)
+	}
+	raw, err := json.Marshal(got["c"])
+	if err != nil || string(raw) != `{"state":"unknown"}` {
+		t.Fatalf("round trip: %s %v", raw, err)
+	}
+	if err := json.Unmarshal([]byte(`{"state":"known"}`), new(Intake112ExpectedProfileValue)); err == nil {
+		t.Fatal("unsupported state accepted")
+	}
+}
+
+func TestValidateIntakeCatalogConditions(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cond  *IntakeFieldCondition
+		valid bool
+	}{
+		"valid":          {&IntakeFieldCondition{FieldID: "smell", AnyOf: []string{"yes"}}, true},
+		"unknown field":  {&IntakeFieldCondition{FieldID: "nope", AnyOf: []string{"yes"}}, false},
+		"unknown option": {&IntakeFieldCondition{FieldID: "smell", AnyOf: []string{"maybe"}}, false},
+		"empty any_of":   {&IntakeFieldCondition{FieldID: "smell"}, false},
+		"self":           {&IntakeFieldCondition{FieldID: "source", AnyOf: []string{"plate"}}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ic := conditionalIntakeCatalog()
+			ic.Profiles[0].Fields[2].VisibleWhen = tc.cond
+			if err := ValidateIntakeCatalog(ic); (err == nil) != tc.valid {
+				t.Fatalf("valid=%v, err=%v", tc.valid, err)
+			}
+		})
 	}
 }
 

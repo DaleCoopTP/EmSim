@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "types": [
     {
       "id": "gas_explosion",
@@ -21,6 +21,48 @@
       "profile_ids": [
         "104",
         "101"
+      ]
+    },
+    {
+      "id": "gas_smell",
+      "name": "Запах газа",
+      "profile_ids": [
+        "104"
+      ]
+    },
+    {
+      "id": "fire",
+      "name": "Пожар",
+      "profile_ids": [
+        "101"
+      ]
+    },
+    {
+      "id": "garbage_fire",
+      "name": "Возгорание мусора",
+      "profile_ids": [
+        "101"
+      ]
+    },
+    {
+      "id": "transport_fire",
+      "name": "Возгорание транспорта",
+      "profile_ids": [
+        "101"
+      ]
+    },
+    {
+      "id": "feeling_unwell",
+      "name": "Плохо человеку",
+      "profile_ids": [
+        "103"
+      ]
+    },
+    {
+      "id": "injury",
+      "name": "Травма",
+      "profile_ids": [
+        "103"
       ]
     }
   ],
@@ -73,8 +115,8 @@
     },
     {
       "id": "101",
-      "version": 1,
-      "name": "Происшествие 101 · пожар/транспорт",
+      "version": 2,
+      "name": "Происшествие 101 · пожар",
       "fields": [
         {
           "id": "location",
@@ -89,19 +131,113 @@
           ]
         },
         {
+          "id": "fire_sign_street",
+          "label": "Признак пожара (улица)",
+          "kind": "multiple",
+          "options": [
+            "Открытое пламя / Дым",
+            "Запах гари"
+          ],
+          "visible_when": {
+            "field_id": "location",
+            "any_of": [
+              "Улица"
+            ]
+          }
+        },
+        {
           "id": "fire_sign",
           "label": "Признак пожара (транспорт)",
           "kind": "multiple",
           "options": [
             "Открытое пламя / Дым",
             "Сработала пожарная сигнализация"
-          ]
+          ],
+          "visible_when": {
+            "field_id": "location",
+            "any_of": [
+              "Транспорт"
+            ]
+          }
+        },
+        {
+          "id": "fire_sign_house",
+          "label": "Признак пожара (дом)",
+          "kind": "multiple",
+          "options": [
+            "Сработала пожарная сигнализация",
+            "Дым",
+            "Открытое пламя",
+            "Запах гари"
+          ],
+          "visible_when": {
+            "field_id": "location",
+            "any_of": [
+              "Дом"
+            ]
+          }
+        },
+        {
+          "id": "fire_sign_building",
+          "label": "Признак пожара (здание / объект)",
+          "kind": "multiple",
+          "options": [
+            "Открытое пламя / Дым",
+            "Сработала пожарная сигнализация",
+            "Запах гари"
+          ],
+          "visible_when": {
+            "field_id": "location",
+            "any_of": [
+              "Здание / объект"
+            ]
+          }
         },
         {
           "id": "access",
           "label": "Доступ",
           "kind": "shared",
           "shared": "no_access"
+        },
+        {
+          "id": "street_object",
+          "label": "Улица (пламя, дым)",
+          "kind": "multiple",
+          "options": [
+            "Мусор",
+            "Трава, пух",
+            "Парк",
+            "Лес",
+            "Торф",
+            "Мачта освещения",
+            "Опора контактной сети",
+            "ЛЭП",
+            "Провода",
+            "Дерево, деревья",
+            "Горит человек",
+            "Что горит неизвестно"
+          ],
+          "visible_when": {
+            "field_id": "location",
+            "any_of": [
+              "Улица"
+            ]
+          }
+        },
+        {
+          "id": "street_place",
+          "label": "Место происшествия",
+          "kind": "single",
+          "options": [
+            "Тоннель",
+            "Пешеходный переход"
+          ],
+          "visible_when": {
+            "field_id": "location",
+            "any_of": [
+              "Улица"
+            ]
+          }
         },
         {
           "id": "transport",
@@ -126,7 +262,216 @@
             "МЦК, МЦД",
             "Ж/Д пути",
             "Релейный шкаф Ж/Д"
+          ],
+          "visible_when": {
+            "field_id": "location",
+            "any_of": [
+              "Транспорт"
+            ]
+          }
+        },
+        {
+          "id": "house_object",
+          "label": "Дом (пламя, дым)",
+          "kind": "multiple",
+          "options": [
+            "квартира",
+            "балкон",
+            "газовая колонка",
+            "газовая плита",
+            "лифт",
+            "мусоропровод",
+            "подъезд",
+            "счетчик электричества",
+            "частный дом",
+            "электрическая проводка",
+            "электрощит",
+            "лестничная клетка",
+            "подвал",
+            "дача",
+            "прочие внутридомовые объекты",
+            "сарай/бытовка/хоз. постройка"
+          ],
+          "visible_when": {
+            "field_id": "location",
+            "any_of": [
+              "Дом"
+            ]
+          }
+        },
+        {
+          "id": "building_object",
+          "label": "Здание / объект (пламя, дым)",
+          "kind": "multiple",
+          "options": [
+            "Жилое здание",
+            "Административное здание",
+            "Гостиница",
+            "Торговый центр",
+            "Медицинское учреждение",
+            "Учебное учреждение",
+            "Производственное здание",
+            "Склад",
+            "Здание / объект прочее"
+          ],
+          "visible_when": {
+            "field_id": "location",
+            "any_of": [
+              "Здание / объект"
+            ]
+          }
+        },
+        {
+          "id": "threat_to_people",
+          "label": "Угроза людям",
+          "kind": "single",
+          "options": [
+            "Да",
+            "Нет"
           ]
+        },
+        {
+          "id": "offense",
+          "label": "Правонарушение",
+          "kind": "single",
+          "options": [
+            "Есть правонарушение"
+          ],
+          "visible_when": {
+            "field_id": "location",
+            "any_of": [
+              "Улица"
+            ]
+          }
+        },
+        {
+          "id": "medical_help",
+          "label": "Медицинская помощь",
+          "kind": "single",
+          "options": [
+            "Да",
+            "Нет"
+          ]
+        },
+        {
+          "id": "offense_description",
+          "label": "Описание правонарушения",
+          "kind": "text",
+          "visible_when": {
+            "field_id": "offense",
+            "any_of": [
+              "Есть правонарушение"
+            ]
+          }
+        },
+        {
+          "id": "evacuation",
+          "label": "Требуется эвакуация",
+          "kind": "single",
+          "options": [
+            "Да",
+            "Нет"
+          ]
+        },
+        {
+          "id": "traffic_blocked",
+          "label": "Есть ли перекрытие движения",
+          "kind": "single",
+          "options": [
+            "Да",
+            "Нет"
+          ],
+          "visible_when": {
+            "field_id": "location",
+            "any_of": [
+              "Дом"
+            ]
+          }
+        },
+        {
+          "id": "gasified",
+          "label": "Проведена ли газификация",
+          "kind": "single",
+          "options": [
+            "Да",
+            "Нет",
+            "Нет данных"
+          ],
+          "visible_when": {
+            "field_id": "location",
+            "any_of": [
+              "Улица",
+              "Дом"
+            ]
+          }
+        },
+        {
+          "id": "description",
+          "label": "Описание",
+          "kind": "text"
+        }
+      ]
+    },
+    {
+      "id": "103",
+      "version": 1,
+      "name": "Происшествие 103 · скорая помощь",
+      "fields": [
+        {
+          "id": "place",
+          "label": "Место вызова",
+          "kind": "single",
+          "options": [
+            "Квартира / частный дом",
+            "Улица",
+            "Общественное место",
+            "Поликлиника",
+            "Войсковая часть (ВЧ)",
+            "Учебные учреждения",
+            "Общежитие",
+            "Дача (СНТ)",
+            "Прочие"
+          ]
+        },
+        {
+          "id": "last_name",
+          "label": "Фамилия",
+          "kind": "text"
+        },
+        {
+          "id": "first_name",
+          "label": "Имя",
+          "kind": "text"
+        },
+        {
+          "id": "patronymic",
+          "label": "Отчество",
+          "kind": "text"
+        },
+        {
+          "id": "birth_date",
+          "label": "Дата рождения",
+          "kind": "text"
+        },
+        {
+          "id": "age",
+          "label": "Возраст",
+          "kind": "text"
+        },
+        {
+          "id": "sex",
+          "label": "Пол",
+          "kind": "single",
+          "options": [
+            "Мужчина",
+            "Женщина"
+          ]
+        },
+        {
+          "id": "refusal",
+          "label": "Отказ",
+          "kind": "shared",
+          "shared": "no_on_site"
         },
         {
           "id": "threat_to_people",
@@ -154,11 +499,6 @@
             "Да",
             "Нет"
           ]
-        },
-        {
-          "id": "description",
-          "label": "Описание",
-          "kind": "text"
         }
       ]
     }
@@ -183,6 +523,12 @@
       "equals": "Да",
       "service_code": "pilot_ambulance",
       "reason": "В карте 101 указана медицинская помощь"
+    },
+    {
+      "id": "ambulance_103",
+      "profile_id": "103",
+      "service_code": "pilot_ambulance",
+      "reason": "Добавлена карта 103"
     }
   ]
 }

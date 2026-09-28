@@ -24,8 +24,10 @@ export type IntakeCard = {
 export type IntakeProfileAnswer = { state: "unanswered" | "unknown" | "known"; value?: string; values?: string[] };
 export type IntakeProfileAnswerSet = { definition_id: string; version: number; answers: Record<string, IntakeProfileAnswer> };
 export type IntakeCatalog = { version: number; types: { id: string; name: string; profile_ids: string[] }[];
-  profiles: { id: string; version: number; name: string; fields: { id: string; label: string; kind: "single" | "multiple" | "text" | "shared"; options?: string[]; shared?: "no_on_site" | "no_access" }[] }[];
+  profiles: { id: string; version: number; name: string; fields: IntakeProfileFieldDef[] }[];
   service_rules: { id: string; profile_id: string; field_id?: string; equals?: string; service_code: string; reason: string }[] };
+export type IntakeProfileFieldDef = { id: string; label: string; kind: "single" | "multiple" | "text" | "shared"; options?: string[];
+  shared?: "no_on_site" | "no_access"; visible_when?: { field_id: string; any_of: string[] } };
 export type IntakeLine = { id?: string; speaker?: "caller" | "operator"; text: string; server_at: string; topic_id?: string };
 // 112-5a/ADR-024: one send_caller_message/caller.reply round trip. status
 // stays "pending" until the async worker answers (or hold/end/close

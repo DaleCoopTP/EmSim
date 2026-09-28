@@ -191,6 +191,17 @@ func validateIntake112Reference(intake *Intake112, catalog Catalog) error {
 			return invalid("intake112.reference.alternatives", fmt.Sprintf("unknown_path:%s", path))
 		}
 	}
+	if ic, ok := catalog.IntakeCatalog(); ok {
+		types := make(map[string]bool, len(ic.Types))
+		for _, t := range ic.Types {
+			types[t.ID] = true
+		}
+		for i, id := range intake.Reference.ExpectedTypes {
+			if !types[id] {
+				return invalid(fmt.Sprintf("intake112.reference.expected_types[%d]", i), "unknown")
+			}
+		}
+	}
 	if len(intake.Reference.ExpectedProfiles) > 0 {
 		ic, ok := catalog.IntakeCatalog()
 		if !ok {
@@ -211,8 +222,14 @@ func validateIntake112Reference(intake *Intake112, catalog Catalog) error {
 			}
 			for fieldID, expected := range answers {
 				field, ok := fields[fieldID]
-				if !ok {
+				if !ok || field.Kind == "shared" {
 					return invalid("intake112.reference.expected_profiles", fmt.Sprintf("unknown_field:%s.%s", profileID, fieldID))
+				}
+				if !IntakeFieldVisible(field, expectedProfileValues(answers)) {
+					return invalid("intake112.reference.expected_profiles", fmt.Sprintf("hidden_field:%s.%s", profileID, fieldID))
+				}
+				if expected.Unknown {
+					continue
 				}
 				values := expected.Values
 				if expected.Values == nil {
@@ -247,6 +264,22 @@ func validateIntake112Reference(intake *Intake112, catalog Catalog) error {
 		return err
 	}
 	return validateIntake112ExpectedCardAgainstFacts(intake)
+}
+
+// expectedProfileValues exposes one reference card's expected answers in
+// the shape IntakeFieldVisible expects, so a reference can be checked for
+// naming a field its own expected answers would hide.
+func expectedProfileValues(answers map[string]Intake112ExpectedProfileValue) func(string) []string {
+	return func(fieldID string) []string {
+		expected, ok := answers[fieldID]
+		if !ok || expected.Unknown {
+			return nil
+		}
+		if expected.Values != nil {
+			return expected.Values
+		}
+		return []string{expected.Value}
+	}
 }
 
 // validateDescriptionQuestions is ADR-028's own authoring check: every

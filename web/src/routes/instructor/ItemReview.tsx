@@ -7,6 +7,7 @@ import { errorMessage } from "../../api/errors";
 import type { components } from "../../api/schema";
 import { formatDateTime } from "../../format";
 import { cardStatusLabel, reactionLabel } from "../../labels";
+import { expectedProfileText, profileFieldVisible } from "../../intakeProfile";
 import { IntakeAutoAssessment, isPenaltyCriterion, criterionStatusLabels, type RubricEffectiveCriterion } from "../../components/IntakeAutoAssessment";
 
 type CriterionStatus = CriterionResult["status"];
@@ -18,7 +19,7 @@ type IntakeReviewGeneration = { model: string; prompt_version: string; temperatu
 type IntakeReviewCallerTurn = { turn: number; operator_line_id?: string; status: "pending" | "answered" | "cancelled" | "failed"; adapter?: string; source?: "opening" | "scripted" | "model" | "fallback" | "stub"; generation?: IntakeReviewGeneration; requested_at: string; resolved_at?: string; reason?: string };
 type IntakeReviewAction = { type: string; accepted: boolean; server_at: string; log_seq: number; payload?: { draft?: IntakeCard; type_id?: string; services?: string[]; reason?: string }; effect?: { suggested?: { service_code: string; reasons: string[] }[] } };
 type DialogueFact = { id: string; label: string; card_path: string; knowledge: "initial" | "on_question" | "unknown"; value?: string };
-type ReviewCatalog = { version: number; types: { id: string; name: string }[]; profiles: { id: string; name: string; fields: { id: string; label: string; kind: string; shared?: string }[] }[] };
+type ReviewCatalog = { version: number; types: { id: string; name: string }[]; profiles: { id: string; name: string; fields: { id: string; label: string; kind: string; shared?: string; visible_when?: { field_id: string; any_of: string[] } }[] }[] };
 type ReviewServiceState = { suggested_services?: { service_code: string; reasons: string[] }[]; service_review?: { suggested: { service_code: string; reasons: string[] }[]; selected: string[]; reason?: string; reviewed_at: string } };
 type IntakeNotification = { item_id: string; action_id: string; services: { service_code: string; suggested: boolean }[]; reason?: string; card_snapshot: IntakeCard; notified_at: string };
 type IntakeReviewState = { mode?: string; catalog?: ReviewCatalog; transcript?: IntakeReviewLine[]; caller_mode?: "prepared" | "free_text"; caller_turns?: IntakeReviewCallerTurn[] } & ReviewServiceState;
@@ -180,6 +181,7 @@ function IntakeProfileReviewPanel({ item, evidence }: { item: IntakeReviewItem; 
   const card = evidence.final_card ?? item.card;
   const state = evidence.intake_state ?? item.intake_state;
   const catalog = state?.catalog;
+  const expectedProfiles = (item.intake_reference as { expected_profiles?: Record<string, Record<string, unknown>> } | undefined)?.expected_profiles;
   const notification = evidence.notification ?? item.notification;
   const isCall = state?.mode === "full_case";
   const transcript = state?.transcript ?? [];
@@ -233,7 +235,11 @@ function IntakeProfileReviewPanel({ item, evidence }: { item: IntakeReviewItem; 
     <h3>Итоговая общая карточка</h3><IntakeCardView card={card} />
     <h3>Выбранные типы</h3><ul>{(card.incident_types ?? []).map((id) => <li key={id}>{typeName(id)}</li>)}</ul>
     <h3>Активные профильные карты</h3>{catalog?.profiles.filter((profile) => card.profiles?.[profile.id]).map((profile) => <section key={profile.id} className="intake-review-card"><h4>{profile.name}</h4><dl>
-      {profile.fields.map((field) => <div key={field.id}><dt>{field.label}</dt><dd>{field.kind === "shared" ? intakeFieldText(field.shared === "no_on_site" ? card.no_on_site : card.no_access) : answerText(card.profiles?.[profile.id].answers[field.id])}</dd></div>)}
+      {profile.fields.filter((field) => profileFieldVisible(field, card.profiles?.[profile.id].answers) || expectedProfiles?.[profile.id]?.[field.id] !== undefined).map((field) => {
+        const expected = expectedProfiles?.[profile.id]?.[field.id];
+        return <div key={field.id}><dt>{field.label}</dt><dd>{field.kind === "shared" ? intakeFieldText(field.shared === "no_on_site" ? card.no_on_site : card.no_access) : answerText(card.profiles?.[profile.id].answers[field.id])}
+          {expected !== undefined && <span className="intake-expected"> · эталон: {expectedProfileText(expected)}</span>}</dd></div>;
+      })}
     </dl></section>)}
     <h3>Предложение и итоговый выбор служб</h3>
     <ul>{state?.service_review?.suggested.map((service) => <li key={service.service_code}>{service.service_code}: {service.reasons.join("; ")}</li>) ?? state?.suggested_services?.map((service) => <li key={service.service_code}>{service.service_code}: {service.reasons.join("; ")}</li>)}</ul>

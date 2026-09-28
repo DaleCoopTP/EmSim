@@ -645,3 +645,31 @@ func TestEvaluateWorkedExample(t *testing.T) {
 		t.Fatalf("total score = %v, want 77.5", *score.Score)
 	}
 }
+
+// TestEvaluateExpectedUnknownProfileAnswer: when the reference says the
+// caller cannot know a field, only the card's own "Неизвестно" earns it —
+// a guessed option and a field left untouched both miss.
+func TestEvaluateExpectedUnknownProfileAnswer(t *testing.T) {
+	ref := fullReference()
+	ref.ExpectedProfiles = map[string]map[string]content.Intake112ExpectedProfileValue{
+		"104": {"smell": {Value: "yes"}, "signs": {Unknown: true}},
+	}
+	body := baseBody(ref)
+	for name, tc := range map[string]struct {
+		answer training.IntakeProfileAnswer
+		score  float64
+	}{
+		"unknown":    {training.IntakeProfileAnswer{State: "unknown"}, 1},
+		"guessed":    {training.IntakeProfileAnswer{State: "known", Values: []string{"hissing"}}, 0.5},
+		"unanswered": {training.IntakeProfileAnswer{State: "unanswered"}, 0.5},
+	} {
+		t.Run(name, func(t *testing.T) {
+			card := correctCard()
+			card.Profiles["104"].Answers["signs"] = tc.answer
+			cards := findResult(t, mustEvaluate(t, baseEvidence(testCatalog(), card, true, true), body, testRubric()), "PROFILE_CARDS")
+			if cards.Score == nil || *cards.Score != tc.score {
+				t.Fatalf("PROFILE_CARDS = %+v, want %v", cards, tc.score)
+			}
+		})
+	}
+}

@@ -8,6 +8,7 @@ import { availableLocalStorage, clearPending, loadPending, savePending, type Pen
 import { BellIcon, CloseIcon, GlobeIcon, HangupIcon, HelpIcon, LinkIcon, MapIcon, MessageIcon, PhoneIcon, PinIcon, PlusIcon, SmsIcon, StopwatchIcon, TranslateIcon } from "../../components/Arm112Icons";
 import { formatDateTime } from "../../format";
 import { CallerChat } from "./CallerChat";
+import { profileFieldVisible } from "../../intakeProfile";
 import type { IntakeCard, IntakeCatalog, IntakeField, IntakeItem, IntakeProfileAnswer } from "./Operator112Workplace";
 
 const empty: IntakeField = { state: "unanswered" };
@@ -225,10 +226,18 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
   });
   const update = (key: keyof IntakeCard, field: IntakeField) => { clearInvalid(key); setDraft((current) => ({ ...current, [key]: field })); };
   const updateAddress = (key: keyof IntakeCard["address"], field: IntakeField) => { clearInvalid(`address.${key}`); setDraft((current) => ({ ...current, address: { ...current.address, [key]: field } })); };
-  const updateAnswer = (profileID: string, fieldID: string, answer: IntakeProfileAnswer) => setDraft((current) => ({
-    ...current, profiles: { ...current.profiles, [profileID]: { ...current.profiles![profileID],
-      answers: { ...current.profiles![profileID].answers, [fieldID]: answer } } },
-  }));
+  // Changing a "Где"-like answer hides the other branch's questions; their
+  // answers are cleared here, since the server accepts a hidden field only
+  // while it is unanswered.
+  const updateAnswer = (profileID: string, fieldID: string, answer: IntakeProfileAnswer) => setDraft((current) => {
+    const answers = { ...current.profiles![profileID].answers, [fieldID]: answer };
+    for (const field of catalog?.profiles.find((profile) => profile.id === profileID)?.fields ?? []) {
+      if (field.kind !== "shared" && answers[field.id] && answers[field.id].state !== "unanswered" && !profileFieldVisible(field, answers)) {
+        answers[field.id] = { state: "unanswered" };
+      }
+    }
+    return { ...current, profiles: { ...current.profiles, [profileID]: { ...current.profiles![profileID], answers } } };
+  });
   const save = (event: FormEvent) => {
     event.preventDefault();
     const normalized = normalizeDraft(draft, catalog);
@@ -396,7 +405,7 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
             return <section className="arm112-profile intake-profile-panel" key={profile.id} id={`arm112-profile-${profile.id}`}>
               <header><h3 title={profile.name}>{profileTitle(profile.name)}</h3>
                 {owner && <button type="button" className="arm112-x" aria-label={`Убрать ${profileTitle(profile.name)}`} disabled={!editable || dirty || !!pending} onClick={() => removeType(owner)}><CloseIcon size={18} /></button>}</header>
-              {profile.fields.map((field) => <div className="arm112-profile-row intake-profile-row" key={field.id}><span>{field.label}</span>
+              {profile.fields.filter((field) => profileFieldVisible(field, draft.profiles![profile.id].answers)).map((field) => <div className="arm112-profile-row intake-profile-row" key={field.id}><span>{field.label}</span>
                 {field.kind === "shared" ? <div className="arm112-options"><button type="button" aria-pressed={draft[field.shared!]?.state === "known"} disabled={!editable} onClick={() => toggleFlag(field.shared!)}>
                   {field.shared === "no_on_site" ? "Пострадавший не на месте / Отказ от Скорой" : "Нет доступа"}</button></div>
                   : <ProfileAnswerField label={field.label} kind={field.kind} options={field.options ?? []} answer={draft.profiles![profile.id].answers[field.id]}

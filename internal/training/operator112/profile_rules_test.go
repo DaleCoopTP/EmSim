@@ -37,6 +37,9 @@ func TestProfileCasesAndServiceSuggestions(t *testing.T) {
 		{"gas_explosion", 1, []string{"pilot_gas_104"}},
 		{"road_traffic_fire", 1, []string{"pilot_fire_101"}},
 		{"gas_explosion_road_traffic_fire", 2, []string{"pilot_gas_104", "pilot_fire_101"}},
+		{"gas_smell", 1, []string{"pilot_gas_104"}},
+		{"fire", 1, []string{"pilot_fire_101"}},
+		{"feeling_unwell", 1, []string{"pilot_ambulance"}},
 	} {
 		t.Run(tc.typeID, func(t *testing.T) {
 			card := training.UnansweredIntakeCard("112-test", "", "", "")
@@ -315,6 +318,70 @@ func TestProfileMedicalHelpAndRemovalRestore(t *testing.T) {
 	}
 	if item.IntakeCard.Profiles["101"].Answers["medical_help"].Value != "Да" {
 		t.Fatal("answer not restored")
+	}
+}
+
+// TestProfileConditionalFields covers card 101's "Где" branches: a field
+// of another branch cannot be answered, and a draft that switches the
+// branch must clear the old branch's answers before it is accepted.
+func TestProfileConditionalFields(t *testing.T) {
+	catalog := pilotCatalog(t)
+	card := training.UnansweredIntakeCard("112-test", "", "", "")
+	card.Profiles = map[string]training.IntakeProfile{}
+	state := training.IntakeState{Mode: "card_only", CallStatus: "not_applicable", Catalog: &catalog}
+	item := training.Item{State: training.ItemOpened, IntakeCard: &card, IntakeState: &state}
+	save := func(answers map[string]training.IntakeProfileAnswer) bool {
+		t.Helper()
+		draft := *item.IntakeCard
+		profile := draft.Profiles["101"]
+		merged := make(map[string]training.IntakeProfileAnswer, len(profile.Answers))
+		for id, answer := range profile.Answers {
+			merged[id] = answer
+		}
+		for id, answer := range answers {
+			merged[id] = answer
+		}
+		profile.Answers = merged
+		draft.Profiles = map[string]training.IntakeProfile{"101": profile}
+		data, err := json.Marshal(map[string]any{"draft": draft})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := New().Decide(item, training.Command{Type: training.CommandSaveIntakeDraft, Payload: data}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Accepted {
+			item.State, item.IntakeCard, item.IntakeState = d.State, d.IntakeCard, d.IntakeState
+		}
+		return d.Accepted
+	}
+	data, _ := json.Marshal(map[string]string{"type_id": "fire"})
+	d, err := New().Decide(item, training.Command{Type: training.CommandAddIncidentType, Payload: data}, time.Now())
+	if err != nil || !d.Accepted {
+		t.Fatalf("add type: %v %+v", err, d)
+	}
+	item.State, item.IntakeCard, item.IntakeState = d.State, d.IntakeCard, d.IntakeState
+
+	known := func(v string) training.IntakeProfileAnswer {
+		return training.IntakeProfileAnswer{State: "known", Value: v}
+	}
+	many := func(v ...string) training.IntakeProfileAnswer {
+		return training.IntakeProfileAnswer{State: "known", Values: v}
+	}
+	unanswered := training.IntakeProfileAnswer{State: "unanswered"}
+	if save(map[string]training.IntakeProfileAnswer{"street_object": many("Мусор")}) {
+		t.Fatal("branch field answered before \"Где\"")
+	}
+	if !save(map[string]training.IntakeProfileAnswer{"location": known("Улица"), "street_object": many("Мусор"), "gasified": known("Да")}) {
+		t.Fatal("street branch rejected")
+	}
+	if save(map[string]training.IntakeProfileAnswer{"location": known("Здание / объект")}) {
+		t.Fatal("switching branch kept the street answers")
+	}
+	if !save(map[string]training.IntakeProfileAnswer{"location": known("Здание / объект"), "street_object": unanswered, "gasified": unanswered,
+		"building_object": many("Гостиница"), "fire_sign_building": {State: "unknown"}}) {
+		t.Fatal("building branch rejected")
 	}
 }
 

@@ -35,6 +35,37 @@ type IntakeProfileField struct {
 	Kind    string   `json:"kind"` // single, multiple, text, shared
 	Options []string `json:"options,omitempty"`
 	Shared  string   `json:"shared,omitempty"` // no_on_site or no_access
+	// VisibleWhen makes a field conditional on an earlier single/multiple
+	// field of the same card, as in АРМ-112's own 101 card, where the
+	// "Где" answer picks which fire-sign and object questions follow. A
+	// hidden field is never answered: the draft keeps it "unanswered".
+	VisibleWhen *IntakeFieldCondition `json:"visible_when,omitempty"`
+}
+
+// IntakeFieldCondition holds when the referenced field is known and its
+// value (or, for a multiple field, any of its values) is one of AnyOf.
+type IntakeFieldCondition struct {
+	FieldID string   `json:"field_id"`
+	AnyOf   []string `json:"any_of"`
+}
+
+// IntakeFieldVisible reports whether field is shown for the given known
+// answers of its card: answers maps a field id to its selected options
+// (nil or empty when the field is not answered with a known value).
+// Visibility is transitive — a condition on a hidden field is false,
+// since a hidden field is never answered.
+func IntakeFieldVisible(field IntakeProfileField, answers func(fieldID string) []string) bool {
+	if field.VisibleWhen == nil {
+		return true
+	}
+	for _, value := range answers(field.VisibleWhen.FieldID) {
+		for _, want := range field.VisibleWhen.AnyOf {
+			if value == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type IntakeServiceRule struct {
@@ -72,12 +103,15 @@ func ValidateIntakeCatalog(c IntakeCatalog) error {
 		if p.ID == "" || p.Version < 1 || p.Name == "" || len(p.Fields) == 0 || profiles[p.ID].ID != "" {
 			return fmt.Errorf("intake catalog: invalid/duplicate profile %q", p.ID)
 		}
-		fields := map[string]bool{}
+		fields := map[string]IntakeProfileField{}
 		for _, f := range p.Fields {
-			if f.ID == "" || f.Label == "" || fields[f.ID] {
+			if f.ID == "" || f.Label == "" || fields[f.ID].ID != "" {
 				return fmt.Errorf("intake catalog: invalid/duplicate field %q", f.ID)
 			}
-			fields[f.ID] = true
+			if err := validateFieldCondition(f, fields); err != nil {
+				return err
+			}
+			fields[f.ID] = f
 			switch f.Kind {
 			case "single", "multiple":
 				if len(f.Options) == 0 {
@@ -141,6 +175,32 @@ func ValidateIntakeCatalog(c IntakeCatalog) error {
 			}
 		} else if r.Equals != "" {
 			return fmt.Errorf("intake catalog: unconditional rule has equals")
+		}
+	}
+	return nil
+}
+
+// validateFieldCondition requires a condition to point at an earlier
+// single/multiple field of the same card and to name only its options,
+// so a condition can never form a cycle or wait for an impossible value.
+func validateFieldCondition(f IntakeProfileField, earlier map[string]IntakeProfileField) error {
+	if f.VisibleWhen == nil {
+		return nil
+	}
+	if f.Kind == "shared" {
+		return fmt.Errorf("intake catalog: shared field %q cannot be conditional", f.ID)
+	}
+	parent, ok := earlier[f.VisibleWhen.FieldID]
+	if !ok || (parent.Kind != "single" && parent.Kind != "multiple") || len(f.VisibleWhen.AnyOf) == 0 {
+		return fmt.Errorf("intake catalog: invalid condition for %q", f.ID)
+	}
+	for _, want := range f.VisibleWhen.AnyOf {
+		found := false
+		for _, option := range parent.Options {
+			found = found || option == want
+		}
+		if !found {
+			return fmt.Errorf("intake catalog: condition for %q names unknown option %q", f.ID, want)
 		}
 	}
 	return nil

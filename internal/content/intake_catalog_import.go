@@ -13,6 +13,8 @@ import (
 
 // ImportIntakeCatalog inserts a complete immutable catalog revision. Replaying
 // identical bytes is idempotent; changing a published revision is a conflict.
+// The first revision imported into an empty database may carry any version
+// (seed/ ships only the current revision); later ones must be latest+1.
 func (s *Service) ImportIntakeCatalog(ctx context.Context, r io.Reader, actorID uuid.UUID, actorRole, requestID string) (ImportCount, error) {
 	c, err := DecodeIntakeCatalog(r)
 	if err != nil {
@@ -39,9 +41,6 @@ func (s *Service) ImportIntakeCatalog(ctx context.Context, r io.Reader, actorID 
 			result.Unchanged = 1
 		} else {
 			if err == nil && c.Version != latest.Version+1 {
-				return conflict("intake_catalog", "version_gap")
-			}
-			if err != nil && c.Version != 1 {
 				return conflict("intake_catalog", "version_gap")
 			}
 			for _, rule := range c.ServiceRules {

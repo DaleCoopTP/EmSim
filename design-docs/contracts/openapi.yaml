@@ -871,7 +871,7 @@ components:
         expected_card: { $ref: '#/components/schemas/Intake112ExpectedCard', nullable: true, description: incoming_call — обязателен. full_case — необязателен, эталон 112-6's ADDRESS_FIELDS/описания/P_ADDRESS_REGION/P_APPLICANT_NAME. }
         expected_profiles:
           type: object
-          description: '112-6/ADR-026. Ключ — id профильной карты (intake-catalog.json, например "104"); значение — {field_id: строка | строка[]} (массив только для полей kind=multiple).'
+          description: '112-6/ADR-026. Ключ — id профильной карты (intake-catalog.json, например "104"); значение — {field_id: строка | строка[] | {"state": "unknown"}} (массив только для полей kind=multiple; {"state": "unknown"} — верный ответ «Неизвестно»). Поле, скрытое условием visible_when при эталонных ответах той же карты, в эталон не входит.'
           additionalProperties: { type: object, additionalProperties: true }
         alternatives:
           type: object
@@ -1081,6 +1081,13 @@ components:
                     kind: { type: string, enum: [single, multiple, text, shared] }
                     options: { type: array, items: { type: string } }
                     shared: { type: string, enum: [no_on_site, no_access] }
+                    visible_when:
+                      type: object
+                      description: 'Поле показывается, только если поле field_id той же карты (выше по списку, kind=single|multiple) известно и его значение входит в any_of. Скрытое поле в черновике всегда unanswered.'
+                      required: [field_id, any_of]
+                      properties:
+                        field_id: { type: string }
+                        any_of: { type: array, items: { type: string }, minItems: 1 }
         service_rules:
           type: array
           description: Во время прохождения обучаемому не раскрываются; основания уже предложенных служб доступны в suggested_services.

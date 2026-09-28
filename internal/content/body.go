@@ -2,6 +2,7 @@ package content
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/google/uuid"
 )
@@ -193,18 +194,21 @@ type Intake112DescriptionQuestion struct {
 	Question string `json:"question"`
 }
 
+// Every field is optional (scenario.schema.json), so each one is
+// omitempty: an editor round trip must not turn an absent victims_count
+// into 0, which the schema's minimum of 1 rejects.
 type Intake112ExpectedCard struct {
-	ApplicantStatus string `json:"applicant_status"`
+	ApplicantStatus string `json:"applicant_status,omitempty"`
 	// ApplicantName (112-6/ADR-026) is compared only when the fact was
 	// actually disclosed in the conversation (P_APPLICANT_NAME,
 	// interpretation §10.3) — an applicant who never gave a name is not
 	// penalized for the trainee not knowing it.
 	ApplicantName string           `json:"applicant_name,omitempty"`
-	Age           int              `json:"age"`
+	Age           int              `json:"age,omitempty"`
 	Address       Intake112Address `json:"address"`
-	IncidentType  string           `json:"incident_type"`
-	Complaint     string           `json:"complaint"`
-	VictimsCount  int              `json:"victims_count"`
+	IncidentType  string           `json:"incident_type,omitempty"`
+	Complaint     string           `json:"complaint,omitempty"`
+	VictimsCount  int              `json:"victims_count,omitempty"`
 }
 
 // Intake112Address is the operator's own IntakeAddress
@@ -232,30 +236,45 @@ type Intake112Address struct {
 }
 
 // Intake112ExpectedProfileValue is one profile field's expected answer —
-// a single string for the catalog's "single"/"text" field kinds, or a set
-// of strings for "multiple" (scenario.schema.json's intake112.reference.
-// expected_profiles: string | string[]). Exactly one of Value/Values is
-// set after DecodeFile — see UnmarshalJSON.
+// a single string for the catalog's "single"/"text" field kinds, a set of
+// strings for "multiple", or {"state":"unknown"} when the correct answer
+// is the card's own "Неизвестно" button (scenario.schema.json's
+// intake112.reference.expected_profiles). Exactly one of Value/Values/
+// Unknown is set after DecodeFile — see UnmarshalJSON.
 type Intake112ExpectedProfileValue struct {
-	Value  string
-	Values []string
+	Value   string
+	Values  []string
+	Unknown bool
 }
 
 func (v *Intake112ExpectedProfileValue) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err == nil {
-		v.Value, v.Values = s, nil
+		*v = Intake112ExpectedProfileValue{Value: s}
 		return nil
 	}
 	var arr []string
-	if err := json.Unmarshal(data, &arr); err != nil {
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*v = Intake112ExpectedProfileValue{Values: arr}
+		return nil
+	}
+	var obj struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
 		return err
 	}
-	v.Value, v.Values = "", arr
+	if obj.State != "unknown" {
+		return fmt.Errorf("expected profile value: unsupported state %q", obj.State)
+	}
+	*v = Intake112ExpectedProfileValue{Unknown: true}
 	return nil
 }
 
 func (v Intake112ExpectedProfileValue) MarshalJSON() ([]byte, error) {
+	if v.Unknown {
+		return []byte(`{"state":"unknown"}`), nil
+	}
 	if v.Values != nil {
 		return json.Marshal(v.Values)
 	}

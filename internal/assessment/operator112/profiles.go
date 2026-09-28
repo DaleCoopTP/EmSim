@@ -143,13 +143,17 @@ func profilePresenceLabel(present bool) *string {
 }
 
 // profileAnswerMatches compares one profile field's actual answer
-// (training.IntakeProfileAnswer, only State=="known" counts) against
+// (training.IntakeProfileAnswer: an expected "unknown" matches only the
+// card's own "Неизвестно"; otherwise only State=="known" counts) against
 // its expected value: single/text fields compare normalized as a single
 // string (ADR-026 §2.2 — reusing address's own normalize rules rather
 // than a separate exact-match path keeps a synonymous spelling like
 // "да"/"Да " from being treated as wrong); multiple fields compare as
 // sets, each element normalized the same way.
 func profileAnswerMatches(field content.IntakeProfileField, actual training.IntakeProfileAnswer, expected content.Intake112ExpectedProfileValue) bool {
+	if expected.Unknown {
+		return actual.State == "unknown"
+	}
 	if actual.State != "known" {
 		return false
 	}
