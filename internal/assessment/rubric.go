@@ -69,6 +69,14 @@ func loadEmbeddedRubric(filename string) (Rubric, error) {
 // the full structure (content's copy only needs criterion ids/version).
 var loadedDefault = sync.OnceValues(func() (Rubric, error) { return loadEmbeddedRubric("rubric.default.json") })
 
+// loadedDDSv2 is dds_processing's own second rubric version (dds/
+// rubric-v2, ДДС-3/ADR-032): T_PROGRESS/S_SEQUENCE/C_CALLS replace the
+// pilot-only criteria (card editing, call log content, address wording)
+// ADR-030 removed from the trainee's own job. loadedDefault (dds/
+// rubric-v1) stays embedded and loadable unchanged so a lesson frozen on
+// it before this slice keeps scoring against it (ADR-013).
+var loadedDDSv2 = sync.OnceValues(func() (Rubric, error) { return loadEmbeddedRubric("rubric.dds.v2.json") })
+
 // loaded112v1/loaded112v2 are operator112_intake's own two rubric
 // versions (112-6/ADR-026): v1 is the pre-112-6 manual-only rubric,
 // preserved unchanged so lessons still running on it are unaffected;
@@ -100,6 +108,8 @@ func LoadRubric(exerciseType content.ExerciseType, version string) (Rubric, erro
 		switch version {
 		case "dds/rubric-v1":
 			return loadedDefault()
+		case "dds/rubric-v2":
+			return loadedDDSv2()
 		}
 	case content.ExerciseTypeOperator112Intake:
 		switch version {
@@ -126,7 +136,7 @@ func LoadDefaultFor(exerciseType content.ExerciseType) (Rubric, error) {
 		return loaded112v2()
 	}
 	if exerciseType == content.ExerciseTypeDDSProcessing {
-		return loadedDefault()
+		return loadedDDSv2()
 	}
 	return Rubric{}, fmt.Errorf("assessment: unsupported exercise_type %q", exerciseType)
 }

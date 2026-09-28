@@ -41,15 +41,15 @@ func (evaluator) Evaluate(raw json.RawMessage, body content.Body, effective asse
 	if err := json.Unmarshal(raw, &ev); err != nil {
 		return nil, fmt.Errorf("assessment/dds: decode evidence: %w", err)
 	}
-	ref := body.Reference
 	results := make([]assessment.CriterionResult, 0, len(effective.Criteria))
 	for _, c := range effective.Criteria {
-		results = append(results, evaluateCriterion(ev, ref, c))
+		results = append(results, evaluateCriterion(ev, body, c))
 	}
 	return results, nil
 }
 
-func evaluateCriterion(ev training.EvidenceBody, ref content.Reference, c assessment.RubricCriterion) assessment.CriterionResult {
+func evaluateCriterion(ev training.EvidenceBody, body content.Body, c assessment.RubricCriterion) assessment.CriterionResult {
+	ref := body.Reference
 	if c.Kind == "llm" {
 		return llmCriterionResult(c, ref)
 	}
@@ -74,6 +74,14 @@ func evaluateCriterion(ev training.EvidenceBody, ref content.Reference, c assess
 		return callLogRule(ev, ref, c)
 	case "address_components":
 		return addressRule(ev, c)
+	// ДДС-3/ADR-032 (dds/rubric-v2): reaction to crew reports, the
+	// report-aware sequence check, and the wider set of required calls.
+	case "t_progress":
+		return tProgressRule(ev, body, c)
+	case "s_sequence_reports":
+		return sequenceReportsRule(ev, body, c)
+	case "c_calls":
+		return callsRule(ev, body, c)
 	default:
 		return unavailable(c, fmt.Sprintf("unknown deterministic rule %q", c.Rule))
 	}
@@ -158,8 +166,14 @@ func primaryDecisionRule(ev training.EvidenceBody, ref content.Reference, c asse
 	actual := *ev.Derived.PrimaryStatus
 	expected := ref.PrimaryDecision.Status
 	critical := c.Critical
+	// ДДС-3/ADR-032: 03's own "not accepted" equivalent is
+	// completed_without_team (its workflow has neither not_accepted nor
+	// refused, ADR-030) — refused_profile_incident must catch it too, or
+	// a profile-incident 03 card that the trainee wrongly waves off as
+	// "completed without a team" would score D_PRIMARY as merely
+	// not_met instead of critical.
 	if c.CriticalWhen == "refused_profile_incident" && expected == content.ReactionAccepted &&
-		(actual == content.ReactionNotAccepted || actual == content.ReactionRefused) {
+		(actual == content.ReactionNotAccepted || actual == content.ReactionRefused || actual == content.ReactionCompletedWithoutTeam) {
 		critical = true
 	}
 	refs := primaryDecisionRefs(ev)
