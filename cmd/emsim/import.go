@@ -379,7 +379,7 @@ func importScenariosStep(ctx context.Context, svc *content.Service, dir string, 
 	if err != nil {
 		return fmt.Errorf("import scenarios: %w", err)
 	}
-	fmt.Fprintf(stdout, "scenarios: new_scenarios=%d new_versions=%d unchanged=%d\n",
-		result.NewScenarios, result.NewVersions, result.Unchanged)
+	fmt.Fprintf(stdout, "scenarios: new_scenarios=%d new_versions=%d unchanged=%d status_changed=%d\n",
+		result.NewScenarios, result.NewVersions, result.Unchanged, result.StatusChanged)
 	return nil
 }

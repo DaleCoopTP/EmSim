@@ -138,6 +138,16 @@ func decideSetStatus(item training.Item, cmd training.Command, now time.Time) tr
 		State:    training.ItemInProgress,
 		Card:     item.Card,
 	}
+	// ADR-030: under a workflow with terminal statuses, saving one closes
+	// the card in the same command — the same preconditions close has.
+	if item.Workflow.IsTerminal(payload.Status) {
+		if rejection, ok := closePrecondition(item); !ok {
+			return rejectDecision(item, rejection)
+		}
+		reason := closeReasonFor(payload.Status)
+		decision.State = training.ItemClosed
+		decision.Close = &reason
+	}
 	if item.PrimaryAt == nil {
 		primaryAt := now
 		completeAt := now.Add(time.Duration(item.TimingEffective.CompleteS) * time.Second)
@@ -156,7 +166,7 @@ type addCommentPayload struct {
 // workflow check applies here too — a comment before open has no card
 // state to attach to).
 func decideAddComment(item training.Item, cmd training.Command) training.Decision {
-	if item.State == training.ItemOffered {
+	if statusClosesCard(item) || item.State == training.ItemOffered {
 		return rejectDecision(item, training.RejectTransitionNotAllowed)
 	}
 	var payload addCommentPayload
@@ -184,6 +194,10 @@ type setCardFieldPayload struct {
 // checked here: the trainee's job is to notice and fix the error
 // themselves, not to be told whether their fix was right.
 func decideSetCardField(item training.Item, cmd training.Command) training.Decision {
+	if statusClosesCard(item) {
+		// ADR-030: a DDS dispatcher never edits the 112 card.
+		return rejectDecision(item, training.RejectTransitionNotAllowed)
+	}
 	var payload setCardFieldPayload
 	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
 		return rejectDecision(item, training.RejectInvalidPayload)
@@ -225,18 +239,18 @@ func decideSetCardField(item training.Item, cmd training.Command) training.Decis
 // phone is slice 5), so that RFC-001 §7.4 precondition has nothing to
 // check yet either.
 func decideClose(item training.Item) training.Decision {
-	if activeCall(item) != nil {
-		return rejectDecision(item, training.RejectCallInProgress)
+	if statusClosesCard(item) {
+		// ADR-030: the terminal status itself closed the card; there is
+		// no separate close step under such a workflow.
+		return rejectDecision(item, training.RejectTransitionNotAllowed)
 	}
-	if item.CallPolicy.Required && !requiredCallFinished(item) {
-		return rejectDecision(item, training.RejectCallRequired)
+	if rejection, ok := closePrecondition(item); !ok {
+		return rejectDecision(item, rejection)
 	}
 	var reason training.CloseReason
 	switch item.Reaction {
-	case content.ReactionNotAccepted, content.ReactionRefused:
-		reason = training.CloseRefused
-	case content.ReactionCompleted, content.ReactionCompletedWithoutTeam:
-		reason = training.CloseCompleted
+	case content.ReactionNotAccepted, content.ReactionRefused, content.ReactionCompleted, content.ReactionCompletedWithoutTeam:
+		reason = closeReasonFor(item.Reaction)
 	case content.ReactionAccepted:
 		if item.PilotGoal != pilotGoalAcceptCard {
 			return rejectDecision(item, training.RejectTransitionNotAllowed)
@@ -251,6 +265,40 @@ func decideClose(item training.Item) training.Decision {
 		State:    training.ItemClosed,
 		Card:     item.Card,
 		Close:    &reason,
+	}
+}
+
+// statusClosesCard reports ADR-030's mode: the card's workflow snapshot
+// names terminal statuses, so saving one of them closes the card, and
+// close/add_comment/set_card_field have no place. A workflow without
+// terminal statuses is a slice 2–7 pilot service (ADR-017) and keeps
+// the old commands.
+func statusClosesCard(item training.Item) bool {
+	return len(item.Workflow.Terminal) > 0
+}
+
+// closePrecondition is what any close — explicit or by a terminal
+// status — requires: no call in progress and the required call, if any,
+// finished (RFC-001 §7.4).
+func closePrecondition(item training.Item) (training.Rejection, bool) {
+	if activeCall(item) != nil {
+		return training.RejectCallInProgress, false
+	}
+	if item.CallPolicy.Required && !requiredCallFinished(item) {
+		return training.RejectCallRequired, false
+	}
+	return "", true
+}
+
+// closeReasonFor maps a closing reaction to items.close_reason:
+// not_accepted/refused end the card as refused, completed and 103's
+// completed_without_team as completed.
+func closeReasonFor(status content.Reaction) training.CloseReason {
+	switch status {
+	case content.ReactionNotAccepted, content.ReactionRefused:
+		return training.CloseRefused
+	default:
+		return training.CloseCompleted
 	}
 }
 

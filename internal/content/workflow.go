@@ -1,5 +1,7 @@
 package content
 
+import "fmt"
+
 // Workflow is services.workflow — the per-service card status graph a
 // prepared scenario's reference must stay consistent with (Validate).
 // The full command/transition machinery training/dds enforces at
@@ -50,4 +52,40 @@ func (w Workflow) knownStatuses() map[Reaction]bool {
 		known[r] = true
 	}
 	return known
+}
+
+// Validate is the import-time check of one service's workflow (ADR-030):
+// every status it names is a known Reaction, a terminal status has no
+// outgoing transitions (saving it closes the card, so nothing may follow
+// it), and every terminal status is reachable from "received". A
+// workflow with no terminal statuses — the pilot services of slices 2–7
+// (ADR-017) — passes as long as its statuses are valid.
+func (w Workflow) Validate() error {
+	for status := range w.knownStatuses() {
+		if !status.Valid() {
+			return invalid("workflow", fmt.Sprintf("unknown_status:%s", status))
+		}
+	}
+	reachable := w.reachableFrom(ReactionReceived)
+	for _, terminal := range w.Terminal {
+		if len(w.Transitions[terminal]) > 0 {
+			return invalid("workflow.terminal", fmt.Sprintf("has_outgoing_transitions:%s", terminal))
+		}
+		if !reachable[terminal] {
+			return invalid("workflow.terminal", fmt.Sprintf("unreachable_from_received:%s", terminal))
+		}
+	}
+	return nil
+}
+
+// IsTerminal reports whether saving status closes the card under this
+// workflow (ADR-030). Always false for a workflow without terminal
+// statuses.
+func (w Workflow) IsTerminal(status Reaction) bool {
+	for _, t := range w.Terminal {
+		if t == status {
+			return true
+		}
+	}
+	return false
 }

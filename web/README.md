@@ -18,6 +18,20 @@ npm run test:e2e # isolated Chromium + compose browser acceptance tests (DDS, 11
 `go build` works without Node ever having run; `make web-build` (or the
 Dockerfile's Node stage) populates it.
 
+The DDS workplace (`routes/trainee/Workplace.tsx`) works a card the way the
+DDS guide describes (ADR-030): after "Открыть карточку", the trainee's own
+service in the card's service list becomes a live block
+(`ServiceStatusBlock`, passed to `IncidentCard` as `mineSlot`) with the
+current reaction status, a ▾ history of saved statuses and comments, and
+the ✎ pencil — a select built from `allowed_transitions`, a comment, and
+"Сохранить". A status in `terminal_statuses` warns that saving closes the
+card, and the server closes it. The queue, the card header and the
+instructor monitor show the derived `card_status` (red for «Не оповещено»,
+«Отказ», «Не завершено»); the instructor review lists the saved statuses
+with comments. The old accept/reject/comment/close buttons and the okrug
+form stay only for items whose `terminal_statuses` is empty (the archived
+slice 2–7 pilots).
+
 The operator 112 intake has its own trainee workspace and instructor review
 screens. Prepared questions now reveal only their spoken answers; hold and
 resume preserve the server-side dialogue across reloads. The pre-slice

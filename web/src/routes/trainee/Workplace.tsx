@@ -9,7 +9,7 @@ import { itemQueryKey, myItemsQueryKey, myRunQueryKey, useItem, useMyItems, useM
 import { availableLocalStorage, clearPending, loadPending, savePending, type PendingCommand } from "../../commands/pending";
 import { IncidentCard } from "../../components/IncidentCard";
 import { formatDateTime } from "../../format";
-import { reactionLabel } from "../../labels";
+import { cardStatusAlarm, cardStatusLabel, reactionLabel } from "../../labels";
 import { Operator112Workplace, type IntakeItem } from "./Operator112Workplace";
 
 type DDSItem = Omit<Item, "card"> & { card: CardView };
@@ -25,7 +25,9 @@ const rejectionLabels: Record<string, string> = {
   item_closed: "Карточка уже закрыта.",
   lesson_stopped: "Занятие остановлено преподавателем.",
   transition_not_allowed: "Это действие сейчас недоступно.",
-  comment_required: "Для отказа требуется комментарий.",
+  comment_required: "Для этого статуса требуется комментарий.",
+  call_required: "Сначала завершите обязательный звонок.",
+  call_in_progress: "Сначала завершите текущий звонок.",
   invalid_payload: "Проверьте заполненные данные.",
 };
 
@@ -210,6 +212,7 @@ function IncidentQueue({
               <th>Тип происшествия</th>
               <th>Адрес</th>
               <th>Статус службы</th>
+              {exerciseType !== "operator112_intake" && <th>Статус карточки</th>}
               <th aria-label="Открыть карточку" />
             </tr>
           </thead>
@@ -221,11 +224,12 @@ function IncidentQueue({
                 <td>{candidate.incident_type ?? "—"}</td>
                 <td>{candidate.address_short ?? "—"}</td>
 				<td>{candidate.exercise_type === "operator112_intake" ? candidate.call_status === "not_applicable" ? candidate.state === "closed" ? "Кейс завершён" : candidate.state === "offered" ? "Кейс ожидает открытия" : "Оформление карт" : candidate.call_status === "ringing" ? "Ожидает ответа" : candidate.call_status === "connected" ? "Разговор" : candidate.dispatched ? "Направлена" : "Разговор окончен" : reactionLabel(candidate.reaction)}{candidate.interruptions.length > 0 && " · ⚠"}</td>
+                {exerciseType !== "operator112_intake" && <td><CardStatusBadge status={candidate.card_status} /></td>}
                 <td><button type="button" className="queue-open" onClick={() => onOpen(candidate.id)}>Открыть карточку № {candidate.card_number}</button></td>
               </tr>
             ))}
             {visibleItems.length === 0 && (
-              <tr><td colSpan={6} className="queue-empty">По этому запросу {exerciseType === "operator112_intake" ? "кейсов" : "происшествий"} нет.</td></tr>
+              <tr><td colSpan={exerciseType === "operator112_intake" ? 6 : 7} className="queue-empty">По этому запросу {exerciseType === "operator112_intake" ? "кейсов" : "происшествий"} нет.</td></tr>
             )}
           </tbody>
         </table>
@@ -307,9 +311,14 @@ function ItemWorkplace({ me, item }: { me: Me; item: DDSItem }) {
   };
   const rejected = receipt?.outcome === "rejected" ? rejectionLabels[receipt.error_code ?? ""] ?? receipt.error_code : undefined;
   const open = item.state === "offered";
-  const editable = item.state !== "closed" && item.state !== "interrupted" && (item.reaction === "received" || item.reaction === "not_accepted");
-  const closable = item.state !== "closed" && item.state !== "interrupted" && ["accepted", "not_accepted", "completed", "completed_without_team"].includes(item.reaction);
   const finished = item.state === "closed" || item.state === "interrupted";
+  // ADR-030: a service whose workflow names terminal statuses is worked
+  // through the status pencil only — the terminal status closes the card.
+  // An empty list is a slice 2–7 pilot service with the old controls.
+  const terminalStatuses = item.terminal_statuses ?? [];
+  const legacy = terminalStatuses.length === 0;
+  const editable = legacy && !finished && (item.reaction === "received" || item.reaction === "not_accepted");
+  const closable = legacy && !finished && ["accepted", "not_accepted", "completed", "completed_without_team"].includes(item.reaction);
 
   return (
     <section className="dds-workplace">
@@ -320,12 +329,15 @@ function ItemWorkplace({ me, item }: { me: Me; item: DDSItem }) {
       )}
       <section className="dds-item-status" aria-label="Статус обработки карточки">
         <div><span>Статус службы</span><strong>{reactionLabel(item.reaction)}</strong></div>
+        {!legacy && <div><span>Статус карточки</span><strong><CardStatusBadge status={item.card_status} /></strong></div>}
         <div><span>Выдана</span><strong>{formatDateTime(item.offered_at)}</strong></div>
         <div><span>Открыть</span><strong>{remaining(item.deadlines.open_at, clockAnchor.server + clientNow - clockAnchor.client)}</strong></div>
         <div><span>Первичное решение</span><strong>{remaining(item.deadlines.primary_at, clockAnchor.server + clientNow - clockAnchor.client)}</strong></div>
         {item.deadlines.complete_at && <div><span>Завершить</span><strong>{remaining(item.deadlines.complete_at, clockAnchor.server + clientNow - clockAnchor.client)}</strong></div>}
       </section>
-      <IncidentCard card={item.card} />
+      <IncidentCard card={item.card} mineSlot={legacy || open ? undefined : (
+        <ServiceStatusBlock item={item} terminalStatuses={terminalStatuses} disabled={!!pending || finished} onSave={(status, text) => send("set_status", text ? { status, comment: text } : { status })} />
+      )} />
       {item.events.length > 0 && (
         <div className="item-events">
           <h3>Сообщения</h3>
@@ -347,8 +359,8 @@ function ItemWorkplace({ me, item }: { me: Me; item: DDSItem }) {
       ) : (
         <div className="item-actions">
           {open && <button type="button" disabled={!!pending} onClick={() => send("open", {})}>Открыть карточку</button>}
-          {!open && item.allowed_transitions.includes("accepted") && <button type="button" disabled={!!pending} onClick={() => send("set_status", { status: "accepted" })}>Принять</button>}
-          {!open && item.allowed_transitions.includes("not_accepted") && (
+          {legacy && !open && item.allowed_transitions.includes("accepted") && <button type="button" disabled={!!pending} onClick={() => send("set_status", { status: "accepted" })}>Принять</button>}
+          {legacy && !open && item.allowed_transitions.includes("not_accepted") && (
             <button type="button" disabled={!!pending || comment.trim() === ""} onClick={() => send("set_status", { status: "not_accepted", comment: comment.trim() })}>Не принять</button>
           )}
           {!open && <PhonePanel item={item} onChanged={refresh} />}
@@ -362,7 +374,7 @@ function ItemWorkplace({ me, item }: { me: Me; item: DDSItem }) {
           <button type="submit" disabled={!!pending || okrug.trim() === "" || okrug.trim() === item.card.address.okrug}>Сохранить округ</button>
         </form>
       )}
-      {item.state !== "offered" && !finished && (
+      {legacy && item.state !== "offered" && !finished && (
         <form className="inline-form" onSubmit={addComment}>
           <label>Комментарий<textarea value={comment} onChange={(event) => setComment(event.target.value)} /></label>
           <button type="submit" disabled={!!pending || comment.trim() === ""}>Добавить комментарий</button>
@@ -577,6 +589,97 @@ function PhonePanel({ item, onChanged }: { item: DDSItem; onChanged: () => Promi
       </div>
     </section>
   );
+}
+
+// Statuses whose comment the DDS guide makes mandatory (памятка, стр.
+// 21–23): the reason and where the information was passed. This is the
+// public rule, not the scenario's reference; the server enforces it per
+// the card's own workflow snapshot.
+const commentRequiredStatuses = new Set(["not_accepted", "refused", "completed_without_team"]);
+
+type StatusEntry = { status: string; comment: string; at: string };
+
+function statusHistory(item: DDSItem): StatusEntry[] {
+  return item.actions
+    .filter((action) => action.type === "set_status" && action.accepted)
+    .map((action) => {
+      const payload = (action.payload ?? {}) as { status?: string; comment?: string };
+      return { status: payload.status ?? "", comment: payload.comment ?? "", at: action.server_at };
+    });
+}
+
+// ServiceStatusBlock is the trainee's own service in the card's service
+// list (ADR-030): its current reaction status, the ▾ history of saved
+// statuses with their comments, and the ✎ pencil that saves the next
+// status together with its comment.
+function ServiceStatusBlock({ item, terminalStatuses, disabled, onSave }: {
+  item: DDSItem;
+  terminalStatuses: string[];
+  disabled: boolean;
+  onSave: (status: string, comment: string) => void;
+}) {
+  const history = statusHistory(item);
+  const last = history[history.length - 1];
+  const [editing, setEditing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [status, setStatus] = useState("");
+  const [text, setText] = useState("");
+  const commentRequired = commentRequiredStatuses.has(status);
+  const closes = terminalStatuses.includes(status);
+  const canEdit = !disabled && item.allowed_transitions.length > 0;
+  const save = (event: FormEvent) => {
+    event.preventDefault();
+    if (!status || (commentRequired && !text.trim())) return;
+    onSave(status, text.trim());
+    setEditing(false);
+    setStatus("");
+    setText("");
+  };
+  return (
+    <div className="dds-service-block">
+      <div className="dds-service-block-head">
+        <span>{reactionLabel(item.reaction)}{last ? ` · ${formatDateTime(last.at)}` : ""}</span>
+        {history.length > 0 && (
+          <button type="button" className="dds-service-history-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+            {expanded ? "▴ Скрыть историю" : "▾ История статусов"}
+          </button>
+        )}
+        {canEdit && !editing && (
+          <button type="button" className="dds-service-pencil" aria-label="Проставить статус реагирования" onClick={() => setEditing(true)}>✎</button>
+        )}
+      </div>
+      {expanded && (
+        <ol className="dds-service-history">
+          {history.map((entry, index) => (
+            <li key={index}><strong>{reactionLabel(entry.status as DDSItem["reaction"])}</strong> · {formatDateTime(entry.at)}{entry.comment ? `: ${entry.comment}` : ""}</li>
+          ))}
+        </ol>
+      )}
+      {editing && (
+        <form className="dds-status-form" onSubmit={save}>
+          <label>Статус реагирования
+            <select value={status} onChange={(event) => setStatus(event.target.value)}>
+              <option value="">Выберите статус</option>
+              {item.allowed_transitions.map((next) => <option key={next} value={next}>{reactionLabel(next)}</option>)}
+            </select>
+          </label>
+          <label>Комментарий{commentRequired ? " (обязателен: причина и куда передана информация)" : ""}
+            <textarea value={text} onChange={(event) => setText(event.target.value)} />
+          </label>
+          {closes && <p className="notice">Сохранение этого статуса закроет карточку для редактирования. Внесите в комментарий всю информацию заранее.</p>}
+          <div className="dds-status-form-actions">
+            <button type="submit" disabled={!status || (commentRequired && !text.trim())}>Сохранить</button>
+            <button type="button" onClick={() => { setEditing(false); setStatus(""); setText(""); }}>Отмена</button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function CardStatusBadge({ status }: { status: DDSItem["card_status"] }) {
+  if (!status) return <>—</>;
+  return <span className={`card-status-badge${cardStatusAlarm(status) ? " card-status-alarm" : ""}`}>{cardStatusLabel(status)}</span>;
 }
 
 // ControlReportForm is RFC-001 §7.5's post-close message: a plain-text

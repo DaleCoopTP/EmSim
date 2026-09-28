@@ -281,7 +281,7 @@ func TestTraineeItemHasExactPublicShapeAndNoReferenceLeak(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
-	wantKeys := []string{"actions", "address_short", "allowed_transitions", "calls", "card", "card_number", "close_reason", "closed_at", "deadlines", "events", "id", "incident_type", "interruptions", "mode", "offered_at", "opened_at", "primary_at", "reaction", "seq", "server_time", "state"}
+	wantKeys := []string{"actions", "address_short", "allowed_transitions", "calls", "card", "card_number", "card_status", "close_reason", "closed_at", "deadlines", "events", "id", "incident_type", "interruptions", "mode", "offered_at", "opened_at", "primary_at", "reaction", "seq", "server_time", "state", "terminal_statuses"}
 	gotKeys := make([]string, 0, len(got))
 	for k := range got {
 		gotKeys = append(gotKeys, k)
@@ -301,6 +301,32 @@ func TestTraineeItemHasExactPublicShapeAndNoReferenceLeak(t *testing.T) {
 	trainingMux(svc, trainingPrincipal(auth.RoleInstructor)).ServeHTTP(response, trainingRequest("GET", "/api/v1/items/"+svc.item.ID.String(), nil, true))
 	if response.Code != 200 || !strings.Contains(response.Body.String(), "СЕКРЕТНЫЙ ЭТАЛОН") {
 		t.Fatalf("instructor item missing reference: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestDDSItemExposesTerminalStatusesAndCardStatus(t *testing.T) {
+	svc := trainingFixture()
+	svc.item.Workflow = content.Workflow{
+		Transitions: map[content.Reaction][]content.Reaction{content.ReactionReceived: {content.ReactionAccepted, content.ReactionNotAccepted}},
+		Terminal:    []content.Reaction{content.ReactionCompleted, content.ReactionRefused},
+	}
+	response := httptest.NewRecorder()
+	trainingMux(svc, trainingPrincipal(auth.RoleTrainee)).ServeHTTP(response, trainingRequest("GET", "/api/v1/items/"+svc.item.ID.String(), nil, true))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		TerminalStatuses []string `json:"terminal_statuses"`
+		CardStatus       string   `json:"card_status"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(body.TerminalStatuses, []string{"completed", "refused"}) {
+		t.Fatalf("terminal_statuses=%v, want [completed refused]", body.TerminalStatuses)
+	}
+	if body.CardStatus == "" {
+		t.Fatal("card_status missing on a DDS item")
 	}
 }
 

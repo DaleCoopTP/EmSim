@@ -4,7 +4,7 @@ import { errorMessage } from "../../api/errors";
 import { useEventStream } from "../../api/realtime";
 import { monitorQueryKey, useMonitor, type MonitorRow } from "../../api/training";
 import { formatDateTime } from "../../format";
-import { reactionLabel } from "../../labels";
+import { cardStatusAlarm, cardStatusLabel, reactionLabel } from "../../labels";
 
 const commandLabels: Record<string, string> = {
   open: "Открыл карточку",
@@ -81,7 +81,7 @@ function MonitorRowView({ row }: { row: MonitorRow }) {
         {row.active_items.length === 0 && "—"}
         {row.active_items.map((item) => (
           <div key={item.id}>
-			№ {item.card_number} · {item.exercise_type === "operator112_intake" ? item.call_status === "not_applicable" ? `кейс без разговора${item.incident_type ? ` · ${item.incident_type}` : " · тип не выбран"}${item.notified ? " · оповещено" : ""}` : `вызов ${item.call_status === "ringing" ? "ожидает" : item.call_status === "connected" ? "идёт разговор" : item.call_status === "held" ? "на удержании" : "разговор завершён"}${item.incident_type ? ` · ${item.incident_type}` : ""}${item.notified ? " · оповещено" : item.dispatched ? " · направлена" : ""}` : reactionLabel(item.reaction)}
+			№ {item.card_number} · {item.exercise_type === "operator112_intake" ? item.call_status === "not_applicable" ? `кейс без разговора${item.incident_type ? ` · ${item.incident_type}` : " · тип не выбран"}${item.notified ? " · оповещено" : ""}` : `вызов ${item.call_status === "ringing" ? "ожидает" : item.call_status === "connected" ? "идёт разговор" : item.call_status === "held" ? "на удержании" : "разговор завершён"}${item.incident_type ? ` · ${item.incident_type}` : ""}${item.notified ? " · оповещено" : item.dispatched ? " · направлена" : ""}` : <>{reactionLabel(item.reaction)}{item.card_status && <> · <span className={`card-status-badge${cardStatusAlarm(item.card_status) ? " card-status-alarm" : ""}`}>{cardStatusLabel(item.card_status)}</span></>}</>}
             {item.interruptions.length > 0 && <span role="alert" className="error"> · прервана рестартом сервера</span>}
           </div>
         ))}

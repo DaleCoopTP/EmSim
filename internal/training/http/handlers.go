@@ -35,6 +35,7 @@ import (
 	"emsim/internal/platform/httpapi"
 	"emsim/internal/platform/realtime"
 	"emsim/internal/training"
+	"emsim/internal/training/dds"
 
 	"github.com/google/uuid"
 )
@@ -513,9 +514,14 @@ func (h *Handlers) myItems(w http.ResponseWriter, r *http.Request) {
 		writeTrainingError(w, r, err)
 		return
 	}
+	now, err := h.training.Now(r.Context())
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to load items", nil)
+		return
+	}
 	out := make([]itemSummaryJSON, len(items))
 	for i, it := range items {
-		out[i] = toItemSummaryJSON(it)
+		out[i] = toItemSummaryJSON(it, now)
 	}
 	writeJSON(w, r, http.StatusOK, out)
 }
@@ -800,6 +806,7 @@ type itemSummaryJSON struct {
 	CallStatus    string             `json:"call_status,omitempty"`
 	Dispatched    bool               `json:"dispatched,omitempty"`
 	Notified      bool               `json:"notified,omitempty"`
+	CardStatus    string             `json:"card_status,omitempty"`
 	State         string             `json:"state"`
 	Reaction      string             `json:"reaction"`
 	Seq           int64              `json:"seq"`
@@ -835,7 +842,7 @@ func toInterruptionsJSON(interruptions []training.Interruption) []interruptionJS
 	return out
 }
 
-func toItemSummaryJSON(item training.Item) itemSummaryJSON {
+func toItemSummaryJSON(item training.Item, now time.Time) itemSummaryJSON {
 	var closeReason *string
 	if item.CloseReason != nil {
 		s := string(*item.CloseReason)
@@ -867,8 +874,8 @@ func toItemSummaryJSON(item training.Item) itemSummaryJSON {
 	}
 	return itemSummaryJSON{
 		ID: item.ID.String(), State: string(item.State), Reaction: string(item.Reaction), Seq: item.Seq,
-		ExerciseType: string(item.ExerciseType),
-		CardNumber:   item.Card.Number, IncidentType: item.Card.Incident.TypeName, AddressShort: item.Card.Address.Text,
+		ExerciseType: string(item.ExerciseType), CardStatus: string(dds.CardStatusOf(item, now)),
+		CardNumber: item.Card.Number, IncidentType: item.Card.Incident.TypeName, AddressShort: item.Card.Address.Text,
 		OfferedAt: formatTime(item.OfferedAt), OpenedAt: formatTimePtr(item.OpenedAt), ClosedAt: formatTimePtr(item.ClosedAt),
 		CloseReason: closeReason, Deadlines: toDeadlinesJSON(item.Deadlines), PrimaryAt: formatTimePtr(item.PrimaryAt),
 		Interruptions: toInterruptionsJSON(item.Interruptions),
@@ -992,6 +999,7 @@ type itemJSON struct {
 	Notification            *training.IntakeNotification    `json:"notification,omitempty"`
 	RecipientServices       []string                        `json:"recipient_services,omitempty"`
 	IntakeReference         *content.Intake112Reference     `json:"intake_reference,omitempty"`
+	TerminalStatuses        *[]string                       `json:"terminal_statuses,omitempty"`
 	AllowedTransitions      []string                        `json:"allowed_transitions"`
 	Actions                 []actionJSON                    `json:"actions"`
 	Events                  []deliveredEventJSON            `json:"events"`
@@ -1106,6 +1114,17 @@ func traineeIntakeState(item training.Item) *training.IntakeState {
 	return &state
 }
 
+// terminalStatuses is Item.terminal_statuses (ADR-030): always an array
+// for a DDS item — empty for a pilot service whose close/add_comment/
+// set_card_field still apply.
+func terminalStatuses(workflow content.Workflow) *[]string {
+	out := make([]string, len(workflow.Terminal))
+	for i, status := range workflow.Terminal {
+		out[i] = string(status)
+	}
+	return &out
+}
+
 func toItemJSON(item training.Item, actions []training.Action, events []training.DeliveredEvent, reference *content.Reference, intakeReference *content.Intake112Reference, intakeDialogue *content.Intake112Dialogue, now time.Time, traineeView bool) itemJSON {
 	actionItems := make([]actionJSON, len(actions))
 	for i, a := range actions {
@@ -1122,7 +1141,7 @@ func toItemJSON(item training.Item, actions []training.Action, events []training
 		if traineeView && state != nil {
 			state = traineeIntakeState(item)
 		}
-		return itemJSON{itemSummaryJSON: toItemSummaryJSON(item), Mode: string(item.Mode),
+		return itemJSON{itemSummaryJSON: toItemSummaryJSON(item, now), Mode: string(item.Mode),
 			Card: item.IntakeCard, IntakeState: state, AvailableServiceCodes: availableServices, Dispatch: item.IntakeDispatch,
 			Notification:      item.IntakeNotification,
 			RecipientServices: item.IntakeRecipients, IntakeReference: intakeReference,
@@ -1131,9 +1150,10 @@ func toItemJSON(item training.Item, actions []training.Action, events []training
 			ServerTime: formatTime(now)}
 	}
 	return itemJSON{
-		itemSummaryJSON:    toItemSummaryJSON(item),
+		itemSummaryJSON:    toItemSummaryJSON(item, now),
 		Mode:               string(item.Mode),
 		Card:               toCardViewJSON(item.Card, item.Contacts, item.OfferedAt),
+		TerminalStatuses:   terminalStatuses(item.Workflow),
 		AllowedTransitions: allowed,
 		Actions:            actionItems,
 		Events:             toDeliveredEventsJSON(events),

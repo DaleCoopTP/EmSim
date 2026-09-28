@@ -6,6 +6,7 @@ import { ApiError, api } from "../../api/client";
 import { errorMessage } from "../../api/errors";
 import type { components } from "../../api/schema";
 import { formatDateTime } from "../../format";
+import { cardStatusLabel, reactionLabel } from "../../labels";
 import { IntakeAutoAssessment, isPenaltyCriterion, criterionStatusLabels, type RubricEffectiveCriterion } from "../../components/IntakeAutoAssessment";
 
 type CriterionStatus = CriterionResult["status"];
@@ -66,6 +67,8 @@ export function ItemReviewRoute() {
 		<h2>Карточка и эталон</h2>
 		<p>{(item.data.card as { applicant?: { name?: string }; address?: { text?: string } })?.applicant?.name ?? "Заявитель"} · {(item.data.card as { address?: { text?: string } })?.address?.text ?? "адрес не указан"}</p>
 		<details><summary>Эталон сценария</summary><pre>{JSON.stringify(item.data.reference ?? {}, null, 2)}</pre></details>
+		{item.data.card_status ? <p>Статус карточки: {cardStatusLabel(item.data.card_status)}</p> : null}
+		<DDSStatusHistory actions={(evidence.actions ?? []) as DDSReviewAction[]} />
 		<h2>Автоматическая проверка</h2>
 		<CriteriaTable criteria={autoCriteria} />
 	</>}
@@ -281,4 +284,18 @@ function IntakeCardView({ card }: { card: IntakeCard }) {
     <dt>Телефоны</dt><dd>Предоставленный: {value(card.provided_phone)} · На место: {value(card.on_site_phone)}</dd>
     <dt>Особые отметки</dt><dd>Нет на месте / отказ от скорой: {value(card.no_on_site)} · Нет доступа / заблокированные: {value(card.no_access)}</dd>
   </dl>;
+}
+
+type DDSReviewAction = { action_id: string; type: string; accepted: boolean; server_at: string; payload?: { status?: components["schemas"]["ReactionStatus"]; comment?: string } };
+
+// DDSStatusHistory is the dispatcher's saved reaction statuses with their
+// comments, in journal order (ADR-030) — what the trainee's pencil wrote
+// into the card.
+function DDSStatusHistory({ actions }: { actions: DDSReviewAction[] }) {
+  const saved = actions.filter((action) => action.accepted && action.type === "set_status");
+  if (saved.length === 0) return <p>Статусы реагирования не проставлены.</p>;
+  return <>
+    <h2>Статусы реагирования</h2>
+    <ol>{saved.map((action) => <li key={action.action_id}>{formatDateTime(action.server_at)} · <strong>{reactionLabel(action.payload?.status)}</strong>{action.payload?.comment ? ` — ${action.payload.comment}` : ""}</li>)}</ol>
+  </>;
 }

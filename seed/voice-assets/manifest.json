@@ -8,6 +8,22 @@
     {
       "scenario_key": "pilot-phone-01", "version": 1, "contact_key": "crew_leader", "phrase": "ack",
       "file": "crew_leader_ack.wav", "sha256": "413c1c6b96aefe1df54d271f19ee669d584309ecb0adceb0bb5f1e60e4bd78d3", "size": 154362, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-district-tree-cycle-01", "version": 1, "contact_key": "crew_leader", "phrase": "greeting",
+      "file": "crew_leader_greeting.wav", "sha256": "7d0578ccac10fd83a7a00f727afd47100a697d8c8282ecae182212ab7ad3074f", "size": 178254, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-district-tree-cycle-01", "version": 1, "contact_key": "crew_leader", "phrase": "ack",
+      "file": "crew_leader_ack.wav", "sha256": "413c1c6b96aefe1df54d271f19ee669d584309ecb0adceb0bb5f1e60e4bd78d3", "size": 154362, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-ambulance-cycle-01", "version": 1, "contact_key": "crew_leader", "phrase": "greeting",
+      "file": "crew_leader_greeting.wav", "sha256": "7d0578ccac10fd83a7a00f727afd47100a697d8c8282ecae182212ab7ad3074f", "size": 178254, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-ambulance-cycle-01", "version": 1, "contact_key": "crew_leader", "phrase": "ack",
+      "file": "crew_leader_ack.wav", "sha256": "413c1c6b96aefe1df54d271f19ee669d584309ecb0adceb0bb5f1e60e4bd78d3", "size": 154362, "mime": "audio/wav"
     }
   ]
 }

@@ -109,15 +109,15 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportServices: %v", err)
 	}
-	if servicesResult.Created != 6 || servicesResult.Unchanged != 0 {
-		t.Fatalf("ImportServices = %+v, want Created=6 Unchanged=0", servicesResult)
+	if servicesResult.Created != 8 || servicesResult.Unchanged != 0 {
+		t.Fatalf("ImportServices = %+v, want Created=8 Unchanged=0", servicesResult)
 	}
 	servicesResult2, err := svc.ImportServices(ctx, openSeedFile(t, "../../seed/services.json"), actorID, actorRole, "req-2")
 	if err != nil {
 		t.Fatalf("ImportServices (replay): %v", err)
 	}
-	if servicesResult2.Created != 0 || servicesResult2.Unchanged != 6 {
-		t.Fatalf("ImportServices (replay) = %+v, want Created=0 Unchanged=6", servicesResult2)
+	if servicesResult2.Created != 0 || servicesResult2.Unchanged != 8 {
+		t.Fatalf("ImportServices (replay) = %+v, want Created=0 Unchanged=8", servicesResult2)
 	}
 	intakeCatalog, err := svc.ImportIntakeCatalog(ctx, openSeedFile(t, "../../seed/intake-catalog.json"), actorID, actorRole, "intake-catalog-1")
 	if err != nil || intakeCatalog.Created != 1 {
@@ -133,15 +133,15 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportClassifierTypes: %v", err)
 	}
-	if classifierResult.Created != 1 || classifierResult.Unchanged != 0 {
-		t.Fatalf("ImportClassifierTypes = %+v, want Created=1 Unchanged=0", classifierResult)
+	if classifierResult.Created != 2 || classifierResult.Unchanged != 0 {
+		t.Fatalf("ImportClassifierTypes = %+v, want Created=2 Unchanged=0", classifierResult)
 	}
 	classifierResult2, err := svc.ImportClassifierTypes(ctx, openSeedFile(t, "../../seed/classifier.json"), actorID, actorRole, "req-4")
 	if err != nil {
 		t.Fatalf("ImportClassifierTypes (replay): %v", err)
 	}
-	if classifierResult2.Created != 0 || classifierResult2.Unchanged != 1 {
-		t.Fatalf("ImportClassifierTypes (replay) = %+v, want Created=0 Unchanged=1", classifierResult2)
+	if classifierResult2.Created != 0 || classifierResult2.Unchanged != 2 {
+		t.Fatalf("ImportClassifierTypes (replay) = %+v, want Created=0 Unchanged=2", classifierResult2)
 	}
 
 	// --- scenarios ---
@@ -153,15 +153,19 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	// commit 3da6db3, on top of the pre-112-5b 12/13; ADR-028's 112-6
 	// LLM stage added a version 2 to each of those same three scenarios
 	// — description_questions, no new scenario — for 16+3=19 versions).
-	if scenarioResult.NewScenarios != 15 || scenarioResult.NewVersions != 19 || scenarioResult.Unchanged != 0 {
-		t.Fatalf("ImportScenarios = %+v, want NewScenarios=15 NewVersions=19 Unchanged=0", scenarioResult)
+	// ADR-030 added the two full-cycle DDS scenarios (district, 03): 17
+	// scenarios/21 versions. The four slice 2–7 DDS pilots carry
+	// "archived": true, so the first import moves each of them from
+	// approved to archived.
+	if scenarioResult.NewScenarios != 17 || scenarioResult.NewVersions != 21 || scenarioResult.Unchanged != 0 || scenarioResult.StatusChanged != 4 {
+		t.Fatalf("ImportScenarios = %+v, want NewScenarios=17 NewVersions=21 Unchanged=0 StatusChanged=4", scenarioResult)
 	}
 	scenarioResult2, err := svc.ImportScenarios(ctx, openScenarioDir(t, "../../seed/scenarios"), actorID, actorRole, "req-6")
 	if err != nil {
 		t.Fatalf("ImportScenarios (replay): %v", err)
 	}
-	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 19 {
-		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=19", scenarioResult2)
+	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 21 || scenarioResult2.StatusChanged != 0 {
+		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=21", scenarioResult2)
 	}
 
 	// --- read side ---
@@ -169,15 +173,24 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListScenarios: %v", err)
 	}
-	if total != 15 || len(items) != 15 {
-		t.Fatalf("ListScenarios: total=%d len=%d, want 15 including three card-only cases, two full_case (prepared + free_text) and three 112-5b AI-caller cases", total, len(items))
+	if total != 13 || len(items) != 13 {
+		t.Fatalf("ListScenarios: total=%d len=%d, want 11 operator 112 and 2 DDS scenarios; the 4 archived DDS pilots are hidden (ADR-030)", total, len(items))
+	}
+	archivedItems, archivedTotal, err := svc.ListScenarios(ctx, content.ScenarioFilter{Status: "archived"})
+	if err != nil || archivedTotal != 4 || len(archivedItems) != 4 {
+		t.Fatalf("archived catalogue: items=%+v total=%d err=%v, want the 4 DDS pilots", archivedItems, archivedTotal, err)
 	}
 
 	var case02ID uuid.UUID
 	var intakeID uuid.UUID
-	for _, it := range items {
+	for _, it := range archivedItems {
 		if it.SourceKey != nil && *it.SourceKey == "pilot-tree-02" {
 			case02ID = it.ID
+		}
+	}
+	for _, it := range items {
+		if it.SourceKey != nil && *it.SourceKey == "pilot-tree-02" {
+			t.Fatalf("archived pilot-tree-02 listed in the default catalogue: %+v", it)
 		}
 		if it.SourceKey != nil && *it.SourceKey == "pilot-112-medical-01" {
 			intakeID = it.ID
@@ -187,7 +200,7 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 		}
 	}
 	if case02ID == uuid.Nil {
-		t.Fatalf("pilot-tree-02 not found in ListScenarios: %+v", items)
+		t.Fatalf("pilot-tree-02 not found in the archived catalogue: %+v", archivedItems)
 	}
 	if intakeID == uuid.Nil {
 		t.Fatalf("pilot-112-medical-01 not found in ListScenarios: %+v", items)
@@ -675,4 +688,63 @@ func scenarioFileJSON(t *testing.T, key string, version int, title, primaryStatu
 			"exercise_type": "dds_processing"
 		}
 	}`
+}
+
+// TestContentImportArchivedFlagTogglesCatalogueStatus covers ADR-030's
+// archived flag: it hides a file-backed scenario from the default
+// catalogue without touching its versions, and clearing it restores the
+// scenario — both directions idempotent.
+func TestContentImportArchivedFlagTogglesCatalogueStatus(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := openTestDatabase(t, ctx)
+	pool, err := pgstore.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open pool: %v", err)
+	}
+	defer pool.Close()
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	authStore := authpg.NewStore(pool)
+	actorID, actorRole := createContentAdmin(t, ctx, authStore, "archive-admin")
+	svc := content.NewService(contentpg.NewStore(pool), mustValidator(t))
+	seedServiceAndClassifier(t, ctx, svc, actorID, actorRole)
+
+	plain := scenarioFileJSON(t, "archivable", 1, "Archivable", "accepted")
+	archived := strings.Replace(plain, `"origin": "manual",`, `"origin": "manual", "archived": true,`, 1)
+	listed := func(filter content.ScenarioFilter) bool {
+		t.Helper()
+		items, _, err := svc.ListScenarios(ctx, filter)
+		if err != nil {
+			t.Fatalf("ListScenarios(%+v): %v", filter, err)
+		}
+		for _, it := range items {
+			if it.SourceKey != nil && *it.SourceKey == "archivable" {
+				return true
+			}
+		}
+		return false
+	}
+	importOne := func(body string, wantChanged int) {
+		t.Helper()
+		result, err := svc.ImportScenarios(ctx, map[string]io.Reader{"a.json": strings.NewReader(body)}, actorID, actorRole, "archive")
+		if err != nil {
+			t.Fatalf("ImportScenarios: %v", err)
+		}
+		if result.StatusChanged != wantChanged {
+			t.Fatalf("StatusChanged = %d, want %d (%+v)", result.StatusChanged, wantChanged, result)
+		}
+	}
+
+	importOne(archived, 1)
+	if listed(content.ScenarioFilter{}) || !listed(content.ScenarioFilter{Status: "archived"}) {
+		t.Fatal("archived scenario must be hidden from the default catalogue and listed under status=archived")
+	}
+	importOne(archived, 0)
+
+	importOne(plain, 1)
+	if !listed(content.ScenarioFilter{}) || listed(content.ScenarioFilter{Status: "archived"}) {
+		t.Fatal("clearing the flag must restore the scenario to the default catalogue")
+	}
+	importOne(plain, 0)
 }

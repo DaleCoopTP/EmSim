@@ -250,7 +250,7 @@ func (s *Store) ListScenarios(ctx context.Context, tx pgx.Tx, filter content.Sce
 		) sv ON true
 		WHERE sv.id IS NOT NULL
 		  AND ($1::text IS NULL OR s.target_service = $1)
-		  AND ($2::text IS NULL OR s.status = $2)
+		  AND (($2::text IS NULL AND s.status <> 'archived') OR s.status = $2)
 		  AND ($3::int IS NULL OR s.difficulty >= $3)
 		  AND ($4::int IS NULL OR s.difficulty <= $4)
 		  AND ($5::text IS NULL OR sv.exercise_type = $5)

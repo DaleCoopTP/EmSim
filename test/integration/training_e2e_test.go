@@ -85,14 +85,22 @@ func approvedVersionID(t *testing.T, f trainingE2EFixture, instructorClient *htt
 			SourceKey *string `json:"source_key"`
 		} `json:"items"`
 	}
-	response := jsonRequest(t, f.ctx, instructorClient, f.baseURL, http.MethodGet, "/api/v1/scenarios?page_size=200", nil, &scenarioList)
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("GET /scenarios status = %d", response.StatusCode)
-	}
+	// The slice 2–7 pilots are archived (ADR-030): hidden from the default
+	// catalogue, still listed under status=archived and still assignable.
 	var scenarioID string
-	for _, item := range scenarioList.Items {
-		if item.SourceKey != nil && *item.SourceKey == scenarioSourceKey {
-			scenarioID = item.ID
+	for _, query := range []string{"/api/v1/scenarios?page_size=200", "/api/v1/scenarios?page_size=200&status=archived"} {
+		scenarioList.Items = nil
+		response := jsonRequest(t, f.ctx, instructorClient, f.baseURL, http.MethodGet, query, nil, &scenarioList)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s status = %d", query, response.StatusCode)
+		}
+		for _, item := range scenarioList.Items {
+			if item.SourceKey != nil && *item.SourceKey == scenarioSourceKey {
+				scenarioID = item.ID
+			}
+		}
+		if scenarioID != "" {
+			break
 		}
 	}
 	if scenarioID == "" {
@@ -103,7 +111,7 @@ func approvedVersionID(t *testing.T, f trainingE2EFixture, instructorClient *htt
 		ID     string `json:"id"`
 		Status string `json:"status"`
 	}
-	response = jsonRequest(t, f.ctx, instructorClient, f.baseURL, http.MethodGet, "/api/v1/scenarios/"+scenarioID+"/versions", nil, &versions)
+	response := jsonRequest(t, f.ctx, instructorClient, f.baseURL, http.MethodGet, "/api/v1/scenarios/"+scenarioID+"/versions", nil, &versions)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("GET /scenarios/%s/versions status = %d", scenarioID, response.StatusCode)
 	}
@@ -148,9 +156,16 @@ func provisionWorkstations(t *testing.T, f trainingE2EFixture, adminClient *http
 // must already exist in the replacement inventory installed above.
 func createTrainee(t *testing.T, f trainingE2EFixture, adminClient *http.Client, login string, workstationNo int) *http.Client {
 	t.Helper()
+	return createTraineeWithService(t, f, adminClient, login, workstationNo, "dds_district")
+}
+
+// createTraineeWithService is createTrainee for a trainee of another DDS
+// service — the ADR-030 services have their own codes.
+func createTraineeWithService(t *testing.T, f trainingE2EFixture, adminClient *http.Client, login string, workstationNo int, serviceCode string) *http.Client {
+	t.Helper()
 	response := jsonRequest(t, f.ctx, adminClient, f.baseURL, http.MethodPost, "/api/v1/admin/users", map[string]any{
 		"login": login, "password": "correct-horse-battery-staple",
-		"full_name": "Курсант " + login, "role": "trainee", "service_code": "dds_district",
+		"full_name": "Курсант " + login, "role": "trainee", "service_code": serviceCode,
 	}, nil)
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("create trainee %s status = %d", login, response.StatusCode)

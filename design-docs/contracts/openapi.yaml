@@ -173,7 +173,7 @@ paths:
       parameters:
         - { name: service, in: query, schema: { type: string } }
         - { name: exercise_type, in: query, schema: { $ref: '#/components/schemas/ExerciseType' } }
-        - { name: status, in: query, schema: { type: string, enum: [draft, approved, archived] } }
+        - { name: status, in: query, description: 'Без параметра архивные сценарии не возвращаются (ADR-030); status=archived показывает только их.', schema: { type: string, enum: [draft, approved, archived] } }
         - { name: difficulty_min, in: query, schema: { type: integer, minimum: 1, maximum: 10 } }
         - { name: difficulty_max, in: query, schema: { type: integer, minimum: 1, maximum: 10 } }
         - { $ref: '#/components/parameters/Page' }
@@ -1506,6 +1506,14 @@ components:
         call_status: { type: string, enum: [ringing, connected, held, ended, not_applicable] }
         dispatched: { type: boolean }
         notified: { type: boolean }
+        card_status:
+          type: string
+          enum: [registered, not_notified, in_progress, refused, completed, not_completed]
+          description: >-
+            Только dds_processing (ADR-030): вычисляемый статус карточки по памятке ДДС, стр. 27–28, не хранится.
+            registered — первичного статуса ещё нет, срок не истёк; not_notified — нет «Принята»/«Не принята» после
+            норматива первичного статуса; in_progress — принята, идут работы; refused — not_accepted/refused;
+            completed — completed/completed_without_team; not_completed — карточка прервана без завершения.
         id:
           type: string
           format: uuid
@@ -1619,6 +1627,13 @@ components:
             notification: { $ref: '#/components/schemas/Intake112Notification' }
             recipient_services: { type: array, items: { type: string }, description: Разрешённые учебные адресаты; эталон не раскрывается. }
             intake_reference: { type: object, description: Только преподавателю в режиме 112. }
+            terminal_statuses:
+              type: array
+              items: { $ref: '#/components/schemas/ReactionStatus' }
+              description: >-
+                Только dds_processing (ADR-030): финальные статусы из снимка workflow карточки. set_status в любой из них
+                сразу закрывает карточку; в этом режиме close, add_comment и set_card_field дают transition_not_allowed.
+                Пустой массив — старая пилотная служба (ADR-017): close, add_comment и set_card_field работают как раньше.
             allowed_transitions:
               type: array
               items: { $ref: '#/components/schemas/ReactionStatus' }
@@ -1698,7 +1713,8 @@ components:
         description: Явное закрытие после терминального статуса при обязательных комментариях и без активного звонка. set_status
           сам не закрывает; превышение норматива не закрывает. Пилотное исключение (ADR-017,
           срез 3) — close также разрешён из accepted для сценариев с reference.pilot_goal=accept_card;
-          close_reason=pilot_completed.
+          close_reason=pilot_completed. Для ДДС с непустым Item.terminal_statuses (ADR-030) close не используется
+          (transition_not_allowed) — карточку закрывает сам финальный статус.
       - properties:
           type:
             const: set_status
@@ -1712,6 +1728,10 @@ components:
                 $ref: '#/components/schemas/ReactionStatus'
               comment:
                 type: string
+        description: 'Статус реагирования своей службы с комментарием («карандаш»). Для ДДС с непустым
+          Item.terminal_statuses (ADR-030) статус из этого списка сразу закрывает карточку
+          (close_reason refused для refused, completed для completed/completed_without_team);
+          при активном звонке или незавершённом обязательном звонке — отказ, как у close.'
       - properties:
           type:
             const: set_card_field
@@ -1731,7 +1751,8 @@ components:
                 minLength: 1
         description: 'Исправление одного разрешённого поля карточки (ADR-017, срез 3). Разрешена
           в reaction received/not_accepted; после accepted — transition_not_allowed. Правильность
-          value не проверяется — эталон (reference.field_corrections) остаётся скрытым.'
+          value не проверяется — эталон (reference.field_corrections) остаётся скрытым. ДДС с непустым
+          Item.terminal_statuses (ADR-030): карточку не правит — transition_not_allowed.'
       - properties:
           type:
             const: add_comment
@@ -1743,6 +1764,9 @@ components:
             properties:
               text:
                 type: string
+        description: 'Отдельный комментарий без статуса — только старые пилотные службы (ADR-017). ДДС с
+          непустым Item.terminal_statuses (ADR-030): комментарий входит в set_status, add_comment даёт
+          transition_not_allowed.'
       - properties:
           type:
             const: call_start

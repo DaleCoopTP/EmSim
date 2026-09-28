@@ -64,5 +64,38 @@
       "comment_required": ["not_accepted"],
       "terminal": []
     }
+  },
+  {
+    "code": "dds_district_chertanovo",
+    "name": "ДДС района Чертаново Южное (АРМ-112)",
+    "workflow": {
+      "transitions": {
+        "added": ["received"],
+        "received": ["accepted", "not_accepted"],
+        "not_accepted": ["accepted"],
+        "accepted": ["responding", "arrived", "working", "completed", "refused"],
+        "responding": ["arrived", "working", "completed", "refused"],
+        "arrived": ["working", "completed", "refused"],
+        "working": ["completed", "refused"]
+      },
+      "comment_required": ["not_accepted", "refused"],
+      "terminal": ["completed", "refused"]
+    }
+  },
+  {
+    "code": "dds_ambulance_03",
+    "name": "Диспетчерская скорой медицинской помощи (03)",
+    "workflow": {
+      "transitions": {
+        "added": ["received"],
+        "received": ["accepted", "completed_without_team"],
+        "accepted": ["responding", "arrived", "working", "completed", "completed_without_team"],
+        "responding": ["arrived", "working", "completed", "completed_without_team"],
+        "arrived": ["working", "completed", "completed_without_team"],
+        "working": ["completed", "completed_without_team"]
+      },
+      "comment_required": ["completed_without_team"],
+      "terminal": ["completed", "completed_without_team"]
+    }
   }
 ]

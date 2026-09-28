@@ -19,7 +19,11 @@ type File struct {
 	Version int    `json:"version"`
 	Title   string `json:"title"`
 	Origin  string `json:"origin"`
-	Body    Body   `json:"body"`
+	// Archived hides the scenario from the catalogue (ADR-030): import
+	// sets scenarios.status to archived/approved from the newest
+	// version's file, idempotently in both directions.
+	Archived bool `json:"archived,omitempty"`
+	Body     Body `json:"body"`
 }
 
 // DecodeFile parses a scenario file: r's bytes must decode as JSON with no
