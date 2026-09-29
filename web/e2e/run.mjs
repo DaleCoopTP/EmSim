@@ -60,6 +60,9 @@ const environment = {
   // the specs assert the stub's fixed phrases and rubric-v2.
   CALLER_REPLIER: "stub",
   ASSESSMENT_JUDGE: "off",
+  // ADR-037: no speech model either; the api answers every dictated phrase
+  // with a fixed text so the microphone flow is exercised end to end.
+  DICTATION: "stub",
   BACKUP_HOST_DIR: backupDir,
 };
 const compose = ["compose", "-p", project, "-f", "compose.yaml", "-f", "compose.no-llm.yaml"];
