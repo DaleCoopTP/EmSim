@@ -3795,3 +3795,14 @@ Status: план и ADR готовы, реализация c2–c9 следом.
 - `slice-planning-112.md`: 112-8 разделён на 8a (диктовка) и 8b (озвучка заявителя, голосовой звонок).
 
 Next: c2 — клиент whisper-server.
+
+## 2026-09-29 — 112-8a: диктовка оператора 112 реализована (c1–c9)
+
+Status: срез реализован ([ADR-037](design-docs/adr/037-operator112-dictation.md), `slice-112-8a-plan.md`); контейнер `stt` на целевом x86-сервере не запускался, W0-замер впереди.
+
+- Что: в чате с ИИ-заявителем кнопка микрофона; браузер пишет фразу в WAV 16 кГц моно (`web/src/lib/{microphone,wav}.ts`), `POST /items/{id}/dictation` возвращает текст, он попадает в поле ввода и уходит обычным `send_caller_message` с необязательной меткой `payload.input=voice` (`IntakeLine.Input`, значок в разборе). Диктовка — не команда: без seq/журнала/audit; аудио и текст не хранятся и не логируются.
+- Бэкенд: `internal/platform/stt/whisper` (клиент whisper-server), `config.API.Dictation` (`DICTATION=off|whisper|stub`, `STT_*`, `DICTATION_*`), `training.Transcriber`/`Service.Dictate`/`WithDictation` (проверка владельца/режима/вызова/занятия, WAV-валидатор, семафор), `cmd/emsim/dictation_composition.go`, коды `dictation_busy`/`dictation_unavailable`, `Item.dictation`. Compose: сервис `stt`, `scripts/fetch-stt-model.sh`, `make stt-model`, README «Диктовка».
+- Решение: ADR-037, а не 036 — 036 занят планом ДДС-7. Пользователь выбрал: whisper первым, вызов синхронно из api, след — только метка.
+- Проверено: `make verify`, `make test-integration` (весь набор), `check.py`, `make compose-config`, `tsc`/`lint`/`build`, `npm run test:e2e` (новый `operator112-dictation.spec.ts` зелёный); живой прогон клиента на `ggml-small.bin`: русская фраза распознана точно, ≈0,4 с (нативный whisper-server, Metal).
+- Риски: (1) образ whisper.cpp только `linux/amd64`, на Apple Silicon под эмуляцией Docker зависает при загрузке модели — на Mac whisper-server запускается нативно (`STT_URL=http://host.docker.internal:8090`); на x86 не проверялось. (2) Нагрузка `llama-server` + `whisper-server` на 6 CPU и качество на реальной речи не измерены (W0, 112-9). (3) `smoke.spec.ts` падает на снимке `login-1366.png` из-за чужих незакоммиченных правок `Login.tsx`/`index.css` — не связано с диктовкой. (4) Первый прогон e2e совпал по времени со вторым запущенным мной и уронил `dds-lesson-settings` (гонка на `test-results`); повторный одиночный прогон зелёный.
+- Next: на x86-сервере — `make stt-model && docker compose up`, проверить контейнер `stt` и замерить задержки с `llm` (bench-llm/W0); затем Vosk как вторая реализация `Transcriber` и сравнение на одном наборе фраз; 112-8b (озвучка заявителя, голосовой звонок) — по решению пользователя.

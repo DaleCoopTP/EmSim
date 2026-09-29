@@ -1,6 +1,6 @@
 # План среза 112-8a: голосовой ввод оператора (диктовка)
 
-Дата: 2026-09-29. Статус: реализуется. Основание: [ADR-037](design-docs/adr/037-operator112-dictation.md), `slice-planning-112.md` §12.
+Дата: 2026-09-29. Статус: реализован 29.09.2026 (c1–c9). Основание: [ADR-037](design-docs/adr/037-operator112-dictation.md), `slice-planning-112.md` §12.
 
 ## Контекст
 
@@ -34,3 +34,27 @@
 - Качество русского на small; модель меняется через `STT_MODEL_FILE`.
 - whisper и llama-server делят CPU; полноценный замер — W0.
 - Образ whisper.cpp под ARM (Mac) может отсутствовать — тогда нативный запуск.
+
+## Итог реализации
+
+Коммиты c1–c9 (29.09.2026). Отличия от плана:
+
+- Номер ADR — **037**: 036 зарезервирован планом ДДС-7.
+- Контракт: коды `dictation_busy` (429) и `dictation_unavailable` (503) добавлены в закрытый список `Error.code`; `Item.dictation`; `send_caller_message.payload.input`, `transcript[].input` (в том числе в `evidence.operator112.schema.json`).
+- Стили диктовки — отдельный `web/src/dictation.css`, не `index.css` (в нём на момент работы были чужие незакоммиченные правки).
+- `DICTATION=off` по умолчанию в коде и в `compose.no-llm.yaml`, `whisper` — в `compose.yaml`; e2e задаёт `stub` в `web/e2e/run.mjs`.
+- Образ whisper.cpp — `main-e6234cd…@sha256:7616824e…`: содержит `whisper-server` с `/health`, но собран только под `linux/amd64`.
+
+Проверено:
+
+- `make verify`; `go vet -tags integration`; `python3 design-docs/contracts/check.py`; `make compose-config`.
+- Веб: `tsc -b`, `npm run lint` (новых замечаний нет), `npm run build` (`make verify-web` целиком не запускался — он делает `npm ci`).
+- `make test-integration` (весь набор, PostgreSQL в Docker) — зелёный, включая `TestOperator112DictationThroughRealServiceAndWhisperClient`.
+- `npm run test:e2e`: `operator112-dictation.spec.ts` и остальные 112/ДДС-спеки зелёные. `smoke.spec.ts` падает на снимке `login-1366.png` — на странице входа в рабочей копии лежат чужие незакоммиченные правки (`Login.tsx`, `index.css`), к диктовке это не относится.
+- Живая проверка на настоящей модели: `ggml-small.bin` (sha256 закреплён), нативный `whisper-server` (Metal) собран из того же коммита, что образ; клиент `internal/platform/stt/whisper` распознал фразу `say -v Milena` («Здравствуйте, расскажите, что случилось, и по какому адресу?») **точно, за ≈0,4 с** при длине фразы 4,7 с (Apple Silicon).
+
+**Не проверено:**
+
+- Контейнер `stt` из `compose.yaml` в работе. На Apple Silicon образ `linux/amd64` **зависает при загрузке модели** под эмуляцией Docker (RSS ≈ 8 МБ, 100 % CPU, `health=unhealthy`), поэтому на Mac для разработки whisper-server запускается нативно (README, «Диктовка»). На x86-сервере класса контейнер не запускался.
+- Качество на реальной речи операторов (шум, акценты, термины) и нагрузка при одновременной работе `llama-server` и `whisper-server` — замер W0 (112-9).
+- Кнопка микрофона в других браузерах, кроме Chromium с фальшивым микрофоном.

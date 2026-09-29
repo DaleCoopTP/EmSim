@@ -9,7 +9,7 @@ npm ci
 npm run dev     # http://localhost:5173, proxies /api to :8080 (start `go run ./cmd/emsim api` separately)
 npm run check   # regenerate API types from ../design-docs/contracts/openapi.yaml, then tsc -b
 npm run build   # -> dist/, embedded by web/embed.go's //go:embed
-npm run test:e2e # isolated Chromium + compose browser acceptance tests (DDS, 112 incoming-call, 112 card_only, 112 full_case, 112 free-text caller chat)
+npm run test:e2e # isolated Chromium + compose browser acceptance tests (DDS, 112 incoming-call, 112 card_only, 112 full_case, 112 free-text caller chat, 112 dictation)
 ```
 
 `src/api/schema.d.ts` is generated (`npm run generate:api`, an
@@ -117,6 +117,20 @@ dropped/no-contact close cancel that pending turn instead of leaving it
 stuck. This slice's replies come from a deterministic six-phrase stub
 (`adapter: "stub/v1"`); 112-5b swaps only the `CallerReplier` port for a real
 model.
+
+Dictation (112-8a, [ADR-037](../design-docs/adr/037-operator112-dictation.md)):
+when the item carries `dictation.available`, the chat input has a microphone
+button. `lib/microphone.ts` records one phrase through an AudioWorklet and
+`lib/wav.ts` downsamples it to 16 kHz mono PCM16 WAV in the browser;
+`api/dictation.ts` posts it to `POST /items/{id}/dictation` and the recognised
+text is appended to the input box — never sent by itself. The operator edits
+it and sends the ordinary `send_caller_message`, with `payload.input: "voice"`
+if the text was dictated; the instructor's review marks such lines with a
+microphone icon. Audio lives only in memory: nothing is stored in the browser
+or on the server. The microphone needs HTTPS or localhost; a missing
+permission, a busy or unavailable engine only show a message next to the input
+and typing keeps working. `e2e` runs the api with `DICTATION=stub`, so the
+flow is exercised with the fake microphone and no speech model.
 
 `test:e2e` creates a uniquely named Compose project with its own volumes and
 free localhost ports, feeds Chromium `seed/voice-assets/crew_leader_greeting.wav`
