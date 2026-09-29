@@ -70,6 +70,8 @@ const environment = {
   // and three wrong passwords lock an account.
   PASSWORD_FORCE_CHANGE: "admin",
   LOGIN_LOCKOUT_ATTEMPTS: "3",
+  // The specs sign in as the same admin many times a minute.
+  LOGIN_RATE_PER_MINUTE: "100",
 };
 const compose = ["compose", "-p", project, "-f", "compose.yaml", "-f", "compose.no-llm.yaml"];
 

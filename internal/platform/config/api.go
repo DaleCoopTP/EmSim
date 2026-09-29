@@ -61,6 +61,9 @@ type API struct {
 	LoginLockoutDuration time.Duration
 	PasswordMinLength    int
 	PasswordForceChange  []string
+	// LoginsPerMinute (LOGIN_RATE_PER_MINUTE, default 5) is the per-login
+	// attempt limit; only test stacks change it.
+	LoginsPerMinute int
 	// LogLevel is LOG_LEVEL (ADR-038): debug, info (default), warn or error.
 	LogLevel string
 	// AssessmentJudge (ADR-028) is api's own half of ASSESSMENT_JUDGE —
@@ -174,9 +177,10 @@ func APIFromEnvironment(lookup func(string) string) (API, error) {
 	lockoutDuration, lockoutDurationErr := parseDurationOrDefault(lookup("LOGIN_LOCKOUT_DURATION"), defaultLoginLockoutDuration)
 	passwordMin, passwordMinErr := parseIntOrDefault(lookup("PASSWORD_MIN_LENGTH"), defaultPasswordMinLength)
 	forceChange, forceChangeOK := parseForceChangeRoles(lookup("PASSWORD_FORCE_CHANGE"))
+	loginRate, loginRateErr := parseIntOrDefault(lookup("LOGIN_RATE_PER_MINUTE"), 5)
 	config := API{
 		LoginLockoutAttempts: lockoutAttempts, LoginLockoutDuration: lockoutDuration,
-		PasswordMinLength: passwordMin, PasswordForceChange: forceChange,
+		PasswordMinLength: passwordMin, PasswordForceChange: forceChange, LoginsPerMinute: loginRate,
 		LogLevel:        logLevel,
 		DatabaseURL:     strings.TrimSpace(lookup("DATABASE_URL")),
 		PublicAddr:      strings.TrimSpace(lookup("API_LISTEN_ADDR")),
@@ -187,7 +191,7 @@ func APIFromEnvironment(lookup func(string) string) (API, error) {
 		CallerWarmup:    callerWarmup, CallerOpeningDelay: callerOpeningDelay,
 		Dictation: dictation,
 	}
-	if ttlErr != nil || secureErr != nil || lockoutAttemptsErr != nil || lockoutDurationErr != nil || passwordMinErr != nil || !forceChangeOK || !callerOK || !dictationOK || !logLevelOK {
+	if ttlErr != nil || secureErr != nil || lockoutAttemptsErr != nil || lockoutDurationErr != nil || passwordMinErr != nil || loginRateErr != nil || !forceChangeOK || !callerOK || !dictationOK || !logLevelOK {
 		return API{}, ErrInvalidAPIConfiguration
 	}
 	if err := config.Validate(); err != nil {
@@ -203,7 +207,7 @@ func (c API) Validate() error {
 	}
 	if c.LoginLockoutAttempts < 0 || c.LoginLockoutAttempts > 1000 ||
 		(c.LoginLockoutAttempts > 0 && (c.LoginLockoutDuration < time.Minute || c.LoginLockoutDuration > 30*24*time.Hour)) ||
-		c.PasswordMinLength < 8 || c.PasswordMinLength > 128 {
+		c.PasswordMinLength < 8 || c.PasswordMinLength > 128 || c.LoginsPerMinute < 1 || c.LoginsPerMinute > 10000 {
 		return ErrInvalidAPIConfiguration
 	}
 	if c.AssessmentJudge != AssessmentJudgeOff && c.AssessmentJudge != AssessmentJudgeLLM {

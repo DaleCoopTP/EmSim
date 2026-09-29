@@ -140,12 +140,17 @@ func (s *Store) ListUsers(ctx context.Context, tx pgx.Tx, page, pageSize int) ([
 // unique-constraint violation into the domain error here, so service.go
 // never has to inspect a *pgconn.PgError itself.
 func (s *Store) InsertUser(ctx context.Context, tx pgx.Tx, u auth.User) (auth.User, error) {
-	err := tx.QueryRow(ctx, `
-		INSERT INTO users (id, login, password_hash, full_name, role, service_code, level, active, must_change_password)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING created_at
-	`, u.ID, u.Login, u.PasswordHash, u.FullName, string(u.Role), u.ServiceCode, string(u.Level), u.Active, u.MustChangePassword,
-	).Scan(&u.CreatedAt)
+	// must_change_password (migration 00023) is written only when set, so
+	// this insert also works against a schema migrated to an older version
+	// (the content migration tests do that).
+	columns, values := "id, login, password_hash, full_name, role, service_code, level, active", "$1, $2, $3, $4, $5, $6, $7, $8"
+	args := []any{u.ID, u.Login, u.PasswordHash, u.FullName, string(u.Role), u.ServiceCode, string(u.Level), u.Active}
+	if u.MustChangePassword {
+		columns += ", must_change_password"
+		values += ", $9"
+		args = append(args, true)
+	}
+	err := tx.QueryRow(ctx, `INSERT INTO users (`+columns+`) VALUES (`+values+`) RETURNING created_at`, args...).Scan(&u.CreatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {

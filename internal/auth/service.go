@@ -112,6 +112,9 @@ func NewService(store Store, identityProvider IdentityProvider, ttl time.Duratio
 // WithPolicy replaces the default login policy (ADR-038).
 func (s *Service) WithPolicy(p Policy) *Service {
 	s.policy = p
+	if p.LoginsPerMinute > 0 {
+		s.limiter = NewLoginLimiter(p.LoginsPerMinute, time.Minute, nil)
+	}
 	return s
 }
 

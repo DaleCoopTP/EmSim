@@ -129,6 +129,7 @@ services:
       LOGIN_LOCKOUT_DURATION: ${LOGIN_LOCKOUT_DURATION:-15m}
       PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-8}
       PASSWORD_FORCE_CHANGE: ${PASSWORD_FORCE_CHANGE:-admin,instructor}
+      LOGIN_RATE_PER_MINUTE: ${LOGIN_RATE_PER_MINUTE:-5}
       # ADR-028/029: "llm" (default) freezes operator112/rubric-v3 into new
       # lessons; "off" keeps rubric-v2. Must match the worker's own
       # ASSESSMENT_JUDGE below, so a new lesson only ever freezes

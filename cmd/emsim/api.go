@@ -381,6 +381,6 @@ func loginPolicy(cfg config.API) auth.Policy {
 	}
 	return auth.Policy{
 		LockoutAttempts: cfg.LoginLockoutAttempts, LockoutDuration: cfg.LoginLockoutDuration,
-		PasswordMinLength: cfg.PasswordMinLength, ForceChangeRoles: roles,
+		PasswordMinLength: cfg.PasswordMinLength, ForceChangeRoles: roles, LoginsPerMinute: cfg.LoginsPerMinute,
 	}
 }

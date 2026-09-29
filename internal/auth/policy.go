@@ -12,6 +12,10 @@ type Policy struct {
 	LockoutDuration   time.Duration
 	PasswordMinLength int
 	ForceChangeRoles  []Role
+	// LoginsPerMinute replaces the per-login rate limit (default 5, RFC-001
+	// §9); 0 keeps it. Test stacks raise it: their specs sign in as the same
+	// admin many times a minute.
+	LoginsPerMinute int
 }
 
 // DefaultPolicy is what a Service without WithPolicy uses.
