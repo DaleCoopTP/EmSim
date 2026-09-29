@@ -57,6 +57,15 @@ class-up:
 class-ca:
 	$(CLASS_COMPOSE) cp caddy:/data/caddy/pki/authorities/local/root.crt ./emsim-root.crt
 
+# Offline update bundle (ADR-038): the emsim image and the images already
+# on this machine that the compose files use, plus the compose files and
+# scripts, in one tar for `scripts/update.sh <bundle>` on a server without
+# internet. Nothing is pulled: build or start the stack first. Model weights
+# are NOT included (see README, "Обновление"). RELEASE_BUNDLE names the file.
+RELEASE_BUNDLE ?= emsim-release.tar
+release-bundle:
+	scripts/release-bundle.sh $(RELEASE_BUNDLE)
+
 compose-build: compose-config
 	docker compose build
 

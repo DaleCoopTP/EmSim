@@ -7,8 +7,10 @@
 #   COMPOSE="docker compose -f compose.yaml -f compose.class.yaml" scripts/restore.sh backups/emsim-...
 #
 # The copy's checksums are verified before anything is changed; a copy made
-# by a newer EmSim than this one is refused. api and worker are stopped for
-# the whole restore; the class sees the service as unavailable meanwhile.
+# by a newer EmSim than this one is refused. Before anything is replaced a
+# safety copy of the CURRENT state is made (ADR-038); if it cannot be made,
+# nothing is restored. api and worker are stopped for the whole restore; the
+# class sees the service as unavailable meanwhile.
 set -euo pipefail
 
 copy=${1:?usage: scripts/restore.sh <backup copy directory>}
@@ -27,7 +29,18 @@ if [ "$answer" != "yes" ]; then
 	exit 1
 fi
 
+# Writers are stopped first so the safety copy is consistent.
 "${compose[@]}" stop api worker
+"${compose[@]}" up -d --wait postgres
+echo "==> safety copy of the current state (mandatory)"
+# BACKUP_KEEP is raised for this one run: rotation must never remove the
+# copy about to be restored (it may be the oldest one).
+if ! "${compose[@]}" run --rm --no-deps -e BACKUP_KEEP=1000 worker backup; then
+	echo "The safety copy could not be made; nothing was restored. Starting the stack again." >&2
+	"${compose[@]}" up -d
+	exit 1
+fi
+echo "    the newest copy in the backup directory is the state before this restore"
 "${compose[@]}" run --rm --no-deps -v "$abs":/restore:ro worker restore --yes /restore
 "${compose[@]}" run --rm --no-deps migrate
 "${compose[@]}" up -d

@@ -119,3 +119,51 @@ func TestAuditPruneScheduledThroughWorkerProcess(t *testing.T) {
 		t.Fatalf("old=%d recent=%d prune record deleted=%q", old, recent, deleted)
 	}
 }
+
+// TestAuditPruneWaitsForARecentBackup (ADR-038): with a backup directory
+// configured and no copy in it, audit.prune deletes nothing and fails with
+// its own error code, so the administrator sees why on the status screen.
+func TestAuditPruneWaitsForARecentBackup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	databaseURL := openTestDatabase(t, ctx)
+	if err := pgstore.Up(ctx, databaseURL); err != nil {
+		t.Fatal(err)
+	}
+	pool := openTestPool(t, ctx, databaseURL)
+	binary := filepath.Join(t.TempDir(), "emsim")
+	build := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/emsim")
+	build.Dir = "../.."
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build emsim: %v\n%s", err, output)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO audit_log (at, action, resource_type, outcome) VALUES (now() - interval '400 days', 'test.old', 'user', 'ok')`); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SCHEDULE_TZ", "UTC")
+	t.Setenv("AUDIT_PRUNE_AT", "00:00")
+	t.Setenv("AUDIT_RETENTION_DAYS", "183")
+	t.Setenv("BACKUP_DIR", t.TempDir())
+	t.Setenv("BACKUP_AT", "23:59") // no daily backup runs during this test
+	worker := startWorkerProcess(t, binary, databaseURL, "all", "prune-nobackup")
+	t.Cleanup(func() { worker.stop(t, false) })
+
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		var code string
+		if err := pool.QueryRow(ctx, `SELECT coalesce(max(last_error_code), '') FROM tasks WHERE kind='audit.prune'`).Scan(&code); err != nil {
+			t.Fatal(err)
+		}
+		if code == "audit_prune_no_recent_backup" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("audit.prune never failed with audit_prune_no_recent_backup (last code %q)", code)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	var old int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action='test.old'`).Scan(&old); err != nil || old != 1 {
+		t.Fatalf("old rows = %d (%v): audit.prune deleted without a recent backup", old, err)
+	}
+}

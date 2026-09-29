@@ -178,12 +178,39 @@ func noopHandler(pool *pgxpool.Pool, store *tasks.Store) tasks.Handler {
 	})
 }
 
+// auditPruneBackupMaxAge is how old the newest backup copy may be for
+// audit.prune to delete anything (ADR-038).
+const auditPruneBackupMaxAge = 24 * time.Hour
+
+// recentBackupExists reports whether dir holds a complete copy made within
+// auditPruneBackupMaxAge of now.
+func recentBackupExists(dir string, now time.Time) bool {
+	copies, err := backup.List(dir)
+	if err != nil || len(copies) == 0 {
+		return false
+	}
+	return now.Sub(copies[0].CreatedAt) <= auditPruneBackupMaxAge
+}
+
 // auditPruneHandler is kindAuditPrune's worker side (ADR-033). The
 // batched delete commits as it goes (audit.Prune); the prune's own audit
 // row and the task's terminal state commit together afterwards. A retry
 // after a failure only finds what is left, so partial progress is safe.
-func auditPruneHandler(pool *pgxpool.Pool, store *tasks.Store, retentionDays int) tasks.Handler {
+//
+// ADR-038: with a backup directory configured, rows are deleted only when
+// a complete copy younger than auditPruneBackupMaxAge exists, so nothing is
+// removed while the installation has no recent copy that still holds it. A
+// missing copy fails the task retryably; the status screen shows it and the
+// administrator's retry runs it again once a copy exists.
+func auditPruneHandler(pool *pgxpool.Pool, store *tasks.Store, retentionDays int, backupDir string) tasks.Handler {
 	return tasks.HandlerFunc(func(ctx context.Context, lease tasks.Lease) error {
+		if backupDir != "" && !recentBackupExists(backupDir, time.Now()) {
+			failure, ferr := tasks.NewHandlerFailure(tasks.Retryable, "audit_prune_no_recent_backup")
+			if ferr != nil {
+				return ferr
+			}
+			return failure
+		}
 		deleted, err := audit.Prune(ctx, pool, retentionDays, auditPruneBatch)
 		if err != nil {
 			failure, ferr := tasks.NewHandlerFailure(tasks.Retryable, "audit_prune_failed")
@@ -662,7 +689,7 @@ func composePools(
 	if err := handlers.Register(training.KindLessonClose, lessonCloseHandler(pool, store, trainingService)); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
-	if err := handlers.Register(kindAuditPrune, auditPruneHandler(pool, store, processConfig.AuditRetentionDays)); err != nil {
+	if err := handlers.Register(kindAuditPrune, auditPruneHandler(pool, store, processConfig.AuditRetentionDays, processConfig.BackupDir)); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
 	if err := handlers.Register(kindBackupRun, backupHandler(pool, store, backupConfig(processConfig))); err != nil {
