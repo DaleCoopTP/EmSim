@@ -1,5 +1,5 @@
 import { useMemo, type RefObject } from "react";
-import { SpotlightTour, type TourStep } from "./Arm112Tour";
+import { SpotlightTour, type TourStep, type TourTipPlacement } from "./Arm112Tour";
 
 const cardSteps: readonly TourStep[] = [
   [
@@ -43,6 +43,11 @@ const cardSteps: readonly TourStep[] = [
     { target: "card-address-clear", text: "Эта кнопка очищает все поля адреса." },
   ],
 ];
+const tipPlacements: Readonly<Record<number, TourTipPlacement>> = {
+  [cardSteps.length]: "beside-right",
+  [cardSteps.length + 1]: "beside-left",
+  [cardSteps.length + 2]: "beside-left",
+};
 
 export function Arm112CardTour({ rootRef, onClose, callStatus, hasChat, dictationAvailable, onChatStep }: {
   rootRef: RefObject<HTMLElement>; onClose: () => void;
@@ -75,7 +80,7 @@ export function Arm112CardTour({ rootRef, onClose, callStatus, hasChat, dictatio
     ];
   }, [callStatus, hasChat, dictationAvailable]);
 
-  return <SpotlightTour rootRef={rootRef} onClose={onClose} steps={steps}
+  return <SpotlightTour rootRef={rootRef} onClose={onClose} steps={steps} tipPlacements={tipPlacements}
     onStepChange={hasChat ? (step) => { if (step >= cardSteps.length + 1) onChatStep(); } : undefined}
     closePosition="left" label="Заполнение карточки 112" />;
 }

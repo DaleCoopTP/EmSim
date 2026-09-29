@@ -52,15 +52,33 @@ const fullMainSteps: readonly TourStep[] = [...introSteps, ...cardSteps];
 
 type Spotlight = { top: number; right: number; bottom: number; left: number; text: string };
 type Layout = { width: number; height: number; spots: Spotlight[] };
-type Tip = { top: number; left: number; width: number; below: boolean };
+type Tip = { top: number; left: number; width: number; anchor: "top" | "bottom" | "left" | "right" };
+export type TourTipPlacement = "stacked" | "beside-right" | "beside-left";
+const tipHeight = 84;
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(value, max));
 }
 
-function tipPositions(layout: Layout): Tip[] {
+function tipPositions(layout: Layout, placement: TourTipPlacement): Tip[] {
   const { spots, width, height } = layout;
   const widthOfTip = Math.min(spots.length === 1 ? 340 : 240, width - 32);
+  if (placement !== "stacked") {
+    const leftEdge = Math.min(...spots.map((spot) => spot.left));
+    const rightEdge = Math.max(...spots.map((spot) => spot.right));
+    const left = placement === "beside-right" ? rightEdge + 20 : leftEdge - widthOfTip - 20;
+    const maxTop = height - tipHeight - 90; // Keep the bottom navigation clear.
+    if (left >= 16 && left + widthOfTip <= width - 16 && maxTop >= 16 + (spots.length - 1) * (tipHeight + 12)) {
+      const tops = spots.map((spot) => clamp((spot.top + spot.bottom - tipHeight) / 2, 16, maxTop));
+      for (let index = 1; index < tops.length; index++) tops[index] = Math.max(tops[index], tops[index - 1] + tipHeight + 12);
+      if (tops[tops.length - 1] > maxTop) {
+        tops[tops.length - 1] = maxTop;
+        for (let index = tops.length - 2; index >= 0; index--) tops[index] = Math.min(tops[index], tops[index + 1] - tipHeight - 12);
+      }
+      return spots.map((_, index) => ({ top: tops[index], left, width: widthOfTip,
+        anchor: placement === "beside-right" ? "left" : "right" }));
+    }
+  }
   const minTop = Math.min(...spots.map((spot) => spot.top));
   const maxBottom = Math.max(...spots.map((spot) => spot.bottom));
   const slotHeight = spots.length === 1 ? 88 : 100;
@@ -72,8 +90,17 @@ function tipPositions(layout: Layout): Tip[] {
     top: clamp(start + index * slotHeight, 16, height - slotHeight - 16),
     left: clamp((spot.left + spot.right - widthOfTip) / 2, 16, width - widthOfTip - 16),
     width: widthOfTip,
-    below,
+    anchor: below ? "top" : "bottom",
   }));
+}
+
+function leader(spot: Spotlight, tip: Tip) {
+  const middleY = (spot.top + spot.bottom) / 2;
+  const tipMiddleY = tip.top + tipHeight / 2;
+  if (tip.anchor === "left") return { x1: spot.right, y1: middleY, x2: tip.left, y2: tipMiddleY };
+  if (tip.anchor === "right") return { x1: spot.left, y1: middleY, x2: tip.left + tip.width, y2: tipMiddleY };
+  return { x1: (spot.left + spot.right) / 2, y1: tip.anchor === "top" ? spot.bottom : spot.top,
+    x2: tip.left + tip.width / 2, y2: tip.anchor === "top" ? tip.top : tip.top + tipHeight };
 }
 
 export function Arm112Tour({ rootRef, onClose, hasCard, onPreviewStep }: {
@@ -83,9 +110,10 @@ export function Arm112Tour({ rootRef, onClose, hasCard, onPreviewStep }: {
     onStepChange={(next) => onPreviewStep(hasCard && next >= introSteps.length + 5)} />;
 }
 
-export function SpotlightTour({ rootRef, onClose, steps, onStepChange, closePosition = "right", label = "Ознакомительный режим" }: {
+export function SpotlightTour({ rootRef, onClose, steps, onStepChange, tipPlacements, closePosition = "right", label = "Ознакомительный режим" }: {
   rootRef: RefObject<HTMLElement>; onClose: () => void; steps: readonly TourStep[];
-  onStepChange?: (step: number) => void; closePosition?: "left" | "right"; label?: string;
+  onStepChange?: (step: number) => void; tipPlacements?: Readonly<Record<number, TourTipPlacement>>;
+  closePosition?: "left" | "right"; label?: string;
 }) {
   const [step, setStep] = useState(0);
   const [layout, setLayout] = useState<Layout | null>(null);
@@ -167,7 +195,7 @@ export function SpotlightTour({ rootRef, onClose, steps, onStepChange, closePosi
   }, [onClose, step, steps, onStepChange]);
 
   if (!layout) return null;
-  const tips = tipPositions(layout);
+  const tips = tipPositions(layout, tipPlacements?.[step] ?? "stacked");
   return createPortal(
     <div className="arm112-tour" role="dialog" aria-modal="true" aria-label={label}>
       <svg className="arm112-tour-shade" width={layout.width} height={layout.height} aria-hidden="true">
@@ -179,9 +207,7 @@ export function SpotlightTour({ rootRef, onClose, steps, onStepChange, closePosi
         <rect width={layout.width} height={layout.height} fill="rgb(10 17 22 / 76%)" mask="url(#arm112-tour-holes)" />
       </svg>
       <svg className="arm112-tour-leaders" width={layout.width} height={layout.height} aria-hidden="true">
-        {layout.spots.map((spot, index) => <line key={index}
-          x1={(spot.left + spot.right) / 2} y1={tips[index].below ? spot.bottom : spot.top}
-          x2={tips[index].left + tips[index].width / 2} y2={tips[index].below ? tips[index].top : tips[index].top + 82} />)}
+        {layout.spots.map((spot, index) => <line key={index} {...leader(spot, tips[index])} />)}
       </svg>
       {layout.spots.map((spot, index) => <div key={index} className="arm112-tour-spotlight" style={{
         top: spot.top, left: spot.left, width: spot.right - spot.left, height: spot.bottom - spot.top,
