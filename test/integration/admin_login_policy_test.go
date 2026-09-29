@@ -4,7 +4,9 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -129,5 +131,92 @@ func TestAdminLoginPolicy(t *testing.T) {
 		if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = $1`, action).Scan(&n); err != nil || n == 0 {
 			t.Fatalf("no audit row for %s (%v)", action, err)
 		}
+	}
+}
+
+// TestAdminUserImport (ADR-038): a CSV table becomes users all-or-nothing
+// through the real api; a dry run creates nobody and shows no passwords; a
+// file with bad rows is refused with every problem listed by row; the
+// generated passwords work and are not in the audit log; only the admin may
+// import.
+func TestAdminUserImport(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	f := newAdminFixture(t, ctx)
+	admin := f.admin(t)
+	f.createUser(t, admin, "imp-instr", "instructor-password-1", "instructor")
+	instructor := f.login(t, "imp-instr", "instructor-password-1")
+
+	post := func(client *http.Client, query, body string) (int, map[string]any) {
+		t.Helper()
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, f.baseURL+"/api/v1/admin/users/import"+query, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "text/csv")
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(response.Body).Decode(&out)
+		return response.StatusCode, out
+	}
+	good := "login;full_name;role\nimp-one;Иванов Иван;trainee\nimp-two;Петров Пётр;trainee\n"
+
+	if status, _ := post(instructor, "", good); status != http.StatusForbidden {
+		t.Fatalf("instructor import = %d, want 403", status)
+	}
+
+	status, body := post(admin, "", "login,full_name,role\nimp-one,A,trainee\nimp-instr,B,trainee\nbad login!,C,trainee\nimp-three,D,boss\n")
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("bad file = %d %v, want 422", status, body)
+	}
+	errorsList := body["error"].(map[string]any)["details"].(map[string]any)["errors"].([]any)
+	if len(errorsList) != 3 {
+		t.Fatalf("issues = %v, want three (row 2 taken, row 3 login, row 4 role)", errorsList)
+	}
+	var created int
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE login LIKE 'imp-%' AND login <> 'imp-instr'`).Scan(&created); err != nil || created != 0 {
+		t.Fatalf("a refused file created %d users (%v)", created, err)
+	}
+
+	status, body = post(admin, "?dry_run=true", good)
+	if status != http.StatusOK {
+		t.Fatalf("dry run = %d %v", status, body)
+	}
+	for _, u := range body["users"].([]any) {
+		if _, has := u.(map[string]any)["password"]; has {
+			t.Fatal("a dry run returned a password")
+		}
+	}
+
+	status, body = post(admin, "", good)
+	if status != http.StatusOK || body["count"].(float64) != 2 {
+		t.Fatalf("import = %d %v", status, body)
+	}
+	passwords := map[string]string{}
+	for _, u := range body["users"].([]any) {
+		m := u.(map[string]any)
+		passwords[m["login"].(string)] = m["password"].(string)
+	}
+	if len(passwords["imp-one"]) < 14 || passwords["imp-one"] == passwords["imp-two"] {
+		t.Fatalf("passwords = %v", passwords)
+	}
+	if err := f.pool.QueryRow(ctx, `INSERT INTO workstations (id, number, label) VALUES (gen_random_uuid(), 7, 'РМ-07') ON CONFLICT (number) DO UPDATE SET label = 'РМ-07' RETURNING number`).Scan(new(int)); err != nil {
+		t.Fatal(err)
+	}
+	if _, status := f.tryLoginResponse(t, "imp-one", passwords["imp-one"], 7); status != http.StatusOK {
+		t.Fatalf("login with the generated password = %d, want 200", status)
+	}
+
+	var rows int
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'admin.user.import'`).Scan(&rows); err != nil || rows != 1 {
+		t.Fatalf("audit rows = %d (%v), want exactly one", rows, err)
+	}
+	var leaked int
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE details::text LIKE '%' || $1 || '%'`, passwords["imp-one"]).Scan(&leaked); err != nil || leaked != 0 {
+		t.Fatalf("a generated password appears in the audit log (%d, %v)", leaked, err)
 	}
 }

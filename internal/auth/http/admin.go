@@ -3,11 +3,14 @@ package http
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"emsim/internal/auth"
@@ -26,6 +29,7 @@ type adminService interface {
 	CreateUser(ctx context.Context, n auth.NewUser, actor auth.Principal, requestID string) (auth.User, error)
 	UpdateUser(ctx context.Context, id uuid.UUID, patch auth.Patch, actor auth.Principal, requestID string) (auth.User, error)
 	ListUsers(ctx context.Context, page, pageSize int) ([]auth.User, int, error)
+	ImportUsers(ctx context.Context, rows []auth.ImportRow, dryRun bool, actor auth.Principal, requestID string) ([]auth.ImportedUser, error)
 	ListUserSessions(ctx context.Context, id uuid.UUID) ([]auth.SessionInfo, error)
 	RevokeUserSessions(ctx context.Context, id uuid.UUID, actor auth.Principal, requestID string) (int, error)
 	ListWorkstations(ctx context.Context) ([]auth.Workstation, error)
@@ -53,6 +57,7 @@ func (h *AdminHandlers) Register(mux *http.ServeMux) {
 	}
 	mux.Handle("GET /api/v1/admin/users", protect(h.listUsers))
 	mux.Handle("POST /api/v1/admin/users", protect(h.createUser))
+	mux.Handle("POST /api/v1/admin/users/import", protect(h.importUsers))
 	mux.Handle("PATCH /api/v1/admin/users/{userId}", protect(h.patchUser))
 	mux.Handle("GET /api/v1/admin/users/{userId}/sessions", protect(h.listSessions))
 	mux.Handle("DELETE /api/v1/admin/users/{userId}/sessions", protect(h.revokeSessions))
@@ -356,4 +361,127 @@ func queryIntOrDefault(query url.Values, key string, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+// maxImportBytes bounds the uploaded table (MaxImportRows short lines fit
+// many times over).
+const maxImportBytes = 256 << 10
+
+type importedUserJSON struct {
+	Row         int     `json:"row"`
+	Login       string  `json:"login"`
+	FullName    string  `json:"full_name"`
+	Role        string  `json:"role"`
+	ServiceCode *string `json:"service_code"`
+	// Password is present only when the users were really created, and only
+	// in this one response.
+	Password string `json:"password,omitempty"`
+}
+
+type importIssueJSON struct {
+	Row    int    `json:"row"`
+	Field  string `json:"field"`
+	Reason string `json:"reason"`
+}
+
+// importUsers is POST /admin/users/import?dry_run= (ADR-038): a CSV table
+// (header login, full_name, role and optional service_code; comma or
+// semicolon) becomes users, all or none, with passwords the server chose.
+func (h *AdminHandlers) importUsers(w http.ResponseWriter, r *http.Request) {
+	dryRun := r.URL.Query().Get("dry_run") == "true"
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxImportBytes))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodePayloadTooLarge, "request body too large", nil)
+		return
+	}
+	rows, issues := parseUserImportCSV(raw)
+	if len(issues) > 0 {
+		writeImportIssues(w, r, issues)
+		return
+	}
+	actor, _ := PrincipalFromContext(r.Context())
+	users, err := h.service.ImportUsers(r.Context(), rows, dryRun, actor, httpapi.RequestIDFromContext(r.Context()))
+	var importErr *auth.ImportError
+	if errors.As(err, &importErr) {
+		out := make([]importIssueJSON, len(importErr.Issues))
+		for i, issue := range importErr.Issues {
+			out[i] = importIssueJSON{Row: issue.Row, Field: issue.Field, Reason: issue.Reason}
+		}
+		writeImportIssues(w, r, out)
+		return
+	}
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "user import failed", nil)
+		return
+	}
+	items := make([]importedUserJSON, len(users))
+	for i, u := range users {
+		items[i] = importedUserJSON{Row: u.Row, Login: u.Login, FullName: u.FullName, Role: string(u.Role), ServiceCode: u.ServiceCode, Password: u.Password}
+	}
+	writeJSON(w, r, http.StatusOK, map[string]any{"dry_run": dryRun, "count": len(items), "users": items})
+}
+
+func writeImportIssues(w http.ResponseWriter, r *http.Request, issues []importIssueJSON) {
+	httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "the user table has problems", map[string]any{"field": "file", "errors": issues})
+}
+
+// parseUserImportCSV reads the table: an optional UTF-8 BOM, a header row
+// naming the columns in any order, then one user per row. A semicolon
+// separator (what a Russian-locale spreadsheet exports) is detected from
+// the header.
+func parseUserImportCSV(raw []byte) ([]auth.ImportRow, []importIssueJSON) {
+	text := strings.TrimPrefix(string(raw), "\ufeff")
+	if strings.TrimSpace(text) == "" {
+		return nil, []importIssueJSON{{Row: 0, Field: "file", Reason: "empty"}}
+	}
+	firstLine := text
+	if i := strings.IndexAny(text, "\r\n"); i >= 0 {
+		firstLine = text[:i]
+	}
+	reader := csv.NewReader(strings.NewReader(text))
+	reader.TrimLeadingSpace = true
+	if strings.Contains(firstLine, ";") && !strings.Contains(firstLine, ",") {
+		reader.Comma = ';'
+	}
+	reader.FieldsPerRecord = -1
+	header, err := reader.Read()
+	if err != nil {
+		return nil, []importIssueJSON{{Row: 0, Field: "file", Reason: "malformed_csv"}}
+	}
+	column := map[string]int{}
+	for i, name := range header {
+		column[strings.ToLower(strings.TrimSpace(name))] = i
+	}
+	for _, required := range []string{"login", "full_name", "role"} {
+		if _, ok := column[required]; !ok {
+			return nil, []importIssueJSON{{Row: 0, Field: required, Reason: "missing_column"}}
+		}
+	}
+	cell := func(record []string, name string) string {
+		i, ok := column[name]
+		if !ok || i >= len(record) {
+			return ""
+		}
+		return strings.TrimSpace(record[i])
+	}
+	var rows []auth.ImportRow
+	for n := 1; ; n++ {
+		record, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, []importIssueJSON{{Row: n, Field: "file", Reason: "malformed_csv"}}
+		}
+		if len(record) == 1 && strings.TrimSpace(record[0]) == "" {
+			n--
+			continue
+		}
+		row := auth.ImportRow{Row: n, Login: cell(record, "login"), FullName: cell(record, "full_name"), Role: auth.Role(cell(record, "role"))}
+		if code := cell(record, "service_code"); code != "" {
+			row.ServiceCode = &code
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
 }

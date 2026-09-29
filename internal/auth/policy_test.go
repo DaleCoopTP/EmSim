@@ -136,3 +136,68 @@ func TestPolicyForcesPasswordChangeForNamedRoles(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// TestImportUsersIsAllOrNothingWithGeneratedPasswords (ADR-038): a file with
+// a bad row creates nobody and reports every problem; a dry run creates
+// nobody and shows no passwords; a good file creates everyone with distinct
+// server-made passwords that log in, one audit row, and the policy's
+// forced-change flag for the named roles.
+func TestImportUsersIsAllOrNothingWithGeneratedPasswords(t *testing.T) {
+	store := newFakeStore()
+	actor := testAdminActor(store)
+	existing, _ := testTrainee("already-here", "correct-horse", "dds_district")
+	store.addUser(existing)
+	service := NewService(store, NewPasswordIdentityProvider(store), time.Hour, NewLoginLimiter(100, time.Minute, nil), fakeCatalog{known: map[string]bool{"dds_district": true}}).WithPolicy(DefaultPolicy())
+	ctx := context.Background()
+	code, bad := "dds_district", "nope"
+
+	_, err := service.ImportUsers(ctx, []ImportRow{
+		{Row: 1, Login: "fresh-one", FullName: "A", Role: RoleTrainee, ServiceCode: &code},
+		{Row: 2, Login: "already-here", FullName: "B", Role: RoleTrainee},
+		{Row: 3, Login: "fresh-one", FullName: "C", Role: RoleTrainee},
+		{Row: 4, Login: "fresh-two", FullName: "D", Role: RoleTrainee, ServiceCode: &bad},
+		{Row: 5, Login: "fresh-three", FullName: "E", Role: "boss"},
+	}, false, actor, "r")
+	var importErr *ImportError
+	if !errors.As(err, &importErr) || len(importErr.Issues) != 4 {
+		t.Fatalf("err = %v (%+v), want an ImportError with four issues", err, importErr)
+	}
+	if _, err := store.UserByLogin(ctx, nil, "fresh-one"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("a bad file created a user")
+	}
+
+	good := []ImportRow{
+		{Row: 1, Login: "class-a", FullName: "Первый", Role: RoleTrainee, ServiceCode: &code},
+		{Row: 2, Login: "class-b", FullName: "Второй", Role: RoleInstructor},
+	}
+	dry, err := service.ImportUsers(ctx, good, true, actor, "r")
+	if err != nil || len(dry) != 2 || dry[0].Password != "" {
+		t.Fatalf("dry run = %+v %v, want two users without passwords", dry, err)
+	}
+	if _, err := store.UserByLogin(ctx, nil, "class-a"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("a dry run created a user")
+	}
+
+	created, err := service.ImportUsers(ctx, good, false, actor, "r")
+	if err != nil || len(created) != 2 {
+		t.Fatalf("import = %+v %v", created, err)
+	}
+	if created[0].Password == "" || created[0].Password == created[1].Password || len(created[0].Password) < 14 {
+		t.Fatalf("passwords = %q %q, want two distinct 14+ character passwords", created[0].Password, created[1].Password)
+	}
+	if len(store.auditEntriesByAction("admin.user.import")) != 1 {
+		t.Fatal("import is not audited exactly once")
+	}
+	for _, u := range created {
+		stored, err := store.UserByLogin(ctx, nil, u.Login)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok, _ := VerifyPassword(stored.PasswordHash, u.Password); !ok {
+			t.Fatalf("%s: the returned password does not match the stored hash", u.Login)
+		}
+		if want := u.Role == RoleInstructor; stored.MustChangePassword != want {
+			t.Fatalf("%s: must_change_password = %v, want %v", u.Login, stored.MustChangePassword, want)
+		}
+	}
+}

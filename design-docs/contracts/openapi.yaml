@@ -105,6 +105,44 @@ paths:
         '201': { description: Создан, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Validation' }
+  /admin/users/import:
+    post:
+      tags: [admin]
+      summary: Создать пользователей из CSV-таблицы (ADR-038)
+      description: |
+        Тело — CSV (text/csv), разделитель запятая или точка с запятой, первая строка — заголовок с колонками `login`, `full_name`, `role` и необязательной `service_code`, порядок любой. Не больше 300 строк и 256 КБ.
+        Всё или ничего: одна транзакция и одна запись аудита `admin.user.import`. Пароли придумывает сервер (14+ символов без легко путаемых знаков), возвращает один раз в этом ответе и хранит только хэш; ни в логах, ни в аудите их нет. `dry_run=true` только проверяет файл (включая занятые логины и неизвестные службы) и пароли не создаёт.
+        Признак «сменить пароль при первом входе» ставится ролям из PASSWORD_FORCE_CHANGE, как при обычном создании.
+      parameters:
+      - { name: dry_run, in: query, schema: { type: boolean, default: false } }
+      requestBody: { required: true, content: { text/csv: { schema: { type: string } } } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [dry_run, count, users]
+                properties:
+                  dry_run: { type: boolean }
+                  count: { type: integer }
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      required: [row, login, full_name, role, service_code]
+                      properties:
+                        row: { type: integer, description: 'Номер строки данных, с 1 (заголовок не считается)' }
+                        login: { type: string }
+                        full_name: { type: string }
+                        role: { $ref: '#/components/schemas/Role' }
+                        service_code: { type: [string, 'null'] }
+                        password: { type: string, description: 'Только если пользователи созданы (не dry_run); показывается один раз' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { description: Файл больше 256 КБ, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: 'Файл не принят, никто не создан. details.errors — список {row, field, reason} (до 50): file/empty|too_many_rows|malformed_csv, колонка/missing_column, login/invalid|duplicate_of_row_N|taken, full_name/required|too_long, role/invalid, service_code/unknown|not_allowed|blank. row=0 — проблема файла целиком.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /admin/users/{userId}:
     parameters: [ { $ref: '#/components/parameters/UserId' } ]
     patch:

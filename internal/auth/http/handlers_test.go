@@ -116,6 +116,10 @@ func (f *fakeService) ChangePassword(_ context.Context, _ auth.Principal, curren
 	return f.changePasswordErr
 }
 
+func (f *fakeService) ImportUsers(_ context.Context, _ []auth.ImportRow, _ bool, _ auth.Principal, _ string) ([]auth.ImportedUser, error) {
+	return nil, nil
+}
+
 func (f *fakeService) ListUserSessions(_ context.Context, _ uuid.UUID) ([]auth.SessionInfo, error) {
 	return nil, nil
 }
