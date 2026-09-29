@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -67,11 +67,42 @@ const environment = {
 };
 const compose = ["compose", "-p", project, "-f", "compose.yaml", "-f", "compose.no-llm.yaml"];
 
+// The screenshot baselines depend on the browser's font rendering, which
+// differs between macOS, a CI runner and every Linux distribution.
+// E2E_PLAYWRIGHT=docker runs the specs in Playwright's own linux/amd64
+// image, the same one on a developer's machine and in CI, so one set of
+// baselines can hold everywhere; the default still uses the host's
+// browser until those baselines are regenerated in that image.
+const playwrightVersion = JSON.parse(readFileSync(resolve(import.meta.dirname, "../node_modules/@playwright/test/package.json"), "utf8")).version;
+const playwrightImage = `mcr.microsoft.com/playwright:v${playwrightVersion}-noble`;
+const playwrightInDocker = process.env.E2E_PLAYWRIGHT === "docker";
+
+function runPlaywright(args) {
+  if (!playwrightInDocker) {
+    run(resolve(import.meta.dirname, "../node_modules/.bin/playwright"), args, environment);
+    return;
+  }
+  // Sharing the api container's network namespace keeps the base URL on
+  // 127.0.0.1: a secure context, which the dictation spec's microphone
+  // needs. The repository is mounted at its own path so absolute paths in
+  // the config (the fake microphone file) resolve unchanged.
+  const user = process.platform === "linux" ? ["--user", `${process.getuid()}:${process.getgid()}`] : [];
+  const passThrough = ["CI", "CALLER_STUB_DELAY"].filter((name) => process.env[name] !== undefined)
+    .flatMap((name) => ["-e", `${name}=${process.env[name]}`]);
+  run("docker", [
+    "run", "--rm", "--platform", "linux/amd64", "--ipc=host", ...user,
+    "--network", `container:${project}-api-1`,
+    "-v", `${repositoryRoot}:${repositoryRoot}`, "-w", resolve(repositoryRoot, "web"),
+    "-e", "HOME=/tmp", "-e", "E2E_BASE_URL=http://127.0.0.1:8080", ...passThrough,
+    playwrightImage, "node", "node_modules/@playwright/test/cli.js", ...args,
+  ], environment);
+}
+
 try {
   run("docker", [...compose, "up", "--build", "--wait", "--wait-timeout", "180"], environment);
 	const playwrightArgs = ["test", "--config", resolve(import.meta.dirname, "../playwright.config.ts")];
 	if (process.env.E2E_UPDATE_SNAPSHOTS === "1") playwrightArgs.push("--update-snapshots");
-	run(resolve(import.meta.dirname, "../node_modules/.bin/playwright"), playwrightArgs, environment);
+	runPlaywright(playwrightArgs);
 } finally {
   // Each run owns its compose project and named volumes. Cleanup therefore
   // cannot touch a developer's ordinary `docker compose up` stack.
@@ -80,7 +111,13 @@ try {
   } catch (error) {
     console.error("e2e compose cleanup failed:", error);
   }
-  // Copies were written by the container's own user; a leftover is only
-  // a temp directory, so a failed removal is not an error.
-  rmSync(backupDir, { recursive: true, force: true, maxRetries: 2 });
+  // Copies were written by the container's own user (compose chowns the
+  // directory to it), so on Linux the runner may not be allowed to remove
+  // them; a leftover is only a temp directory, so that is not an error —
+  // and it must not replace the tests' own outcome.
+  try {
+    rmSync(backupDir, { recursive: true, force: true, maxRetries: 2 });
+  } catch (error) {
+    console.warn(`e2e backup directory ${backupDir} left behind: ${error.code ?? error}`);
+  }
 }

@@ -10,7 +10,10 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  // No retries: every spec seeds fixed logins and a workstation into the
+  // run's one database, so a retry can only fail on its own leftovers
+  // ("login is already taken") and hide the first attempt's real error.
+  retries: 0,
   reporter: process.env.CI ? "github" : "list",
   // Keep visual baselines independent from the host name. The acceptance
   // suite deliberately exercises the two ARM desktop resolutions below,
