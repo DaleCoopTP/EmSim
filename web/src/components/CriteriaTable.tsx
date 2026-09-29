@@ -83,9 +83,48 @@ export function CriteriaTable({ criteria, rubricByID }: { criteria: CriterionRes
     {criteria.map((criterion) => <tr key={criterion.id}>
       <td>{rubricByID[criterion.id]?.title ?? criterion.id}{criterion.critical ? " · критичный" : ""}</td>
       <td>{criterionStatusLabels[criterion.status] ?? criterion.status}</td>
-      <td>{criterion.explanation || "—"}{criterion.evidence_refs?.length ? ` (${criterion.evidence_refs.join(", ")})` : ""}
+      <td>{explanationRu(criterion.explanation) || "—"}
         <DetailList criterion={criterion} />
       </td>
     </tr>)}
   </tbody></table>;
+}
+
+const reactionRu: Record<string, string> = {
+  added: "Добавлена", received: "Получена", accepted: "Принята", not_accepted: "Не принята", responding: "Начало реагирования",
+  arrived: "Прибытие", working: "Проведение работ", completed: "Работы завершены", refused: "Отказ от выполнения работ",
+  completed_without_team: "Завершение работ без бригады",
+};
+
+// Assessments recorded before 2026-09-29 carry the DDS rules' English
+// explanations; they are shown in the Russian wording the server uses now.
+const legacyExplanations: [RegExp, (m: RegExpMatchArray) => string][] = [
+  [/^(\d+)s within the (\d+)s norm$/, (m) => `${m[1]} с — в пределах норматива ${m[2]} с`],
+  [/^(\d+)s exceeds the (\d+)s norm but within the (\d+)s partial allowance$/, (m) => `${m[1]} с — больше норматива ${m[2]} с, но в пределах допуска ${m[3]} с`],
+  [/^(\d+)s exceeds even the (\d+)s partial allowance$/, (m) => `${m[1]} с — больше даже допуска ${m[2]} с`],
+  [/^decision "(\w+)" matches the reference$/, (m) => `решение «${reactionRu[m[1]] ?? m[1]}» совпадает с эталоном`],
+  [/^decision "(\w+)" does not match the reference "(\w+)"$/, (m) => `решение «${reactionRu[m[1]] ?? m[1]}» не совпадает с эталоном «${reactionRu[m[2]] ?? m[2]}»`],
+  [/^(\d+)\/(\d+) crew reports got a timely status$/, (m) => `на ${m[1]} из ${m[2]} докладов бригады статус поставлен вовремя`],
+  [/^no crew report got a timely status$/, () => "ни на один доклад бригады статус не поставлен вовремя"],
+  [/^expected chain observed in order, none earlier than its own crew report$/, () => "ожидаемая цепочка статусов соблюдена, ни один статус не поставлен раньше доклада"],
+  [/^(\d+)\/(\d+) expected transitions observed in order$/, (m) => `по порядку выполнено ${m[1]} из ${m[2]} ожидаемых переходов`],
+  [/^none of the expected transitions were observed in the right order$/, () => "ни один ожидаемый переход статуса не выполнен в нужном порядке"],
+  [/^(\d+)\/(\d+) required calls completed$/, (m) => `выполнено ${m[1]} из ${m[2]} обязательных звонков`],
+  [/^no required call was completed$/, () => "ни один обязательный звонок не выполнен"],
+  [/^not applicable to this case$/, () => "не применимо к этому случаю"],
+  [/^the trainee never reached this milestone$/, () => "обучаемый не дошёл до этого этапа"],
+  [/^no primary decision was ever made$/, () => "первичное решение не принято"],
+  [/^a comment was recorded$/, () => "комментарий есть"],
+  [/^comment_required but no comment was recorded$/, () => "комментарий обязателен, но не написан"],
+  [/^the required call was completed$/, () => "обязательный звонок выполнен"],
+  [/^no completed call to the required contact$/, () => "нет завершённого звонка нужному абоненту"],
+];
+
+function explanationRu(text: string | undefined): string {
+  if (!text) return "";
+  for (const [pattern, render] of legacyExplanations) {
+    const match = text.match(pattern);
+    if (match) return render(match);
+  }
+  return text;
 }

@@ -11,14 +11,13 @@ import {
   useServices,
   useStartPreviewRun,
   useValidateScenario,
-  type Intake112DescriptionQuestion,
   type Intake112EditorBody,
-  type Intake112ExpectedCard,
   type Intake112Fact,
   type ProbeMatch,
   type ValidationIssue,
 } from "../../api/content";
 import { errorMessage } from "../../api/errors";
+import { IntakeReferenceEditor } from "../../components/IntakeReferenceEditor";
 
 type Tab = "general" | "caller" | "facts" | "reference" | "check";
 const tabs: { id: Tab; label: string }[] = [
@@ -37,13 +36,6 @@ const knowledgeLabels: Record<Intake112Fact["knowledge"], string> = {
 
 function newFact(): Intake112Fact {
   return { id: `fact_${Math.random().toString(36).slice(2, 8)}`, label: "", knowledge: "initial", value: "" };
-}
-
-// newDescriptionQuestion mirrors newFact's own random-id convention
-// (ADR-028): the editor never reuses a scenario's real answer-key ids,
-// so a fresh row's id only needs to be unique within this one form.
-function newDescriptionQuestion(): Intake112DescriptionQuestion {
-  return { id: `q_${Math.random().toString(36).slice(2, 8)}`, question: "" };
 }
 
 function patternsToText(patterns: string[] | undefined): string {
@@ -140,16 +132,9 @@ export function ScenarioEditorRoute() {
     updateIntake({ call: { ...intake.call, ...patch } });
   const updateReference = (patch: Partial<Intake112EditorBody["intake112"]["reference"]>) =>
     updateIntake({ reference: { ...intake.reference, ...patch } });
-  const updateExpectedCard = (patch: Partial<Intake112ExpectedCard>) =>
-    updateReference({ expected_card: { ...intake.reference.expected_card, ...patch } });
   const updateFacts = (facts: Intake112Fact[]) => updateIntake({ dialogue: { ...intake.dialogue, facts } });
   const updateFact = (index: number, patch: Partial<Intake112Fact>) =>
     updateFacts(intake.dialogue.facts.map((fact, i) => (i === index ? { ...fact, ...patch } : fact)));
-  const descriptionQuestions = intake.reference.description_questions ?? [];
-  const updateDescriptionQuestions = (description_questions: Intake112DescriptionQuestion[]) => updateReference({ description_questions });
-  const updateDescriptionQuestion = (index: number, patch: Partial<Intake112DescriptionQuestion>) =>
-    updateDescriptionQuestions(descriptionQuestions.map((q, i) => (i === index ? { ...q, ...patch } : q)));
-
   const save = () => {
     if (isNew) {
       createMutation.mutate(
@@ -223,29 +208,34 @@ export function ScenarioEditorRoute() {
 
       {tab === "general" && (
         <div className="scenario-editor-panel">
-          <label>Название<input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} /></label>
-          <label>Сложность (1–10)<input type="number" min={1} max={10} value={body.difficulty}
-            onChange={(e) => setBody((current) => ({ ...current, difficulty: Number(e.target.value) }))} /></label>
-          <label>АОН (+7 и 10 цифр)<input value={intake.call.aon} placeholder="+79161234567" onChange={(e) => updateCall({ aon: e.target.value })} /></label>
-          <label>Время вызова (ЧЧ:ММ)<input value={intake.call.local_time} onChange={(e) => updateCall({ local_time: e.target.value })} /></label>
-          <p>Часовой пояс: Europe/Moscow (единственный поддерживаемый).</p>
+          <div className="editor-form-grid">
+            <label className="editor-wide">Название<input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} /></label>
+            <label>Сложность (1–10)<input type="number" min={1} max={10} value={body.difficulty}
+              onChange={(e) => setBody((current) => ({ ...current, difficulty: Number(e.target.value) }))} /></label>
+            <label>АОН (+7 и 10 цифр)<input value={intake.call.aon} placeholder="+79161234567" onChange={(e) => updateCall({ aon: e.target.value })} /></label>
+            <label>Время вызова (ЧЧ:ММ)<input value={intake.call.local_time} placeholder="12:00" onChange={(e) => updateCall({ local_time: e.target.value })} /></label>
+          </div>
+          <p className="editor-hint">Часовой пояс: Europe/Moscow (единственный поддерживаемый).</p>
         </div>
       )}
 
       {tab === "caller" && (
         <div className="scenario-editor-panel">
-          <p>Персона и вступление ИИ-заявителя. Необязательно — без них диалог отвечает заглушкой (CALLER_REPLIER=stub).</p>
-          <label>Персона (кто звонит и что о себе знает)
-            <textarea value={intake.dialogue.caller?.persona ?? ""} rows={3}
-              onChange={(e) => updateIntake({ dialogue: { ...intake.dialogue, caller: { persona: e.target.value, opening: intake.dialogue.caller?.opening ?? { id: "opening", text: "", reveals: [] } } } })} />
-          </label>
-          <label>Вступительная реплика
-            <textarea value={intake.dialogue.caller?.opening.text ?? ""} rows={2}
-              onChange={(e) => updateIntake({ dialogue: { ...intake.dialogue, caller: { persona: intake.dialogue.caller?.persona ?? "", opening: { id: "opening", text: e.target.value, reveals: intake.dialogue.caller?.opening.reveals ?? [] } } } })} />
-          </label>
+          <p className="editor-hint">Персона и вступление ИИ-заявителя. Необязательно — без них диалог отвечает заглушкой (CALLER_REPLIER=stub).</p>
+          <div className="editor-form-grid editor-form-stack">
+            <label>Персона (кто звонит и что о себе знает)
+              <textarea value={intake.dialogue.caller?.persona ?? ""} rows={4}
+                onChange={(e) => updateIntake({ dialogue: { ...intake.dialogue, caller: { persona: e.target.value, opening: intake.dialogue.caller?.opening ?? { id: "opening", text: "", reveals: [] } } } })} />
+            </label>
+            <label>Вступительная реплика
+              <textarea value={intake.dialogue.caller?.opening.text ?? ""} rows={3}
+                onChange={(e) => updateIntake({ dialogue: { ...intake.dialogue, caller: { persona: intake.dialogue.caller?.persona ?? "", opening: { id: "opening", text: e.target.value, reveals: intake.dialogue.caller?.opening.reveals ?? [] } } } })} />
+            </label>
+          </div>
           {intake.dialogue.caller && (
-            <>
-              <p>Что заявитель сразу раскрывает во вступлении (только факты со знанием «сообщает сразу»):</p>
+            <fieldset className="editor-fieldset">
+              <legend>Что заявитель сразу раскрывает во вступлении</legend>
+              <p className="editor-hint">Только факты со знанием «сообщает сразу».</p>
               <ul className="scenario-editor-checklist">
                 {intake.dialogue.facts.filter((f) => f.knowledge === "initial").map((fact) => {
                   const reveals = intake.dialogue.caller!.opening.reveals;
@@ -261,114 +251,67 @@ export function ScenarioEditorRoute() {
                     </li>
                   );
                 })}
-                {intake.dialogue.facts.filter((f) => f.knowledge === "initial").length === 0 && <li>Нет фактов со знанием «сообщает сразу» — добавьте их на вкладке «Факты».</li>}
+                {intake.dialogue.facts.filter((f) => f.knowledge === "initial").length === 0 && <li className="editor-hint">Нет фактов со знанием «сообщает сразу» — добавьте их на вкладке «Факты».</li>}
               </ul>
-              <button type="button" onClick={() => updateIntake({ dialogue: { facts: intake.dialogue.facts, initial: intake.dialogue.initial, questions: intake.dialogue.questions } })}>
+              <button type="button" className="arm-secondary-action" onClick={() => updateIntake({ dialogue: { facts: intake.dialogue.facts, initial: intake.dialogue.initial, questions: intake.dialogue.questions } })}>
                 Убрать профиль заявителя (диалог останется на заглушке)
               </button>
-            </>
+            </fieldset>
           )}
         </div>
       )}
 
       {tab === "facts" && (
         <div className="scenario-editor-panel">
-          <p>Каждый факт — одно сведение, которое заявитель может сообщить. card_path привязывает его к полю карточки (необязательно для чисто повествовательных фактов).</p>
-          <table className="scenario-editor-table">
-            <thead><tr><th>ID</th><th>Название</th><th>card_path</th><th>Знание</th><th>Значение</th><th>Реплика заявителя</th><th>Фразы-триггеры (ask_patterns, по одной в строке)</th><th /></tr></thead>
-            <tbody>
-              {intake.dialogue.facts.map((fact, index) => (
-                <tr key={fact.id}>
-                  <td><input value={fact.id} onChange={(e) => updateFact(index, { id: e.target.value })} /></td>
-                  <td><input value={fact.label} onChange={(e) => updateFact(index, { label: e.target.value })} /></td>
-                  <td><input value={fact.card_path ?? ""} placeholder="/address/city" onChange={(e) => updateFact(index, { card_path: e.target.value || undefined })} /></td>
-                  <td>
-                    <select value={fact.knowledge} onChange={(e) => updateFact(index, { knowledge: e.target.value as Intake112Fact["knowledge"], value: e.target.value === "unknown" ? "" : fact.value })}>
-                      {(Object.keys(knowledgeLabels) as Intake112Fact["knowledge"][]).map((k) => <option key={k} value={k}>{knowledgeLabels[k]}</option>)}
-                    </select>
-                  </td>
-                  <td>{fact.knowledge !== "unknown" && <input value={fact.value ?? ""} onChange={(e) => updateFact(index, { value: e.target.value })} />}</td>
-                  <td><input value={fact.statement ?? ""} placeholder="своими словами" onChange={(e) => updateFact(index, { statement: e.target.value || undefined })} /></td>
-                  <td><textarea rows={2} value={patternsToText(fact.ask_patterns)} onChange={(e) => updateFact(index, { ask_patterns: textToPatterns(e.target.value) })} /></td>
-                  <td><button type="button" onClick={() => updateFacts(intake.dialogue.facts.filter((_, i) => i !== index))}>Убрать</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <button type="button" onClick={() => updateFacts([...intake.dialogue.facts, newFact()])}>+ Добавить факт</button>
+          <p className="editor-hint">Каждый факт — одно сведение, которое заявитель может сообщить. card_path привязывает его к полю карточки (необязательно для чисто повествовательных фактов).</p>
+          <div className="arm-table-wrap">
+            <table className="scenario-editor-table">
+              <colgroup><col style={{ width: "9%" }} /><col style={{ width: "13%" }} /><col style={{ width: "11%" }} /><col style={{ width: "11%" }} /><col style={{ width: "14%" }} /><col style={{ width: "19%" }} /><col style={{ width: "19%" }} /><col style={{ width: "4%" }} /></colgroup>
+              <thead><tr><th>ID</th><th>Название</th><th>card_path</th><th>Знание</th><th>Значение</th><th>Реплика заявителя</th><th>Фразы-триггеры (по одной в строке)</th><th /></tr></thead>
+              <tbody>
+                {intake.dialogue.facts.map((fact, index) => (
+                  <tr key={fact.id}>
+                    <td><input value={fact.id} onChange={(e) => updateFact(index, { id: e.target.value })} /></td>
+                    <td><input value={fact.label} onChange={(e) => updateFact(index, { label: e.target.value })} /></td>
+                    <td><input value={fact.card_path ?? ""} placeholder="/address/city" onChange={(e) => updateFact(index, { card_path: e.target.value || undefined })} /></td>
+                    <td>
+                      <select value={fact.knowledge} onChange={(e) => updateFact(index, { knowledge: e.target.value as Intake112Fact["knowledge"], value: e.target.value === "unknown" ? "" : fact.value })}>
+                        {(Object.keys(knowledgeLabels) as Intake112Fact["knowledge"][]).map((k) => <option key={k} value={k}>{knowledgeLabels[k]}</option>)}
+                      </select>
+                    </td>
+                    <td>{fact.knowledge !== "unknown" && <input value={fact.value ?? ""} onChange={(e) => updateFact(index, { value: e.target.value })} />}</td>
+                    <td><textarea rows={2} value={fact.statement ?? ""} placeholder="своими словами" onChange={(e) => updateFact(index, { statement: e.target.value || undefined })} /></td>
+                    <td><textarea rows={2} value={patternsToText(fact.ask_patterns)} onChange={(e) => updateFact(index, { ask_patterns: textToPatterns(e.target.value) })} /></td>
+                    <td><button type="button" className="editor-row-remove" aria-label={`Убрать факт ${fact.label || fact.id}`} title="Убрать" onClick={() => updateFacts(intake.dialogue.facts.filter((_, i) => i !== index))}>×</button></td>
+                  </tr>
+                ))}
+                {intake.dialogue.facts.length === 0 && <tr><td colSpan={8} className="editor-hint">Фактов пока нет.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <div><button type="button" className="arm-secondary-action" onClick={() => updateFacts([...intake.dialogue.facts, newFact()])}>+ Добавить факт</button></div>
         </div>
       )}
 
       {tab === "reference" && (
         <div className="scenario-editor-panel">
-          <h3>Типы происшествия</h3>
-          <ul className="scenario-editor-checklist">
-            {catalog.data?.types.map((type) => {
-              const checked = (intake.reference.expected_types ?? []).includes(type.id);
-              return (
-                <li key={type.id}>
-                  <label><input type="checkbox" checked={checked} onChange={() => {
-                    const current = intake.reference.expected_types ?? [];
-                    updateReference({ expected_types: checked ? current.filter((id) => id !== type.id) : [...current, type.id] });
-                  }} />{type.name}</label>
-                </li>
-              );
-            })}
-          </ul>
-          <label>Закрытое описание ситуации
-            <textarea rows={3} value={intake.reference.case_description ?? ""} onChange={(e) => updateReference({ case_description: e.target.value })} />
-          </label>
-          <h3>Ожидаемые службы</h3>
-          <ul className="scenario-editor-checklist">
-            {services.data?.map((service) => {
-              const checked = (intake.reference.expected_services ?? []).includes(service.code);
-              return (
-                <li key={service.code}>
-                  <label><input type="checkbox" checked={checked} onChange={() => {
-                    const current = intake.reference.expected_services ?? [];
-                    updateReference({ expected_services: checked ? current.filter((code) => code !== service.code) : [...current, service.code] });
-                  }} />{service.name}</label>
-                </li>
-              );
-            })}
-          </ul>
-          <h3>Ожидаемая карточка (необязательно — блоки без эталона просто получают 0)</h3>
-          <div className="scenario-editor-expected-card">
-            <label>Статус заявителя<input value={intake.reference.expected_card?.applicant_status ?? ""} onChange={(e) => updateExpectedCard({ applicant_status: e.target.value || undefined })} /></label>
-            <label>ФИО заявителя<input value={intake.reference.expected_card?.applicant_name ?? ""} onChange={(e) => updateExpectedCard({ applicant_name: e.target.value || undefined })} /></label>
-            <label>Возраст<input type="number" value={intake.reference.expected_card?.age ?? ""} onChange={(e) => updateExpectedCard({ age: e.target.value ? Number(e.target.value) : undefined })} /></label>
-            <label>Жалоба<input value={intake.reference.expected_card?.complaint ?? ""} onChange={(e) => updateExpectedCard({ complaint: e.target.value || undefined })} /></label>
-            <label>Число пострадавших<input type="number" value={intake.reference.expected_card?.victims_count ?? ""} onChange={(e) => updateExpectedCard({ victims_count: e.target.value ? Number(e.target.value) : undefined })} /></label>
-            {(["city", "street", "house", "building", "flat", "okrug", "district", "region", "country", "structure", "entrance", "floor"] as const).map((field) => (
-              <label key={field}>{field}
-                <input value={intake.reference.expected_card?.address?.[field] ?? ""}
-                  onChange={(e) => updateExpectedCard({ address: { ...intake.reference.expected_card?.address, [field]: e.target.value || undefined } })} />
-              </label>
-            ))}
+          <p className="editor-hint">Заполните карточку так, как её должен заполнить оператор, — она сохраняется эталоном для автооценки. Незаполненное поле в эталон не входит, соответствующий блок получает 0.</p>
+          <div className="editor-form-grid editor-form-stack">
+            <label>Закрытое описание ситуации (видит только преподаватель)
+              <textarea rows={3} value={intake.reference.case_description ?? ""} onChange={(e) => updateReference({ case_description: e.target.value })} />
+            </label>
           </div>
-          <h3>Вопросы к описанию со слов заявителя (ADR-028)</h3>
-          <p>ИИ-судья отвечает на каждый вопрос да/нет/нужна проверка, используя только текст поля «Описание со слов заявителя» — без разговора и других полей карточки. Формулируйте вопрос положительно, например «Указано ли, что …?». Без вопросов блок оценивается в 0, модель не вызывается.</p>
-          <table>
-            <thead><tr><th>Вопрос</th><th></th></tr></thead>
-            <tbody>
-              {descriptionQuestions.map((question, index) => (
-                <tr key={question.id}>
-                  <td><input style={{ width: "100%" }} value={question.question} placeholder="Указано ли, что …?" onChange={(e) => updateDescriptionQuestion(index, { question: e.target.value })} /></td>
-                  <td><button type="button" onClick={() => updateDescriptionQuestions(descriptionQuestions.filter((_, i) => i !== index))}>Убрать</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <button type="button" onClick={() => updateDescriptionQuestions([...descriptionQuestions, newDescriptionQuestion()])}>+ Добавить вопрос</button>
+          <IntakeReferenceEditor reference={intake.reference} onChange={updateReference} catalog={catalog.data}
+            services={services.data ?? []} aon={intake.call.aon} localTime={intake.call.local_time} />
         </div>
       )}
 
       {tab === "check" && (
         <div className="scenario-editor-panel">
-          <button type="button" disabled={!scenarioId || validateMutation.isPending} onClick={validate}>Проверить</button>
-          {!scenarioId && <p>Сохраните черновик, чтобы проверить его.</p>}
+          <div><button type="button" disabled={!scenarioId || validateMutation.isPending} onClick={validate}>Проверить</button></div>
+          {!scenarioId && <p className="editor-hint">Сохраните черновик, чтобы проверить его.</p>}
           {validateMutation.isError && <p className="error">{errorMessage(validateMutation.error)}</p>}
-          {issues.length === 0 ? <p>Замечаний нет.</p> : (
+          {issues.length === 0 ? scenarioId && <p className="editor-ok">Замечаний нет.</p> : (
             <ul className="scenario-editor-issues">
               {issues.map((issue, i) => (
                 <li key={i} className={issue.severity === "error" ? "error" : "warning"}>
@@ -378,23 +321,23 @@ export function ScenarioEditorRoute() {
             </ul>
           )}
           <h3>Тестер фраз</h3>
-          <p>Проверьте, какие факты классификатор откроет по пробной реплике заявителя (без обращения к модели).</p>
-          <div className="inline-form">
-            <input value={probeText} placeholder="Например: рядом сильно пахнет газом" onChange={(e) => setProbeText(e.target.value)} />
+          <p className="editor-hint">Проверьте, какие факты классификатор откроет по пробной реплике заявителя (без обращения к модели).</p>
+          <div className="editor-probe">
+            <input aria-label="Пробная реплика" value={probeText} placeholder="Например: рядом сильно пахнет газом" onChange={(e) => setProbeText(e.target.value)} />
             <button type="button" disabled={!scenarioId || !probeText.trim() || probeMutation.isPending} onClick={probe}>Проверить фразу</button>
           </div>
           {probeResult && (
             probeResult.length === 0 ? <p>Фраза не открывает ни одного факта.</p> : (
-              <ul>{probeResult.map((match, i) => <li key={i}>{match.fact_id} — {match.kind === "reveal" ? "раскрывает" : "отвечает на вопрос"}</li>)}</ul>
+              <ul className="editor-probe-result">{probeResult.map((match, i) => <li key={i}>{match.fact_id} — {match.kind === "reveal" ? "раскрывает" : "отвечает на вопрос"}</li>)}</ul>
             )
           )}
         </div>
       )}
 
       <footer className="scenario-editor-actions">
-        <button type="button" disabled={saving} onClick={save}>{isNew ? "Создать черновик" : "Сохранить как новую версию"}</button>
-        <button type="button" disabled={!hasSavedVersion || errorCount > 0 || startPreview.isPending} onClick={preview}>Пройти самому (предпросмотр)</button>
-        <button type="button" disabled={!hasSavedVersion || errorCount > 0 || approveMutation.isPending} onClick={approve}>Утвердить</button>
+        <button type="button" className="arm-primary-action" disabled={saving} onClick={save}>{isNew ? "Создать черновик" : "Сохранить как новую версию"}</button>
+        <button type="button" className="arm-secondary-action" disabled={!hasSavedVersion || errorCount > 0 || startPreview.isPending} onClick={preview}>Пройти самому (предпросмотр)</button>
+        <button type="button" className="arm-secondary-action" disabled={!hasSavedVersion || errorCount > 0 || approveMutation.isPending} onClick={approve}>Утвердить</button>
         {saveError && <p className="error">{errorMessage(saveError)}</p>}
         {serverChanged && (
           <p className="notice" role="alert">

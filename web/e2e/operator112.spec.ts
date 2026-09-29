@@ -191,7 +191,7 @@ test("operator 112: instructor assignment → incoming call → saved draft → 
   await setPoints("Описание со слов заявителя", 10);
   await page.getByLabel("Причина").fill("Карточка заполнена частично, передача выполнена");
   await page.getByRole("button", { name: "Сохранить экспертную оценку" }).click();
-  await expect(page.getByText(/итог: ready · 82\.5/)).toBeVisible();
+  await expect(page.getByText(/экспертная оценка: 82\.5/)).toBeVisible();
   await page.getByRole("button", { name: "Выйти" }).click();
   await page.getByLabel("Логин").fill("e2e-112-trainee");
   await page.getByLabel("Пароль").fill(password);
@@ -311,11 +311,11 @@ test("operator 112: full case — call, questions, incident types, profile cards
   expect(initial.intake_state.mode).toBe("full_case");
   expect(initial.intake_reference).toBeUndefined();
 
-  await page.getByRole("button", { name: /Открыть карточку №/ }).click();
-  await expect(page.getByText("Откройте кейс, чтобы выбрать тип происшествия.")).toBeVisible();
-  await page.getByRole("button", { name: "Открыть кейс" }).click();
-  await expect(page.getByText("Примите вызов, чтобы услышать заявителя и открыть карточку.")).toBeVisible();
-  await page.getByRole("button", { name: "ответить", exact: true }).click();
+  // Instruction fig. 3: the incoming call pops up over the main screen;
+  // "Принять" opens the card and answers the call in one click.
+  const incoming = page.getByRole("dialog", { name: "Входящий звонок" });
+  await expect(incoming).toContainText("с номера +7");
+  await incoming.getByRole("button", { name: "Принять" }).click();
   await expect(page.getByText(/Здравствуйте! Тут авария/)).toBeVisible();
   await page.getByRole("button", { name: "Назовите адрес, где вы находитесь." }).click();
   await expect(page.getByText(/у автозаправки/)).toBeVisible();
@@ -355,8 +355,12 @@ test("operator 112: full case — call, questions, incident types, profile cards
   await page.getByRole("button", { name: "Войти" }).click();
   await expect(page.getByRole("heading", { name: "Занятия" })).toBeVisible();
   await page.goto(`${baseURL}/instructor/items/${itemID}/review`);
-  await expect(page.getByRole("heading", { name: "Кейс с разговором" })).toBeVisible();
-  await expect(page.getByText(/Заявитель: Здравствуйте! Тут авария/)).toBeVisible();
+  // The review is a stack of collapsible sections; only the preliminary
+  // result is open by default.
+  await page.getByRole("heading", { name: "Разговор с заявителем" }).click();
+  await expect(page.locator(".review-chat-bubble", { hasText: "Здравствуйте! Тут авария" })).toBeVisible();
+  await page.getByRole("heading", { name: "Заполненная карточка" }).click();
+  await expect(page.getByRole("region", { name: "Итоговая карточка обучаемого" })).toBeVisible();
   const notifiedLine = page.locator("p", { hasText: "Оповещены:" });
   await expect(notifiedLine).toBeVisible();
   await expect(notifiedLine).toContainText("pilot_gas_104");
@@ -370,8 +374,8 @@ test("operator 112: full case — call, questions, incident types, profile cards
   // expected_profiles reference yet, so ADDRESS_FIELDS/PROFILE_CARDS
   // score 0 by ADR-026's own "эталон отсутствует" rule — not
   // needs_review, not a blank state.
-  await expect(page.getByRole("heading", { name: "Автоматическая оценка" })).toBeVisible();
-  await expect(page.getByText(/Автооценка: (waiting|pending|leased|done)/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Предварительный результат" })).toBeVisible();
+  await expect(page.getByText(/Автооценка:/)).toBeVisible({ timeout: 15_000 });
   // Scoped to the read-only "Блоки"/"Штрафы" tables specifically — the
   // "Экспертная оценка" revision form below also has a row per criterion
   // (same rubric title text), so an unscoped `tr` locator matches both.
@@ -446,9 +450,7 @@ test("operator 112: free-text caller chat — async stub replies, draft survives
   const initial = await (await ok(await page.request.get(`/api/v1/items/${itemID}`))).json();
   expect(initial.intake_state.caller_mode).toBe("free_text");
 
-  await page.getByRole("button", { name: /Открыть карточку №/ }).click();
-  await page.getByRole("button", { name: "Открыть кейс" }).click();
-  await page.getByRole("button", { name: "ответить", exact: true }).click();
+  await page.getByRole("dialog", { name: "Входящий звонок" }).getByRole("button", { name: "Принять" }).click();
 
   // The chat window opens by default as soon as the call is answered
   // (112-2's scripted available_questions are replaced by free text).
@@ -566,9 +568,9 @@ test("operator 112: free-text caller chat — async stub replies, draft survives
   await page.getByRole("button", { name: "Войти" }).click();
   await expect(page.getByRole("heading", { name: "Занятия" })).toBeVisible();
   await page.goto(`${baseURL}/instructor/items/${itemID}/review`);
-  await expect(page.getByRole("heading", { name: "Кейс с разговором" })).toBeVisible();
-  await expect(page.getByText(/Оператор: Что случилось\? Где вы находитесь\?/)).toBeVisible();
-  await expect(page.getByText(/Заявитель: Я упал\.\.\. Глаз очень болит/)).toBeVisible();
+  await page.getByRole("heading", { name: "Разговор с заявителем" }).click();
+  await expect(page.locator(".review-chat-line.is-operator", { hasText: "Что случилось? Где вы находитесь?" })).toBeVisible();
+  await expect(page.locator(".review-chat-line.is-caller", { hasText: "Я упал... Глаз очень болит" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Ходы свободного диалога" })).toBeVisible();
   await expect(page.getByText(/Отвечено \(заглушка\)/).first()).toBeVisible();
   await expect(page.getByText(/Отменён: удержание/)).toBeVisible();

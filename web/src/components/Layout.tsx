@@ -25,9 +25,9 @@ export function Layout() {
   return (
     <div className="layout">
       <header className="layout-header">
-        <div className="layout-brand" aria-label="EmSim, учебный АРМ ДДС">
-          <strong>112 · EmSim</strong>
-          <small>учебный АРМ ДДС</small>
+        <div className="layout-brand" aria-label="112, учебный АРМ-112">
+          <strong>112</strong>
+          <small>учебный АРМ-112</small>
         </div>
         {me.user.role === "admin" && (
           <nav>
@@ -39,7 +39,7 @@ export function Layout() {
         {me.user.role === "instructor" && (
           <nav>
             <NavLink to="/instructor/lessons">Занятия</NavLink>
-            <NavLink to="/instructor/scenarios">Сценарии</NavLink>
+            <NavLink to="/instructor/scenarios">Готовые сценарии</NavLink>
           </nav>
         )}
         {me.user.role === "trainee" && (

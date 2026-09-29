@@ -128,13 +128,15 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → crew
 	await expect(page.getByRole("heading", { name: "E2E phone smoke" })).toBeVisible();
 	await expectDesktopScreenshots(page, "incident-queue", [
 		page.locator(".layout-clock"),
-		page.locator(".incident-queue tbody td:nth-child(2)"),
+		page.locator(".arm112-main-operator"),
+		page.locator(".arm112-main-grid .c-time"),
+		page.locator(".arm112-main-grid .c-num"),
 	]);
 	await page.getByRole("button", { name: /Открыть карточку №/ }).click();
 	await expectDesktopScreenshots(page, "dds-card", [
 		page.locator(".layout-clock"),
 		page.locator(".dds-card-registration"),
-		page.locator(".dds-item-status"),
+		page.locator(".dds-arm-timer"),
 	]);
 
 	await page.getByRole("button", { name: "Открыть карточку" }).click();
@@ -187,7 +189,7 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → crew
 	await expectDesktopScreenshots(page, "dds-comms", [
 		page.locator(".layout-clock"),
 		page.locator(".dds-card-registration"),
-		page.locator(".dds-item-status"),
+		page.locator(".dds-arm-timer"),
 		page.locator(".dds-service-block-head"),
 		page.locator(".dds-comms-meta"),
 	]);

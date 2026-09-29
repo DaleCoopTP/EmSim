@@ -76,9 +76,7 @@ test("operator 112: dictation fills the chat input, the sent line carries the vo
   const initial = await (await ok(await page.request.get(`/api/v1/items/${itemID}`))).json();
   expect(initial.dictation).toEqual({ available: true, max_seconds: 30 });
 
-  await page.getByRole("button", { name: /Открыть карточку №/ }).click();
-  await page.getByRole("button", { name: "Открыть кейс" }).click();
-  await page.getByRole("button", { name: "ответить", exact: true }).click();
+  await page.getByRole("dialog", { name: "Входящий звонок" }).getByRole("button", { name: "Принять" }).click();
   await expect(page.getByRole("dialog", { name: "Чат с заявителем" })).toBeVisible();
 
   const chatInput = page.getByLabel("Сообщение заявителю");

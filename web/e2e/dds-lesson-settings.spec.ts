@@ -46,29 +46,22 @@ test("ДДС-6: norm, weights, threshold and random fill on a draft lesson", asy
   await page.getByRole("button", { name: "Создать занятие" }).click();
   await page.getByLabel("Название").fill("ДДС-6 настройки E2E");
   await page.getByLabel("Упражнение").selectOption("dds_processing");
-  await page.getByLabel("Первичное решение").fill("45");
-  // A primary norm below the opening norm is refused before any request.
-  await page.getByLabel("Открыть карточку").fill("60");
+  // A primary norm below 10 s is refused before any request; it runs from
+  // the card's opening, so it may be shorter than the opening norm.
+  await page.getByLabel(/Первичное решение/).fill("5");
   await expect(page.getByRole("alert")).toContainText("Первичное решение");
   await expect(page.getByRole("button", { name: "Создать", exact: true })).toBeDisabled();
-  await page.getByLabel("Открыть карточку").fill("30");
+  await page.getByLabel(/Первичное решение/).fill("45");
   await page.getByRole("button", { name: "Создать", exact: true }).click();
   await expect(page.getByRole("heading", { name: "ДДС-6 настройки E2E" })).toBeVisible();
   await expect(page.locator(".lesson-meta")).toContainText("30 / 45 / 180 с");
 
-  // --- weights and threshold: move 10 points between the first two criteria ---
-  await expect(page.getByRole("heading", { name: "Оценивание" })).toBeVisible();
-  const weights = page.getByRole("spinbutton", { name: /^Вес:/ });
-  const first = Number(await weights.nth(0).inputValue());
-  const second = Number(await weights.nth(1).inputValue());
-  await weights.nth(0).fill(String(first + 10));
-  await expect(page.getByText(/Сумма весов должна быть 100/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Сохранить оценивание" })).toBeDisabled();
-  await weights.nth(1).fill(String(second - 10));
-  await page.getByLabel(/Порог зачёта/).fill("85");
-  await page.getByRole("button", { name: "Сохранить оценивание" }).click();
-  await expect(page.getByText("Веса и порог заданы преподавателем.")).toBeVisible();
-  await expect(weights.nth(0)).toHaveValue(String(first + 10));
+  // --- pass threshold (weights belong to the scenario, not the lesson) ---
+  await expect(page.getByRole("heading", { name: "Порог зачёта" })).toBeVisible();
+  await expect(page.getByRole("spinbutton", { name: /^Вес:/ })).toHaveCount(0);
+  await page.getByLabel(/Порог зачёта, баллов/).fill("85");
+  await page.getByRole("button", { name: "Сохранить порог" }).click();
+  await expect(page.getByLabel(/Порог зачёта, баллов/)).toHaveValue("85");
 
   // --- random fill, then the ordinary save and start ---
   const row = page.locator(".assignment-row").first();
@@ -84,7 +77,6 @@ test("ДДС-6: norm, weights, threshold and random fill on a draft lesson", asy
   await expect(page.locator(".lesson-heading .status-badge")).toHaveText("Идёт");
 
   // --- started: the norm and scoring are read-only ---
-  await expect(page.getByRole("button", { name: "Сохранить оценивание" })).toHaveCount(0);
-  await expect(page.getByRole("spinbutton", { name: /^Вес:/ })).toHaveCount(0);
-  await expect(page.getByText("Веса и порог заданы преподавателем.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Сохранить порог" })).toHaveCount(0);
+  await expect(page.locator(".lesson-scoring-settings")).toContainText("85");
 });

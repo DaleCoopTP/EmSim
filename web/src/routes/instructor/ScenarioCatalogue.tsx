@@ -6,6 +6,9 @@ import { formatDateTime } from "../../format";
 import { scenarioStatusLabel } from "../../labels";
 
 const pageSize = 20;
+// The "Служба" filter's own entry for operator 112 scenarios: they have no
+// target service, so it filters by exercise type instead.
+const operator112Filter = "__operator112";
 
 // GET /scenarios' catalogue (slice-2-plan.md's C6): filters (service,
 // status — defaults to approved since that is what an instructor
@@ -21,7 +24,8 @@ export function ScenarioCatalogueRoute() {
   const services = useServices();
 
   const filter: ScenarioFilter = {
-    service: service || undefined,
+    service: service && service !== operator112Filter ? service : undefined,
+    exerciseType: service === operator112Filter ? "operator112_intake" : undefined,
     status: status || undefined,
     difficultyMin: difficultyMin ? Number(difficultyMin) : undefined,
     difficultyMax: difficultyMax ? Number(difficultyMax) : undefined,
@@ -47,17 +51,15 @@ export function ScenarioCatalogueRoute() {
   return (
     <section className="instructor-page scenario-catalogue">
       <header className="page-heading">
-        <div><h1>Сценарии</h1><p>Каталог учебных происшествий для назначения на рабочие места.</p></div>
-        <div className="scenario-catalogue-actions">
-          <span className="page-count">{total} сценариев</span>
-          <Link to="/instructor/scenarios/new" className="arm-primary-action">+ Создать сценарий 112</Link>
-        </div>
+        <div><h1>Готовые сценарии</h1><p>Каталог учебных происшествий для назначения на рабочие места.</p></div>
+        <Link to="/instructor/scenarios/new" className="arm-button arm-primary-action">+ Создать сценарий 112</Link>
       </header>
       <form className="scenario-filters arm-filters" onSubmit={(e) => e.preventDefault()}>
         <label>
           Служба
           <select value={service} onChange={(e) => setServiceFiltered(e.target.value)}>
             <option value="">Все</option>
+            <option value={operator112Filter}>112 — оператор (все сценарии 112)</option>
             {services.data?.map((s) => (
               <option key={s.code} value={s.code}>
                 {s.name}
@@ -94,6 +96,7 @@ export function ScenarioCatalogueRoute() {
             onChange={(e) => setDifficultyMaxFiltered(e.target.value)}
           />
         </label>
+        <span className="page-count scenario-filters-count">Найдено: {total}</span>
       </form>
 
       {scenarios.isPending && <p>Загрузка…</p>}
@@ -119,7 +122,7 @@ export function ScenarioCatalogueRoute() {
                   <td>
                     <Link to={`/instructor/scenarios/${s.id}`}>{s.title}</Link>
                   </td>
-                  <td>{s.target_service}</td>
+                  <td>{s.exercise_type === "operator112_intake" ? "112" : s.target_service}</td>
                   <td>{s.difficulty}</td>
                   <td><span className={`status-badge status-${s.status}`}>{scenarioStatusLabel(s.status)}</span></td>
                   <td>{s.version}</td>

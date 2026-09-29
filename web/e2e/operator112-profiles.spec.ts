@@ -1,4 +1,5 @@
 import { expect, request as apiRequest, test, type APIRequestContext, type APIResponse } from "@playwright/test";
+import { armCardNumber } from "../src/arm112Number";
 
 const password = "e2e-password-123";
 const bootstrapPassword = "local-only-admin-password";
@@ -167,13 +168,13 @@ test("operator 112: three card-only cases show profiles only after type selectio
     await page.getByRole("button", { name: "Завершить кейс" }).click();
     await expect(page.getByText(/Кейс завершён/)).toBeVisible();
     await page.getByRole("button", { name: "К списку вызовов" }).click();
-    await expect(page.getByRole("heading", { name: "Список входящих кейсов" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Список происшествий" })).toBeVisible();
     await expect(page.getByRole("button", { name: /Открыть карточку №/ })).toHaveCount(index === 0 ? 2 : 1);
     if (index === 0) {
       const queued = await (await ok(await page.request.get("/api/v1/my/items"))).json();
       expect(queued).toHaveLength(2);
       expect(queued[1].state).toBe("offered");
-      await page.getByRole("button", { name: `Открыть карточку № ${queued[1].card_number}` }).click();
+      await page.getByRole("button", { name: `Открыть карточку № ${armCardNumber(queued[1].card_number)}` }).click();
       await expect(page.getByRole("button", { name: "Открыть кейс" })).toBeVisible();
     }
     await page.getByRole("button", { name: "Выйти" }).click();
@@ -190,9 +191,12 @@ test("operator 112: three card-only cases show profiles only after type selectio
   expect(reviewed.dispatch).toBeUndefined();
   expect(reviewed.notification.services.map((entry: { service_code: string }) => entry.service_code).sort()).toEqual(["pilot_ambulance", "pilot_fire_101", "pilot_gas_104"]);
   await page.goto(`${baseURL}/instructor/items/${itemIDs[2]}/review`);
-  await expect(page.getByRole("heading", { name: "Кейс без разговора" })).toBeVisible();
+  await page.getByRole("heading", { name: "Действия обучаемого" }).click();
   await expect(page.getByText(/Добавил тип: Взрыв газа и ДТП с пламенем/)).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Активные профильные карты" })).toBeVisible();
+  await page.getByRole("heading", { name: "Заполненная карточка" }).click();
+  const finalCard = page.getByRole("region", { name: "Итоговая карточка обучаемого" });
+  await expect(finalCard).toContainText("104");
+  await expect(finalCard).toContainText("101");
   await expect(page.getByText(/pilot_gas_104: Добавлена карта 104/)).toBeVisible();
   await expect(page.getByText(/pilot_fire_101: Добавлена карта 101/)).toBeVisible();
   const notifiedLine = page.locator("p", { hasText: "Оповещены:" });

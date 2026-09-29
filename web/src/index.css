@@ -197,65 +197,54 @@ dd { margin: 0; }
 .phone-panel button { margin: 8px 8px 0 0; background: #4e6069; border-color: #657880; }
 .phone-panel button.active { background: var(--arm-accent); border-color: #fa956a; }
 
-/* Login mirrors the blue System-112 authorization screen without copying
-   its proprietary artwork or real support contacts. */
+/* The login scene follows the System-112 reference in docs/reference-ui. */
 .login {
-  display: grid;
-  grid-template-columns: minmax(720px, 2fr) minmax(500px, 1fr);
+  position: relative;
   min-height: 100vh;
   color: #fff;
   overflow: hidden;
-  background: #6aaed0;
+  background: #76b4d6;
 }
 .login-city {
-  position: relative;
-  overflow: hidden;
-  min-height: 720px;
-  background:
-    linear-gradient(90deg, rgb(23 81 122 / 37%), transparent 30%),
-    linear-gradient(#70b4d7, #9fcae1);
+  position: absolute;
+  inset: 0;
+  background: url('/login-reference.png') center -2px / 100% calc(100% + 2px) no-repeat;
 }
-.login-city::before,
 .login-city::after {
   position: absolute;
+  top: 0;
   right: 0;
-  bottom: 0;
-  left: 0;
+  width: 42%;
+  height: 85%;
   content: "";
-}
-.login-city::before {
-  height: 75%;
-  opacity: .84;
   background:
-    linear-gradient(90deg, transparent 0 4%, #5183a7 4% 13%, transparent 13% 16%, #9dd0e5 16% 25%, transparent 25% 28%, #4e7da2 28% 37%, transparent 37% 41%, #82b8d4 41% 51%, transparent 51% 56%, #5487a9 56% 66%, transparent 66% 71%, #a6d5e8 71% 82%, transparent 82% 87%, #5f94b5 87% 96%, transparent 96%),
-    linear-gradient(90deg, transparent 0 4%, #75aac7 4% 13%, transparent 13% 16%, #d4edf5 16% 25%, transparent 25% 28%, #77acc8 28% 37%, transparent 37% 41%, #c3e4f0 41% 51%, transparent 51% 56%, #78abc8 56% 66%, transparent 66% 71%, #d3edf6 71% 82%, transparent 82% 87%, #81b5d1 87% 96%, transparent 96%);
-  clip-path: polygon(0 0, 8% 12%, 14% 0, 20% 23%, 28% 12%, 38% 28%, 46% 5%, 55% 20%, 66% 0, 73% 33%, 82% 12%, 92% 27%, 100% 5%, 100% 100%, 0 100%);
+    radial-gradient(ellipse 120% 110% at 0 100%, #94bfda 0%, transparent 72%),
+    linear-gradient(90deg, #77b2d6, #67abd3);
+  mask-image:
+    linear-gradient(90deg, transparent, #000 8%),
+    linear-gradient(180deg, #000 88%, transparent);
+  mask-composite: intersect;
 }
-.login-city::after {
-  height: 20%;
-  background:
-    linear-gradient(90deg, #e6ebeb 0 11%, #bcc5c9 11% 13%, #f3f4f2 13% 29%, #c2c9cc 29% 32%, #e5e8e6 32% 46%, #b1bbc0 46% 49%, #f2f2ef 49% 70%, #c0c9cc 70% 73%, #e7e9e7 73% 100%);
-  clip-path: polygon(0 44%, 9% 44%, 9% 18%, 19% 18%, 19% 51%, 29% 51%, 29% 0, 38% 0, 38% 38%, 51% 38%, 51% 15%, 63% 15%, 63% 52%, 76% 52%, 76% 9%, 88% 9%, 88% 37%, 100% 37%, 100% 100%, 0 100%);
-}
-.login-city-helicopter { position: absolute; z-index: 1; top: 21%; right: 28%; color: #fff; font-size: 78px; font-weight: 700; transform: rotate(-10deg); }
 .login-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  padding: 72px 8vw 72px 5vw;
-  background: linear-gradient(90deg, rgb(92 165 204 / 86%), #6aaed0 32%);
+  width: 30%;
+  margin: 0 4.5% 0 auto;
+  padding-top: clamp(80px, 12vh, 160px);
 }
-.login-title { display: flex; align-items: center; gap: 18px; margin-bottom: 34px; }
-.login-title > span { font-size: clamp(72px, 8vw, 112px); font-weight: 200; letter-spacing: -.08em; }
-.login-title h1 { margin: 0; color: #fff; font-size: 30px; font-weight: 300; text-transform: uppercase; white-space: nowrap; }
-.login .login-form { max-width: none; gap: 16px; margin: 0; }
-.login .login-form label { gap: 4px; color: #edf7fb; font-size: 13px; }
-.login .login-form input { padding: 6px 2px; color: #fff; background: transparent; border: 0; border-bottom: 1px solid #f4fbfd; }
+.login-title { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
+.login-title > span { font-size: clamp(72px, 7.5vw, 136px); font-weight: 300; line-height: 1; letter-spacing: -.055em; }
+.login-title h1 { margin: 0; color: #fff; font-size: clamp(22px, 2vw, 36px); font-weight: 300; line-height: 1.04; text-transform: uppercase; white-space: nowrap; }
+.login .login-form { max-width: none; gap: 8px; margin: 0; }
+.login .login-form label { gap: 2px; color: #337ca7; font-size: 14px; }
+.login .login-form input { min-height: 36px; padding: 3px 2px; color: #fff; background: transparent; border: 0; border-bottom: 1px solid #e9f7ff; }
 .login .login-form input:focus-visible { outline-offset: 4px; }
-.login .login-form button { margin-top: 10px; min-height: 46px; color: #fff; background: #767777; border: 0; font-size: 16px; font-weight: 700; text-transform: uppercase; }
+.login .login-form button { margin-top: 16px; min-height: 48px; color: #fff; background: #858585; border: 0; font-size: 16px; font-weight: 700; text-transform: uppercase; }
 .login .login-form button:hover:not(:disabled) { background: #5b6569; }
 .login .error { margin: 0; color: #7e1321; background: #fff1f2; }
-.login-help { max-width: 370px; margin: 30px 0 0; color: #edf7fb; line-height: 1.45; }
+.login-help { margin: 24px 0 0; color: #fff; font-size: clamp(18px, 1.7vw, 28px); line-height: 1.08; }
+.login-help a { color: #317ba6; text-decoration: underline; }
 
 /* Trainee workplace: assignment is a queue first, then a selected card. */
 .trainee-workplace { max-width: 1880px; }
@@ -490,6 +479,46 @@ dd { margin: 0; }
 .scenario-versions { margin-top: 12px; overflow: hidden; }
 .scenario-versions table { border: 0; }
 
+/* A link that acts as a command (e.g. "+ Создать сценарий 112") looks like a button. */
+.arm-button { display: inline-flex; align-items: center; min-height: 34px; padding: 6px 16px; border: 1px solid #26353d; text-decoration: none; white-space: nowrap; }
+a.arm-primary-action:hover { color: #fff; background: var(--arm-accent-dark); }
+.scenario-filters-count { align-self: end; margin-left: auto; padding: 8px 10px; }
+
+/* 112-7 scenario editor: tabs attached to one form panel, a sticky action bar. */
+.scenario-editor-tabs { display: flex; gap: 2px; }
+.scenario-editor-tabs button { min-width: 110px; padding: 8px 18px; color: #dfe7ea; background: #586a73; border-color: #586a73; }
+.scenario-editor-tabs button:hover:not(:disabled) { background: #4a5c65; }
+.scenario-editor-tabs button.active, .scenario-editor-tabs button.active:hover:not(:disabled) { color: var(--arm-ink); background: #e5eaec; border-color: #e5eaec; box-shadow: inset 0 3px var(--arm-accent); font-weight: 700; }
+.scenario-editor-panel { display: flex; flex-direction: column; gap: 14px; min-height: 240px; padding: 18px; background: #e5eaec; box-shadow: var(--arm-shadow); }
+.scenario-editor-panel h3 { margin: 6px 0 0; }
+.scenario-editor-panel > p { margin: 0; }
+.editor-hint { margin: 0; color: #52616a; font-size: 13px; line-height: 1.4; }
+.editor-ok { margin: 0; color: var(--arm-ok); font-weight: 600; }
+.editor-form-grid { display: grid; grid-template-columns: minmax(280px, 2fr) minmax(140px, .7fr) minmax(200px, 1fr) minmax(160px, .8fr); gap: 14px 18px; max-width: 1200px; }
+.editor-form-grid label { display: flex; flex-direction: column; gap: 5px; color: #42535c; font-size: 12px; font-weight: 600; }
+.editor-form-grid input, .editor-form-grid select, .editor-form-grid textarea { width: 100%; color: var(--arm-ink); background: #f7f9f9; font-size: 14px; font-weight: 400; }
+.editor-form-grid.editor-form-stack { grid-template-columns: minmax(0, 1fr); max-width: 1000px; }
+.editor-fieldset { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-width: 1000px; margin: 0; padding: 12px 14px; background: #edf1f2; border: 1px solid #c2cbcf; }
+.editor-fieldset legend { padding: 0 6px; color: #42535c; font-size: 12px; font-weight: 700; }
+.scenario-editor-checklist { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.scenario-editor-checklist label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.scenario-editor-checklist input { min-height: 0; margin: 0; }
+.scenario-editor-table { table-layout: fixed; min-width: 1100px; }
+.scenario-editor-table td { vertical-align: top; padding: 6px; }
+.scenario-editor-table input, .scenario-editor-table select, .scenario-editor-table textarea { width: 100%; background: #fbfcfc; }
+.scenario-editor-table textarea { min-height: 31px; }
+.editor-row-remove { width: 31px; padding: 0; color: #7e1321; background: #f4e3e5; border-color: #d8b3b8; font-size: 18px; line-height: 1; }
+.editor-row-remove:hover:not(:disabled) { color: #fff; background: var(--arm-danger); }
+.scenario-editor-issues { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.scenario-editor-issues li { padding: 8px 12px; background: #fff7e6; border-left: 4px solid #d99a2b; }
+.scenario-editor-issues li.error { background: #fdebed; border-left-color: var(--arm-danger); }
+.editor-probe { display: flex; gap: 8px; max-width: 900px; }
+.editor-probe input { flex: 1; }
+.editor-probe-result { margin: 0; }
+.scenario-editor-actions { position: sticky; z-index: 7; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; padding: 10px 14px; background: #d5dde0; border-top: 3px solid #7b8c94; box-shadow: 0 -2px 6px rgb(20 35 43 / 15%); }
+.scenario-editor-actions > button { min-height: 36px; padding: 6px 18px; }
+.scenario-editor-actions > p { margin: 0; }
+
 /* C7: lesson assignment and server-driven instructor monitor. */
 .arm-primary-action { color: #fff; background: var(--arm-accent); border-color: #f09269; font-weight: 700; }
 .arm-primary-action:hover:not(:disabled) { background: var(--arm-accent-dark); }
@@ -629,7 +658,7 @@ dd { margin: 0; }
   --a112-orange-dark: #d65a2e;
   --a112-red: #e5262d;
   --a112-grey-tile: #8d8d8d;
-  display: flex; flex-direction: column; gap: 8px;
+  position: relative; display: flex; flex-direction: column; gap: 8px;
   /* The reference is read at 90% browser zoom; the card reproduces that at 100%. */
   zoom: .9;
   min-height: calc((100vh - 62px - 18px) / .9); padding: 8px 8px 0;
@@ -647,7 +676,7 @@ dd { margin: 0; }
 .arm112 .arm112-icon { flex: none; }
 
 /* Header strip: line state, three phones, incident title, timer. */
-.arm112-top { display: grid; grid-template-columns: minmax(190px, 1.15fr) 44px minmax(0, 1.5fr) 44px minmax(0, 1.5fr) 44px minmax(0, 1.5fr) minmax(220px, 1.2fr) 104px; gap: 0 2px; min-height: 78px; background: var(--a112-canvas); }
+.arm112-top { display: grid; grid-template-columns: minmax(180px, 1fr) 44px minmax(0, 1.3fr) 44px minmax(0, 1.3fr) 44px minmax(0, 1.3fr) minmax(190px, 1.1fr) minmax(215px, 1.2fr) 112px; gap: 0 2px; min-height: 78px; background: var(--a112-canvas); }
 .arm112-top > * { background: var(--a112-strip); }
 .arm112-line { display: flex; align-items: stretch; margin-right: 6px; }
 .arm112-hangup { display: grid; place-items: center; width: 56px; color: #333; }
@@ -664,13 +693,20 @@ dd { margin: 0; }
 .arm112-phone output.is-empty, .arm112-phone input:placeholder-shown { color: #a3a3a3; }
 .arm112-phone:not(:has(.arm112-aon)) input, .arm112-phone:not(:has(.arm112-aon)) output { width: 100%; }
 .arm112 .arm112-aon { position: absolute; right: 12px; bottom: 10px; padding: 3px 8px; font-size: 11px; font-weight: 400; background: #f6f6f6; }
+/* "записи звонков" / "список SMS" and the channel select (instruction fig. 11). */
+.arm112-records { display: flex; flex-direction: column; justify-content: center; gap: 12px; min-width: 0; margin-right: 6px; padding: 8px 12px; }
+.arm112-records div { display: flex; gap: 8px; }
+.arm112 .arm112-records button { flex: 1 1 0; min-width: 0; padding: 4px 3px; overflow: hidden; color: #444; background: #f3f3f3; border-color: #9c9c9c; font-size: 11px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.arm112 .arm112-records button:disabled { opacity: 1; }
+.arm112-records select { width: 100%; font-size: 16px; }
+.arm112-records select:has(option[value=""]:checked) { color: #a3a3a3; }
 .arm112-incident { display: flex; flex-direction: column; justify-content: center; gap: 1px; min-width: 0; margin-right: 2px; padding: 6px 12px; font-size: 13px; }
 .arm112-incident strong { overflow: hidden; margin-bottom: 2px; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
 .arm112-incident span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .arm112-incident .arm112-incident-note { color: var(--a112-label); font-size: 11px; }
 .arm112-timer { display: flex; flex-direction: column; align-items: center; justify-content: center; color: #fff; background: var(--a112-dark) !important; font-variant-numeric: tabular-nums; }
 .arm112-timer.is-alert { background: var(--a112-red) !important; }
-.arm112-timer strong { font-size: 38px; line-height: 1; }
+.arm112-timer strong { font-size: 40px; line-height: 1; }
 .arm112-timer > span { display: flex; gap: 12px; margin-top: 4px; font-size: 10px; font-weight: 700; }
 
 /* Card body: 46% form column and the incident map column. */
@@ -688,8 +724,11 @@ dd { margin: 0; }
 .arm112-victims button { min-width: 46px; min-height: 34px; padding: 4px 10px; font-size: 15px; }
 .arm112-victims label { display: flex; align-items: center; gap: 6px; margin-left: 6px; }
 .arm112-victims input { width: 48px; font-size: 16px; }
-.arm112-outcomes { grid-area: outcomes; gap: 10px; }
-.arm112 .arm112-outcomes button { padding: 6px 12px; white-space: nowrap; color: var(--a112-orange); background: #fff; border-color: var(--a112-orange); font-size: 14px; }
+.arm112-outcomes { grid-area: outcomes; justify-content: center; gap: 16px; padding-right: 20px; padding-left: 20px; }
+.arm112 .arm112-outcomes button { min-width: 150px; padding: 7px 16px; white-space: nowrap; color: var(--a112-orange); background: #fff; border: 2px solid var(--a112-orange); font-size: 16px; }
+.arm112 .arm112-outcomes button:hover:not(:disabled) { color: #fff; background: var(--a112-orange); }
+/* While the call rings the card body is not shown yet; the outcome panel keeps its place. */
+.arm112-ring-row { display: flex; justify-content: flex-end; }
 .arm112 .arm112-outcomes button:disabled { color: #f0a488; background: #f7ddd3; border-color: #f0a488; opacity: 1; }
 
 @media (max-width: 1700px) {
@@ -697,7 +736,7 @@ dd { margin: 0; }
   .arm112-victims { font-size: 13px; }
   .arm112-victims button { min-width: 40px; padding: 4px 8px; font-size: 13px; }
   .arm112-flags > button { padding: 3px 7px; font-size: 11px; }
-  .arm112 .arm112-outcomes button { padding: 6px 8px; font-size: 12px; }
+  .arm112 .arm112-outcomes button { min-width: 0; padding: 6px 10px; font-size: 14px; }
 }
 .arm112-left { grid-area: left; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .arm112-right { grid-area: right; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -771,6 +810,7 @@ dd { margin: 0; }
 .arm112-incoming p { margin: 0; color: #555; }
 .arm112 .arm112-incoming button { padding: 10px 28px; color: #fff; background: #3a9a3a; border-color: #3a9a3a; font-size: 16px; }
 .arm112 .arm112-incoming button:hover:not(:disabled) { background: #2f852f; }
+.arm112 .arm112-call-banner { top: 170px; }
 
 /* Orange services bar pinned to the bottom of the viewport. */
 .layout-main:has(.arm112) { padding-bottom: 0; }
@@ -883,3 +923,142 @@ dd { margin: 0; }
 .status-panel { padding: 12px 15px; margin-bottom: 14px; background: #e8ecee; box-shadow: var(--arm-shadow); }
 .status-panel h2 { margin: 0 0 10px; font-size: 16px; }
 .status-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+
+/* Scenario page: the AI caller's brief, collapsed by default. */
+.caller-knowledge > summary { padding: 10px 12px; color: #fff; background: #53666f; font-weight: 700; cursor: pointer; }
+.caller-knowledge > p { margin: 8px 12px; }
+
+/* 112 review page: a score summary, then collapsible sections. */
+.item-review h1 { margin-bottom: 10px; }
+.review-summary { display: flex; flex-wrap: wrap; gap: 6px 28px; align-items: baseline; margin-bottom: 14px; }
+.review-summary p { margin: 0; font-size: 18px; }
+.review-summary strong { font-size: 22px; }
+.review-section { margin: 0 0 12px; background: #eef2f3; border: 1px solid #b6c0c5; box-shadow: var(--arm-shadow); }
+.review-section > summary { display: flex; align-items: center; gap: 10px; padding: 10px 14px; color: #fff; background: #53666f; cursor: pointer; list-style: none; }
+.review-section > summary::-webkit-details-marker { display: none; }
+.review-section > summary::before { content: "▸"; font-size: 14px; transition: transform .15s; }
+.review-section[open] > summary::before { transform: rotate(90deg); }
+.review-section > summary:hover { background: #5f737c; }
+.review-section > summary h2 { margin: 0; color: #fff; font-size: 17px; }
+.review-section-body { padding: 12px 14px 14px; }
+.review-section-body .arm112-reference-frame { margin-top: 4px; }
+.review-muted { color: #6b7a81; }
+.review-services { max-width: 1480px; margin: 0 auto; font-size: 14px; }
+.review-services p { margin: 4px 0; }
+
+.review-dialogue { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); gap: 16px; align-items: start; }
+.review-chat { display: flex; flex-direction: column; gap: 10px; max-height: 680px; padding: 16px; overflow-y: auto; background: #fff; border: 1px solid #cdd5d9; }
+.review-chat-line { display: flex; flex-direction: column; align-items: flex-start; max-width: 78%; }
+.review-chat-line.is-operator { align-self: flex-end; align-items: flex-end; }
+.review-chat-meta { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 3px; color: #6b7a81; font-size: 12px; }
+.review-chat-bubble { padding: 8px 12px; color: #1f2b31; background: #eef1f3; border-radius: 10px 10px 10px 2px; line-height: 1.4; }
+.review-chat-line.is-operator .review-chat-bubble { color: #fff; background: #1a7fc3; border-radius: 10px 10px 2px 10px; }
+.review-dialogue-side h3 { margin: 0 0 6px; }
+.review-dialogue-side h3 + ol, .review-dialogue-side h3 + ul { margin: 0 0 14px; padding-left: 22px; font-size: 13px; line-height: 1.55; }
+
+/* ДДС-6 random queue fill on the lesson page. */
+.random-fill { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; padding: 12px 14px; background: #edf1f2; border: 1px solid #c2cbcf; }
+.random-fill legend { padding: 0 6px; color: #42535c; font-size: 13px; font-weight: 700; }
+.random-fill-categories { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.random-fill-categories label { display: flex !important; flex-direction: row !important; align-items: center; gap: 10px !important; padding: 6px 8px; background: #f7f9f9; border: 1px solid #d3dadd; cursor: pointer; }
+.random-fill-categories input { min-height: 0; margin: 0; }
+.random-fill-categories span { flex: 1; }
+.random-fill-categories small { color: #52616a; white-space: nowrap; }
+.random-fill-controls { display: flex; align-items: flex-end; gap: 10px; }
+.random-fill-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.random-fill-controls input { width: 110px; }
+
+/*
+ * DDS card in the ARM-112 layout (instruction, «Сохраненная карточка
+ * происшествия»): the 112 card's strips and panels, read-only, with the
+ * status pencil in the flags strip and the crew comms panel beside it.
+ */
+.dds-arm-layout { display: block; }
+.dds-arm .arm112-right .dds-comms-panel { margin-top: 4px; zoom: calc(1 / .9); }
+.arm112.dds-arm { min-height: calc((100vh - 62px - 18px) / .9); }
+.dds-arm .arm112-top { grid-template-columns: 134px 28px minmax(0, 1.2fr) 28px minmax(0, 1.2fr) 28px minmax(0, 1fr) minmax(170px, 1.1fr) 100px; }
+.dds-arm .arm112-phone-side svg { width: 18px; height: 18px; }
+.dds-arm .arm112-hangup { width: 34px; }
+.dds-arm .arm112-line-state { padding-right: 6px; font-size: 13px; }
+.dds-arm .arm112-line-state button { font-size: 10px; }
+.dds-arm .arm112-phone { padding-right: 8px; padding-left: 8px; }
+.dds-arm .arm112-phone input, .dds-arm .arm112-phone output { width: 100%; font-size: clamp(13px, 1.05vw, 17px); text-overflow: clip; }
+.dds-arm .arm112-incident strong { overflow: visible; font-size: clamp(14px, 1.1vw, 17px); white-space: normal; }
+.dds-arm .dds-card-registration { color: inherit; font-size: inherit; }
+.dds-arm .arm112-line-state { gap: 12px; white-space: nowrap; }
+.dds-arm-caption { display: block; margin-bottom: 4px; color: var(--a112-label); font-size: 12px; }
+.dds-arm-channel { font-size: 16px; }
+.dds-arm .arm112-incident strong { font-size: 17px; }
+.dds-arm .card-status-badge { padding: 1px 6px; font-size: 11px; }
+.dds-arm-timer strong { font-size: 34px; }
+.dds-arm-timer > span { justify-content: center; text-transform: uppercase; letter-spacing: .04em; }
+.dds-arm-timer small { font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.dds-arm-body { grid-template-columns: minmax(0, 46%) minmax(0, 1fr); align-items: stretch; grid-template-areas: "applicant flags" "left right" "calls calls"; }
+.dds-arm-applicant { font-size: 17px; font-weight: 700; }
+.dds-arm-muted { color: var(--a112-label); }
+.dds-arm-flagrow { grid-area: flags; display: flex; gap: 8px; min-width: 0; }
+.dds-arm-flags { flex: 1; flex-wrap: wrap; gap: 6px 18px; min-width: 0; font-size: 15px; }
+.dds-arm-marks { flex: none; gap: 10px; }
+.dds-arm .dds-arm-mark { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 4px 12px; font-size: 15px; }
+.dds-arm .dds-arm-mark.is-incident[aria-pressed="true"], .dds-arm .dds-arm-mark.is-incident[aria-pressed="true"]:hover:not(:disabled) { color: #fff; background: var(--a112-orange); border-color: var(--a112-orange); }
+.dds-arm .dds-arm-print { display: grid; place-items: center; width: 38px; height: 34px; margin-left: 14px; }
+.dds-arm-blank { min-height: 240px; }
+/* The trainee's own service tile carries the status pencil (ADR-030); its
+   form and the status history open upwards over the card. */
+.dds-arm-tile.is-mine { position: relative; flex: none; max-width: none; min-width: 200px; }
+.dds-arm .dds-status-form-actions { display: flex; gap: 8px; }
+.dds-arm .dds-status-form-actions button { padding: 6px 16px; font-size: 14px; }
+.dds-arm .dds-status-form-actions button[type="submit"], .dds-arm .dds-status-form-actions button[type="submit"]:hover:not(:disabled) { color: #fff; background: var(--a112-orange); border-color: var(--a112-orange); }
+.dds-arm-tile .dds-service-block-head { flex-wrap: nowrap; gap: 8px; margin: 0; }
+.dds-arm-tile .dds-service-block-head > span { color: #fff; font-size: 12px; font-weight: 400; white-space: nowrap; }
+.dds-arm .dds-arm-tile .dds-service-pencil { display: grid; place-items: center; width: 28px; height: 28px; color: #fff; background: var(--a112-orange); border: 0; font-size: 15px; }
+.dds-arm .dds-arm-tile .dds-service-history-toggle { padding: 0 4px; color: #d9e6ea; background: transparent; border: 0; font-size: 11px; font-weight: 400; }
+.dds-arm-tile .dds-status-form,
+.dds-arm-tile .dds-service-history { position: absolute; z-index: 9; bottom: calc(100% + 6px); left: 0; width: 460px; margin: 0; padding: 12px; color: var(--a112-ink); background: #fff; border: 1px solid #a9a9a9; box-shadow: 0 -4px 18px rgb(0 0 0 / 25%); white-space: normal; }
+.dds-arm-tile .dds-service-history { padding-left: 30px; font-size: 13px; line-height: 1.45; }
+.dds-arm-tile .dds-status-form label { gap: 4px; color: var(--a112-label); font-size: 12px; }
+.dds-arm-tile .dds-status-form select, .dds-arm-tile .dds-status-form textarea { color: var(--a112-ink); font-size: 15px; }
+.dds-arm-address { min-height: 90px; }
+.dds-arm-address-line { margin: 0 0 6px; font-size: 16px; font-weight: 700; line-height: 1.4; }
+.dds-arm-address .dds-arm-muted { margin: 0; }
+.dds-arm-incident p { min-height: 120px; margin: 0; padding: 12px 14px; font-size: 16px; font-weight: 700; line-height: 1.45; }
+.dds-arm-class { font-size: 15px; }
+.dds-arm-calls { grid-area: calls; background: transparent; }
+.dds-arm-calls th { padding: 2px 8px; color: var(--a112-label); background: transparent; border: 0; font-size: 12px; font-weight: 400; text-align: left; }
+.dds-arm-calls td { padding: 7px 8px; background: #fff; border: 1px solid var(--a112-canvas); font-size: 14px; }
+.dds-arm-calls td:first-child { color: #fff; background: #7b2946; white-space: nowrap; }
+.dds-arm-feedback { padding: 0 4px; }
+.dds-arm-feedback .notice, .dds-arm-feedback .error { margin: 4px 0; }
+/* The DDS services bar is the instruction's dark one, not 112's orange. */
+.arm112 .dds-arm-bar { background: #4b5559; }
+.dds-arm-bar .arm112-services { flex: 1; flex-wrap: nowrap; min-width: 0; }
+.dds-arm-tile { flex: 0 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: center; max-width: 230px; padding: 6px 14px; border-left: 1px solid rgb(255 255 255 / 25%); line-height: 1.25; }
+.dds-arm-tile strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.dds-arm-tile span { color: #d9dfe1; font-size: 12px; }
+.dds-arm-tile.is-mine { background: #6b777c; box-shadow: inset 0 -3px var(--a112-orange); }
+.dds-arm-workplace > .inline-form { margin-top: 10px; }
+.dds-arm .arm112-incident > span { overflow: visible; font-size: 12px; white-space: normal; }
+/* «Связь с бригадой» inside the ARM card keeps its own dark-phone look:
+   undo the card's white control styles (.arm112 button/input) for it. */
+.dds-arm .dds-comms-panel button { min-height: 30px; padding: 5px 12px; color: #fff; background: var(--arm-panel); border: 1px solid #26353d; font-weight: 400; }
+.dds-arm .dds-comms-panel button:hover:not(:disabled) { background: #43545e; }
+.dds-arm .dds-comms-panel button:disabled { opacity: .52; }
+.dds-arm .dds-comms-panel input, .dds-arm .dds-comms-panel textarea, .dds-arm .dds-comms-panel select { min-height: 31px; padding: 5px 7px; color: #1c2b32; background: #edf0f1; border: 1px solid #a8b2b7; }
+.dds-arm .dds-comms-panel .phone-contacts button { min-width: 132px; min-height: 46px; padding: 5px 9px; margin: 0; color: #e8eff1; background: #465963; border-color: #60737d; text-align: left; }
+.dds-arm .dds-comms-panel .phone-contacts button:hover:not(:disabled) { background: #52666f; }
+.dds-arm .dds-comms-panel .phone-contacts button.active, .dds-arm .dds-comms-panel .phone-contacts button.active:hover:not(:disabled) { color: #fff; background: var(--arm-accent); border-color: #ff9d72; }
+.dds-arm .dds-comms-panel .phone-call-button, .dds-arm .dds-comms-panel .phone-retry-button,
+.dds-arm .dds-comms-panel .phone-call-button:hover:not(:disabled) { min-width: 140px; min-height: 35px; margin: 0; color: #fff; background: var(--arm-accent); border-color: #f49a73; font-weight: 700; text-transform: uppercase; }
+.dds-arm .dds-comms-panel .phone-end-button, .dds-arm .dds-comms-panel .phone-end-button:hover:not(:disabled) { min-height: 35px; margin: 0; color: #fff; background: #b34137; border-color: #e47c72; font-weight: 700; text-transform: uppercase; }
+.dds-arm .dds-comms-panel button[aria-pressed="true"] { color: #fff; background: #6b4a2e; border-color: #a8784f; }
+.dds-arm .dds-comms-panel .dds-answer-button, .dds-arm .dds-comms-panel .dds-answer-button:hover:not(:disabled) { min-width: 110px; color: #fff; background: #3f9a6e; border-color: #7cc6a1; font-weight: 700; text-transform: uppercase; }
+.dds-arm .dds-comms-panel .dds-hangup-button, .dds-arm .dds-comms-panel .dds-hangup-button:hover:not(:disabled) { color: #fff; background: #b34137; border-color: #e47c72; }
+
+/* DDS review page: card next to the plain-words reference. */
+.dds-review-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr); gap: 16px; align-items: start; }
+.dds-review-grid h3 { margin: 4px 0 8px; }
+.dds-reference { grid-template-columns: max-content minmax(0, 1fr); gap: 8px 14px; margin: 0 0 14px; padding: 12px; background: #fff; border-left: 4px solid var(--arm-accent); }
+.dds-review-table td, .dds-review-table th { vertical-align: top; }
+.dds-review-table tr.is-rejected td { color: #7e1321; background: #fbeef0; }
+.dds-review-table audio { height: 30px; }
+.arm112 .dds-arm-back { margin-right: 8px; font-size: 16px; }

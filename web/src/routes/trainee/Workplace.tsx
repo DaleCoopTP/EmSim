@@ -10,6 +10,8 @@ import { availableLocalStorage, clearPending, loadPending, savePending, type Pen
 import { IncidentCard } from "../../components/IncidentCard";
 import { formatDateTime } from "../../format";
 import { cardStatusAlarm, cardStatusLabel, reactionLabel } from "../../labels";
+import { Arm112Main } from "./Arm112Main";
+import { DDSArmCard } from "./DDSArmCard";
 import { Operator112Workplace, type IntakeItem } from "./Operator112Workplace";
 
 type DDSItem = Omit<Item, "card"> & { card: CardView };
@@ -50,6 +52,10 @@ export function WorkplaceRoute() {
   const items = useMyItems(!!run.data && workstationMatches);
   const [selectedItemId, setSelectedItemId] = useState("");
   const [queueSearch, setQueueSearch] = useState("");
+  // The 112 main screen's "Принять" opens the ringing card and answers it
+  // at once (Operator112ProfileCase's acceptOnOpen).
+  const [acceptItemId, setAcceptItemId] = useState("");
+  const openItem = (id: string, accept?: boolean) => { setAcceptItemId(accept ? id : ""); setSelectedItemId(id); };
   // The run disappears from /my/run the instant its last item closes
   // (ActiveRunByUser only ever returns an active run) — but the trainee
   // must still be able to see that just-closed card and send a
@@ -96,15 +102,16 @@ export function WorkplaceRoute() {
     if (completedQueue) {
       const { run: previousRun, items: previousItems } = completedQueue;
       const queueItems = previousItems.map((candidate) => candidate.id === item.data?.id ? { ...candidate, state: item.data.state } : candidate);
+      if (!selectedItemId) return <Arm112Main me={me} run={previousRun} items={queueItems} search={queueSearch} onSearch={setQueueSearch} onOpen={openItem} />;
       return <section className="trainee-workplace">
         <header className="workplace-header"><div><p className="workplace-kicker">Рабочее место 112 · РМ-{previousRun.workstation_no}</p>
-          <h1>{selectedItemId ? "Обработанный кейс" : previousRun.lesson.title}</h1></div></header>
-        {selectedItemId ? <>
+          <h1>Обработанный кейс</h1></div></header>
+        {selectedItemId && <>
           {!isCardOnly(item.data) && <button type="button" className="back-to-queue intake-back-to-queue" onClick={() => setSelectedItemId("")}>← К списку вызовов</button>}
           {item.isPending && <p>Загрузка карточки…</p>}
           {item.isError && <p className="error">{errorMessage(item.error)}</p>}
           {item.data && <Operator112Workplace key={item.data.id} me={me} item={item.data as unknown as IntakeItem} onClose={() => setSelectedItemId("")} />}
-        </> : <IncidentQueue items={queueItems} search={queueSearch} onSearch={setQueueSearch} onOpen={setSelectedItemId} exerciseType="operator112_intake" />}
+        </>}
       </section>;
     }
     if (!lastItemId) return <Waiting me={me} />;
@@ -117,9 +124,24 @@ export function WorkplaceRoute() {
     );
   }
 
+  const is112 = run.data.exercise_type === "operator112_intake";
+  const stoppedNotice = run.data.lesson.state === "stopped" &&
+    <p role="alert" className="notice">Занятие остановлено преподавателем{run.data.lesson.stop_reason ? `: ${run.data.lesson.stop_reason}` : ""}. Открытые карточки прерываются фоново.</p>;
+  const workstationNotice = !workstationMatches &&
+    <p role="alert" className="error">Занятие назначено на РМ-{run.data.workstation_no}. Войдите на этом рабочем месте.</p>;
+  if (!selectedItemId) {
+    return <Arm112Main me={me} run={run.data} items={workstationMatches ? items.data ?? [] : []} search={queueSearch} onSearch={setQueueSearch} onOpen={openItem}
+      statusOf={is112 ? undefined : (candidate) => `${cardStatusLabel(candidate.card_status)}${candidate.interruptions.length > 0 ? " ⚠" : ""}`}
+      notices={<>{stoppedNotice}{workstationNotice}{workstationMatches && items.isError && <p className="error">{errorMessage(items.error)}</p>}</>} />;
+  }
+  // A DDS card of a service with terminal statuses (ADR-030) is drawn as
+  // the ARM-112 card with its own × back to the list; the old pilot
+  // services keep the plain layout and its header.
+  const ddsArm = !is112 && !!item.data && item.data.exercise_type !== "operator112_intake" && (item.data.terminal_statuses ?? []).length > 0;
+
   return (
     <section className="trainee-workplace">
-      {!(selectedItemId && run.data.exercise_type === "operator112_intake") && <header className="workplace-header">
+      {!(selectedItemId && (is112 || ddsArm)) && <header className="workplace-header">
         <div>
 		  <p className="workplace-kicker">Рабочее место {run.data.exercise_type === "operator112_intake" ? "112" : "ДДС"} · РМ-{run.data.workstation_no}</p>
 		  <h1>{selectedItemId ? run.data.exercise_type === "operator112_intake" ? "Входящий вызов" : "Карточка происшествия" : run.data.lesson.title}</h1>
@@ -129,28 +151,15 @@ export function WorkplaceRoute() {
           <dt>Режим</dt><dd>{run.data.mode === "intro" ? "ознакомительный" : "тренировка"}</dd>
         </dl>
       </header>}
-      {run.data.lesson.state === "stopped" && (
-        <p role="alert" className="notice">Занятие остановлено преподавателем{run.data.lesson.stop_reason ? `: ${run.data.lesson.stop_reason}` : ""}. Открытые карточки прерываются фоново.</p>
-      )}
-      {!workstationMatches && (
-        <p role="alert" className="error">Занятие назначено на РМ-{run.data.workstation_no}. Войдите на этом рабочем месте.</p>
-      )}
+      {stoppedNotice}
+      {workstationNotice}
       {workstationMatches && items.isError && <p className="error">{errorMessage(items.error)}</p>}
-      {workstationMatches && !selectedItemId && items.data && (
-        <IncidentQueue
-          items={items.data}
-          search={queueSearch}
-          onSearch={setQueueSearch}
-          onOpen={setSelectedItemId}
-          exerciseType={run.data.exercise_type}
-        />
-      )}
       {workstationMatches && selectedItemId && (
         <>
-		  {!isCardOnly(item.data) && <button type="button" className={`back-to-queue${run.data.exercise_type === "operator112_intake" ? " intake-back-to-queue" : ""}`} onClick={() => setSelectedItemId("")}>← К списку {run.data.exercise_type === "operator112_intake" ? "вызовов" : "происшествий"}</button>}
+		  {!isCardOnly(item.data) && !ddsArm && <button type="button" className={`back-to-queue${run.data.exercise_type === "operator112_intake" ? " intake-back-to-queue" : ""}`} onClick={() => setSelectedItemId("")}>← К списку {run.data.exercise_type === "operator112_intake" ? "вызовов" : "происшествий"}</button>}
           {item.isPending && <p>Загрузка карточки…</p>}
           {item.isError && <p className="error">{errorMessage(item.error)}</p>}
-		  {item.data && (item.data.exercise_type === "operator112_intake" ? <Operator112Workplace key={item.data.id} me={me} item={item.data as unknown as IntakeItem} onClose={() => setSelectedItemId("")} /> : <ItemWorkplace key={item.data.id} me={me} item={item.data as DDSItem} />)}
+		  {item.data && (item.data.exercise_type === "operator112_intake" ? <Operator112Workplace key={item.data.id} me={me} item={item.data as unknown as IntakeItem} acceptOnOpen={acceptItemId === item.data.id} onClose={() => setSelectedItemId("")} /> : <ItemWorkplace key={item.data.id} me={me} item={item.data as DDSItem} onClose={() => setSelectedItemId("")} />)}
         </>
       )}
     </section>
@@ -177,83 +186,7 @@ function Waiting({ me }: { me: Me }) {
   );
 }
 
-function IncidentQueue({
-  items,
-  search,
-  onSearch,
-  onOpen,
-  exerciseType,
-}: {
-  items: NonNullable<ReturnType<typeof useMyItems>["data"]>;
-  search: string;
-  onSearch: (value: string) => void;
-  onOpen: (id: string) => void;
-  exerciseType: string;
-}) {
-  const needle = search.trim().toLocaleLowerCase("ru-RU");
-  const visibleItems = needle === ""
-    ? items
-    : items.filter((candidate) => [candidate.card_number, candidate.incident_type, candidate.address_short]
-      .filter(Boolean)
-      .some((value) => value?.toLocaleLowerCase("ru-RU").includes(needle)));
-
-  return (
-    <section className="incident-queue" aria-labelledby="queue-title">
-      <header className="incident-queue-header">
-        <div>
-          <h2 id="queue-title">Список {exerciseType === "operator112_intake" ? "входящих кейсов" : "происшествий"}</h2>
-          <p>{items.length === 0 ? exerciseType === "operator112_intake" ? "Входящих кейсов пока нет." : "Новых карточек пока нет." : `Показано: ${visibleItems.length} из ${items.length}`}</p>
-        </div>
-        <label className="queue-search">
-          <span>Поиск {exerciseType === "operator112_intake" ? "кейсов" : "происшествий"}</span>
-          <input
-            type="search"
-            value={search}
-            placeholder="Номер, тип или адрес"
-            onChange={(event) => onSearch(event.target.value)}
-          />
-        </label>
-      </header>
-      <div className="incident-queue-table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Номер</th>
-              <th>Время</th>
-              <th>Тип происшествия</th>
-              <th>Адрес</th>
-              <th>Статус службы</th>
-              {exerciseType !== "operator112_intake" && <th>Статус карточки</th>}
-              <th aria-label="Открыть карточку" />
-            </tr>
-          </thead>
-          <tbody>
-            {visibleItems.map((candidate) => (
-              <tr key={candidate.id} className={candidate.state === "offered" ? "incident-queue-new" : undefined}>
-                <td><strong>№ {candidate.card_number}</strong>{candidate.state === "offered" && <span className="queue-new-mark">новая</span>}</td>
-                <td>{formatQueueTime(candidate.offered_at)}</td>
-                <td>{candidate.incident_type ?? "—"}</td>
-                <td>{candidate.address_short ?? "—"}</td>
-				<td>{candidate.exercise_type === "operator112_intake" ? candidate.call_status === "not_applicable" ? candidate.state === "closed" ? "Кейс завершён" : candidate.state === "offered" ? "Кейс ожидает открытия" : "Оформление карт" : candidate.call_status === "ringing" ? "Ожидает ответа" : candidate.call_status === "connected" ? "Разговор" : candidate.dispatched ? "Направлена" : "Разговор окончен" : reactionLabel(candidate.reaction)}{candidate.interruptions.length > 0 && " · ⚠"}</td>
-                {exerciseType !== "operator112_intake" && <td><CardStatusBadge status={candidate.card_status} /></td>}
-                <td><button type="button" className="queue-open" onClick={() => onOpen(candidate.id)}>Открыть карточку № {candidate.card_number}</button></td>
-              </tr>
-            ))}
-            {visibleItems.length === 0 && (
-              <tr><td colSpan={exerciseType === "operator112_intake" ? 6 : 7} className="queue-empty">По этому запросу {exerciseType === "operator112_intake" ? "кейсов" : "происшествий"} нет.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-function formatQueueTime(value: string): string {
-  return new Date(value).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
-function ItemWorkplace({ me, item }: { me: Me; item: DDSItem }) {
+function ItemWorkplace({ me, item, onClose }: { me: Me; item: DDSItem; onClose?: () => void }) {
   const queryClient = useQueryClient();
   const [storage] = useState(() => availableLocalStorage());
   const [pending, setPending] = useState<PendingCommand | null>(() => storage ? loadPending(storage, me.user.id, item.id) : null);
@@ -330,6 +263,45 @@ function ItemWorkplace({ me, item }: { me: Me; item: DDSItem }) {
   const legacy = terminalStatuses.length === 0;
   const editable = legacy && !finished && (item.reaction === "received" || item.reaction === "not_accepted");
   const closable = legacy && !finished && ["accepted", "not_accepted", "completed", "completed_without_team"].includes(item.reaction);
+
+  const serverNowMs = clockAnchor.server + clientNow - clockAnchor.client;
+  const interruptedNotice = item.interruptions.length > 0 && (
+    <p role="alert" className="notice">
+      Карточка была прервана перезапуском сервера ({item.interruptions.length}×, последний раз {formatDateTime(item.interruptions[item.interruptions.length - 1].detected_at)}). Норматив времени по ней не учитывается.
+    </p>
+  );
+  const feedback = <>
+    {!storage && <p role="alert" className="error">Локальное хранилище недоступно: автоматическое восстановление команды после сбоя не гарантируется.</p>}
+    {pending && <p className="notice">Команда отправляется…</p>}
+    {pending && commandError && <button type="button" onClick={() => void deliver(pending)}>Повторить отправку</button>}
+    {commandError && <p role="alert" className="error">{errorMessage(commandError)}</p>}
+    {rejected && <p role="alert" className="error">{rejected}</p>}
+    {receipt?.outcome === "applied" && <p>Действие сохранено{receipt.replayed ? " (восстановлено)" : ""}.</p>}
+  </>;
+
+  if (!legacy) {
+    return (
+      <section className="dds-workplace dds-arm-workplace">
+        {interruptedNotice}
+        <div className={`dds-arm-layout${open ? " is-offered" : ""}`}>
+          <DDSArmCard item={item} serverNowMs={serverNowMs} opening={!!pending} onOpen={() => send("open", {})} onClose={() => onClose?.()}
+            statusSlot={<ServiceStatusBlock compact item={item} terminalStatuses={terminalStatuses} disabled={!!pending || finished} onSave={(status, text) => send("set_status", text ? { status, comment: text } : { status })} />}
+            comms={<CrewCommsPanel
+            item={item}
+            serverNowMs={serverNowMs}
+            disabled={!!pending || finished}
+            onAnswer={(eventKey) => send("answer_incoming", { event_key: eventKey })}
+            onEndIncoming={(callId) => send("call_end", { call_id: callId, accepted_by: "", summary: "", recording: null })}
+            phone={finished ? undefined : <PhonePanel item={item} onChanged={refresh} />} />}
+            footer={<div className="arm112-feedback dds-arm-feedback" aria-live="polite">
+              {finished && <p className="notice">{item.state === "interrupted" ? "Карточка прервана окончанием занятия." : "Упражнение завершено."}</p>}
+              {feedback}
+            </div>} />
+        </div>
+        {finished && <ControlReportForm pending={!!pending} onSend={(text) => send("control_report", { text })} />}
+      </section>
+    );
+  }
 
   return (
     <section className="dds-workplace">
@@ -737,7 +709,8 @@ function statusHistory(item: DDSItem): StatusEntry[] {
 // list (ADR-030): its current reaction status, the ▾ history of saved
 // statuses with their comments, and the ✎ pencil that saves the next
 // status together with its comment.
-function ServiceStatusBlock({ item, terminalStatuses, disabled, onSave }: {
+function ServiceStatusBlock({ item, terminalStatuses, disabled, onSave, compact }: {
+  compact?: boolean;
   item: DDSItem;
   terminalStatuses: string[];
   disabled: boolean;
@@ -763,7 +736,7 @@ function ServiceStatusBlock({ item, terminalStatuses, disabled, onSave }: {
   return (
     <div className="dds-service-block">
       <div className="dds-service-block-head">
-        <span>{reactionLabel(item.reaction)}{last ? ` · ${formatDateTime(last.at)}` : ""}</span>
+        <span>{reactionLabel(item.reaction)}{last && !compact ? ` · ${formatDateTime(last.at)}` : ""}</span>
         {history.length > 0 && (
           <button type="button" className="dds-service-history-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
             {expanded ? "▴ Скрыть историю" : "▾ История статусов"}

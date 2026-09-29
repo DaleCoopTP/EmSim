@@ -54,16 +54,12 @@ function TimingSettings({ lesson, draft }: { lesson: Lesson; draft: boolean }) {
   );
 }
 
-const weightSumTolerance = 0.01;
-
 function ScoringSettings({ lesson, draft }: { lesson: Lesson; draft: boolean }) {
   const queryClient = useQueryClient();
   const rubric = useLessonRubric(lesson.id);
-  const [weightEdits, setWeightEdits] = useState<Record<string, string> | null>(null);
   const [thresholdEdit, setThresholdEdit] = useState<string | null>(null);
 
   const invalidate = async () => {
-    setWeightEdits(null);
     setThresholdEdit(null);
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: lessonQueryKey(lesson.id) }),
@@ -82,64 +78,33 @@ function ScoringSettings({ lesson, draft }: { lesson: Lesson; draft: boolean }) 
   if (rubric.isPending) return <p>Загрузка рубрики…</p>;
   if (rubric.isError) return <p className="error">{errorMessage(rubric.error)}</p>;
   const data = rubric.data;
-  const weightText = (id: string, current: number) => weightEdits?.[id] ?? String(current);
   const thresholdText = thresholdEdit ?? String(data.pass_threshold);
-  const sum = data.criteria.reduce((total, c) => total + Number(weightText(c.id, c.weight)), 0);
-  const weightsValid = data.criteria.every((c) => {
-    const w = Number(weightText(c.id, c.weight));
-    return Number.isFinite(w) && w >= 0;
-  });
   const threshold = Number(thresholdText);
   const thresholdValid = thresholdText.trim() !== "" && Number.isFinite(threshold) && threshold >= 0 && threshold <= 100;
-  const sumValid = Math.abs(sum - 100) <= weightSumTolerance;
-  const dirty = weightEdits !== null || thresholdEdit !== null;
   const custom = lesson.scoring != null;
 
+  // Criterion weights belong to the scenario (user decision 2026-09-29,
+  // ADR-035 amendment): the lesson sets only the pass threshold. The API
+  // still takes a complete weight set, so the current ones are resent.
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
-    save.mutate({
-      weights: Object.fromEntries(data.criteria.map((c) => [c.id, Number(weightText(c.id, c.weight))])),
-      pass_threshold: threshold,
-    });
+    save.mutate({ weights: Object.fromEntries(data.criteria.map((c) => [c.id, c.weight])), pass_threshold: threshold });
   };
 
   return (
     <form className="lesson-form lesson-scoring-settings" onSubmit={onSubmit}>
-      <h2>Оценивание</h2>
-      <p className="notice">
-        Рубрика {data.rubric_version}. {custom ? "Веса и порог заданы преподавателем." : "Используются веса и порог рубрики."}
-        {" "}Веса сценария переопределяются весами занятия; отключённые и критические критерии сценария продолжают действовать.
-      </p>
-      <div className="arm-table-wrap">
-        <table>
-          <thead><tr><th>Критерий</th><th>Тип</th><th>Вес по рубрике</th><th>Вес занятия</th></tr></thead>
-          <tbody>{data.criteria.map((c) => (
-            <tr key={c.id}>
-              <td>{c.title || c.id}{c.critical ? " ⚠" : ""}</td>
-              <td>{c.kind === "llm" ? "ИИ" : c.kind === "manual" ? "ручной" : "правила"}</td>
-              <td>{c.default_weight}</td>
-              <td>{draft
-                ? <input type="number" min={0} step="any" aria-label={`Вес: ${c.title || c.id}`} value={weightText(c.id, c.weight)}
-                    onChange={(event) => setWeightEdits({ ...Object.fromEntries(data.criteria.map((x) => [x.id, weightText(x.id, x.weight)])), [c.id]: event.target.value })} />
-                : c.weight}</td>
-            </tr>
-          ))}</tbody>
-          <tfoot><tr><td colSpan={3}>Сумма весов</td><td className={sumValid ? "" : "error"}>{Number.isFinite(sum) ? Math.round(sum * 100) / 100 : "—"} / 100</td></tr></tfoot>
-        </table>
-      </div>
-      <label>Порог зачёта, баллов (по рубрике — {data.default_pass_threshold})
+      <h2>Порог зачёта</h2>
+      <label>Порог зачёта, баллов из 100 (по умолчанию — {data.default_pass_threshold})
         {draft
           ? <input type="number" min={0} max={100} step="any" value={thresholdText} onChange={(event) => setThresholdEdit(event.target.value)} />
           : <strong> {data.pass_threshold}</strong>}
       </label>
-      {draft && !sumValid && weightsValid && <p role="alert" className="error">Сумма весов должна быть 100.</p>}
-      {draft && !weightsValid && <p role="alert" className="error">Вес — неотрицательное число.</p>}
       {draft && !thresholdValid && <p role="alert" className="error">Порог — число от 0 до 100.</p>}
       {(save.isError || reset.isError) && <p role="alert" className="error">{errorMessage(save.error ?? reset.error)}</p>}
       {draft && (
         <p>
-          <button type="submit" className="arm-secondary-action" disabled={!dirty || !weightsValid || !sumValid || !thresholdValid || save.isPending}>Сохранить оценивание</button>{" "}
-          <button type="button" disabled={(!custom && !dirty) || reset.isPending} onClick={() => reset.mutate()}>Сбросить к рубрике</button>
+          <button type="submit" className="arm-secondary-action" disabled={thresholdEdit === null || !thresholdValid || save.isPending}>Сохранить порог</button>{" "}
+          <button type="button" disabled={!custom || reset.isPending} onClick={() => reset.mutate()}>Сбросить</button>
         </p>
       )}
     </form>

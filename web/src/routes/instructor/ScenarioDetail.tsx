@@ -16,7 +16,7 @@ import {
 import { errorMessage } from "../../api/errors";
 import type { Me } from "../../api/useMe";
 import { IncidentCard } from "../../components/IncidentCard";
-import { IntakeReferenceView, type IntakeReferenceLike } from "../../components/IntakeReferenceView";
+import { IntakeReferenceCard, type IntakeReferenceLike } from "../../components/IntakeReferenceCard";
 import { formatDateTime } from "../../format";
 import { reactionLabel, scenarioStatusLabel, versionStatusLabel } from "../../labels";
 
@@ -175,43 +175,33 @@ function Operator112ScenarioDetail({ s, me, onNavigate }: { s: Scenario; me: Me;
         <p className="error">Черновик содержит {errorCount} блокирующих ошибок проверки — откройте редактор, чтобы их устранить.</p>
       )}
 
+      <section className="scenario-reference-pane scenario-reference-card">
+        <h2>Эталон: карточка после обработки вызова</h2>
+        <IntakeReferenceCard reference={intake.reference} catalog={catalog.data} aon={intake.call?.aon} localTime={intake.call?.local_time}
+          facts={intake.dialogue?.facts} withCall={intake.mode !== "card_only"} />
+      </section>
+
       <div className="scenario-review-grid">
-        {intake.call && (
-          <section className="scenario-reference-pane">
-            <h2>{intake.mode === "full_case" ? "Вызов" : "Подготовленный вызов"}</h2>
-            <p>АОН: {intake.call.aon} · {intake.call.local_time} МСК</p>
-            {intake.call.script && <ol>{intake.call.script.map((line, index) => <li key={index}>{line}</li>)}</ol>}
-          </section>
-        )}
         <section className="scenario-reference-pane">
-          <h2>Эталон для преподавателя</h2>
+          <h2>Ситуация для преподавателя</h2>
           <dl>
-            {intake.reference.expected_types && <><dt>Ожидаемые типы</dt><dd>{intake.reference.expected_types.join(", ") || "—"}</dd></>}
-            {intake.reference.expected_services && <><dt>Ожидаемые службы</dt><dd>{intake.reference.expected_services.join(", ") || "—"}</dd></>}
             {intake.reference.case_description && <><dt>Описание ситуации</dt><dd>{intake.reference.case_description}</dd></>}
             {intake.reference.recipient_service && <><dt>Адресат</dt><dd>{intake.reference.recipient_service}</dd></>}
-            {intake.reference.description_questions && intake.reference.description_questions.length > 0 ? (
-              <><dt>Вопросы к описанию (ADR-028)</dt><dd><ul>{intake.reference.description_questions.map((q) => <li key={q.id}>{q.question}</li>)}</ul></dd></>
-            ) : (
-              <><dt>Вопросы к описанию (ADR-028)</dt><dd>Не заданы — блок DESCRIPTION_CONTENT/DESCRIPTION_PRESENT получит 0.</dd></>
-            )}
+            {!(intake.reference.description_questions && intake.reference.description_questions.length > 0) &&
+              <><dt>Вопросы к описанию (ADR-028)</dt><dd>Не заданы — блок DESCRIPTION_CONTENT/DESCRIPTION_PRESENT получит 0.</dd></>}
+            {!intake.reference.expected_card && <><dt>Эталон карточки</dt><dd>Не задан — блок адреса получит 0.</dd></>}
+            {!intake.reference.expected_profiles && <><dt>Эталон профильных карт</dt><dd>Не задан — блок карт получит 0.</dd></>}
           </dl>
-          <IntakeReferenceView reference={intake.reference} catalog={catalog.data} />
         </section>
+        {intake.call?.script && (
+          <section className="scenario-reference-pane">
+            <h2>Подготовленный вызов</h2>
+            <ol>{intake.call.script.map((line, index) => <li key={index}>{line}</li>)}</ol>
+          </section>
+        )}
       </div>
 
-      {intake.dialogue && intake.dialogue.facts.length > 0 && (
-        <section className="scenario-reference-pane">
-          <h2>Факты заявителя</h2>
-          {intake.dialogue.caller && <p>Персона: {intake.dialogue.caller.persona}. Вступление: «{intake.dialogue.caller.opening.text}»</p>}
-          <table>
-            <thead><tr><th>Название</th><th>card_path</th><th>Знание</th><th>Значение</th></tr></thead>
-            <tbody>{intake.dialogue.facts.map((fact) => (
-              <tr key={fact.id}><td>{fact.label || fact.id}</td><td>{fact.card_path ?? "—"}</td><td>{fact.knowledge}</td><td>{fact.value ?? "—"}</td></tr>
-            ))}</tbody>
-          </table>
-        </section>
-      )}
+      {intake.dialogue && intake.dialogue.facts.length > 0 && <CallerKnowledge dialogue={intake.dialogue} />}
 
       <div className="scenario-editor-actions">
         {eligible && <button type="button" disabled={createMutation.isPending} onClick={copy}>Копировать в свой черновик</button>}
@@ -226,6 +216,29 @@ function Operator112ScenarioDetail({ s, me, onNavigate }: { s: Scenario; me: Me;
 
       <VersionsBlock scenarioId={scenarioId} />
     </section>
+  );
+}
+
+const knowledgeLabels: Record<string, string> = { initial: "сообщает сразу", on_question: "на вопрос", unknown: "не знает" };
+
+// CallerKnowledge is the AI caller's own brief: persona, opening line and
+// what the caller knows. A fact with a card_path is already drawn in the
+// reference card above, so only the rest is listed — what the caller can
+// tell beyond the card, and what they do not know at all.
+function CallerKnowledge({ dialogue }: { dialogue: NonNullable<Intake112DisplayBody["intake112"]["dialogue"]> }) {
+  const extra = dialogue.facts.filter((fact) => !fact.card_path || fact.knowledge === "unknown");
+  return (
+    <details className="scenario-reference-pane caller-knowledge">
+      <summary>Что знает заявитель{extra.length ? ` · сведений вне карточки: ${extra.length}` : ""}</summary>
+      {dialogue.caller && <p>{dialogue.caller.persona}</p>}
+      {dialogue.caller && <p>Первая фраза: «{dialogue.caller.opening.text}»</p>}
+      {extra.length > 0 ? <table>
+        <thead><tr><th>Сведение</th><th>Когда сообщает</th><th>Что говорит</th></tr></thead>
+        <tbody>{extra.map((fact) => (
+          <tr key={fact.id}><td>{fact.label || fact.id}</td><td>{knowledgeLabels[fact.knowledge] ?? fact.knowledge}</td><td>{fact.knowledge === "unknown" ? "—" : fact.value ?? "—"}</td></tr>
+        ))}</tbody>
+      </table> : <p>Всё, что знает заявитель, уже отражено в эталонной карточке.</p>}
+    </details>
   );
 }
 

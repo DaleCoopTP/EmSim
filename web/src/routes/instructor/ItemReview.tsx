@@ -7,10 +7,15 @@ import { errorMessage } from "../../api/errors";
 import type { components } from "../../api/schema";
 import { formatDateTime } from "../../format";
 import { cardStatusLabel, reactionLabel } from "../../labels";
-import { expectedProfileText, profileFieldVisible } from "../../intakeProfile";
 import { IntakeAutoAssessment, isPenaltyCriterion, criterionStatusLabels, type RubricEffectiveCriterion } from "../../components/IntakeAutoAssessment";
 import { CriteriaTable } from "../../components/CriteriaTable";
 import { MicIcon } from "../../components/Arm112Icons";
+import { IntakeFinalCard } from "../../components/IntakeFinalCard";
+import { IntakeReferenceCard, type IntakeReferenceLike } from "../../components/IntakeReferenceCard";
+import { armCardNumber } from "../../arm112Number";
+import { IncidentCard } from "../../components/IncidentCard";
+import type { CardView } from "../../api/workplace";
+import type { IntakeCatalog } from "../trainee/Operator112Workplace";
 import "../../dictation.css";
 
 type CriterionStatus = CriterionResult["status"];
@@ -58,10 +63,130 @@ export function ItemReviewRoute() {
   const evidence = detail.evidence;
   const stale = mutation.error instanceof ApiError && mutation.error.code === "stale_revision";
   const autoCriteria = detail.final?.kind === "auto" ? detail.final.criteria : detail.revisions.find((r) => r.kind === "auto")?.criteria ?? [];
+  const intakeMode = (item.data as unknown as IntakeReviewItem).intake_state?.mode ?? (evidence as unknown as IntakeReviewEvidence).intake_state?.mode;
+  // card_only/full_case cases (112-3 onwards) get the sectioned ARM-112 review;
+  // DDS and the pre-112-3 incoming_call cases keep the plain page below.
+  const sectioned = isIntake && (intakeMode === "card_only" || intakeMode === "full_case");
+  const autoRevision = detail.revisions.find((r) => r.kind === "auto");
+  const expertRevision = detail.final?.kind === "expert" ? detail.final : undefined;
+  const autoText = autoRevision
+    ? autoRevision.score != null ? autoRevision.score.toFixed(1) : "требует проверки преподавателем"
+    : detail.automatic_state === "failed" || detail.automatic_state === "dead_letter" ? "не удалась"
+      : detail.automatic_state ? "выполняется…" : "нет";
+  const revisionsList = <ol>{detail.revisions.map((revision) => <li key={revision.id}>rev {revision.revision} · {revision.kind} · {revision.status} · {formatDateTime(revision.created_at)}{revision.reason ? ` — ${revision.reason}` : ""}</li>)}</ol>;
+  const expertForm = <form className="lesson-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
+      {!sectioned && isIntake && <h2>Экспертная оценка</h2>}
+      {isIntake ? <>
+        <p>Утвердите полученное распределение баллов</p>
+        <table><thead><tr><th>Критерий</th><th>Баллы</th></tr></thead><tbody>{sourceCriteria.map((criterion) => {
+          const rc = rubricByID[criterion.id];
+          const penalty = isPenaltyCriterion(rubricByID, criterion.id);
+          const weight = rc?.weight ?? criterion.weight;
+          const defaultPoints = penalty ? criterion.penalty_points ?? 0 : criterion.score != null ? round2(criterion.score * weight) : 0;
+          const value = pointsChanges[criterion.id] ?? defaultPoints;
+          return <tr key={criterion.id}><td>{rc?.title ?? criterion.id}{criterion.critical ? " · критичный" : ""}</td>
+            <td><input type="number" step="0.01" min={0} max={penalty ? undefined : weight} value={value}
+              onChange={(event) => setPointsChanges({ ...pointsChanges, [criterion.id]: Number(event.target.value) })} />
+              {penalty ? " баллов штрафа" : ` из ${weight}`}</td>
+          </tr>;
+        })}</tbody></table>
+      </> : <>
+        <p>Утвердите полученное распределение баллов</p>
+        <table><thead><tr><th>Критерий</th><th>Статус</th></tr></thead><tbody>{sourceCriteria.map((criterion) => <tr key={criterion.id}><td>{rubricByID[criterion.id]?.title ?? criterion.id}</td><td><select value={changes[criterion.id] ?? (criterion.status === "unavailable" ? "not_met" : criterion.status)} onChange={(event) => setChanges({ ...changes, [criterion.id]: event.target.value as CriterionStatus })}>{manualStatuses.map((status) => <option key={status} value={status}>{labels[status]}</option>)}</select></td></tr>)}</tbody></table>
+      </>}
+      <label>Причина<textarea required minLength={3} maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+      <label>Итоговый балл (необязательно)<input type="number" min="0" max="100" step="0.01" value={override} onChange={(event) => setOverride(event.target.value)} /></label>
+      {stale && <p role="alert" className="error">Оценка изменилась, обновите страницу.</p>}
+      {mutation.isError && !stale && <p role="alert" className="error">{errorMessage(mutation.error)}</p>}
+      <p><button type="submit" disabled={mutation.isPending || sourceCriteria.length === 0}>Сохранить экспертную оценку</button></p>
+    </form>;
+
+  if (sectioned) {
+    const intakeItem = item.data as unknown as IntakeReviewItem;
+    return <section className="item-review">
+      <p><Link to="/instructor/lessons">← К занятиям</Link></p>
+      <h1>Разбор карточки № {armCardNumber(item.data.card_number)}</h1>
+      <div className="review-summary">
+        <p>Автооценка: <strong>{autoText}</strong></p>
+        {expertRevision && <p>Экспертная оценка: <strong>{expertRevision.score != null ? expertRevision.score.toFixed(1) : "—"}</strong></p>}
+        {detail.final?.model ? <p>Модель судьи: {detail.final.model}</p> : null}
+      </div>
+      <ReviewSection title="Предварительный результат" open>
+        <IntakeAutoAssessment criteria={autoCriteria} rubricCriteria={rubricByID} />
+      </ReviewSection>
+      <IntakeProfileReviewSections item={intakeItem} evidence={evidence as unknown as IntakeReviewEvidence} />
+      <ReviewSection title="Экспертная оценка">
+        {expertForm}
+      </ReviewSection>
+    </section>;
+  }
+
+  if (!isIntake) {
+    type DDSEvidenceAction = NonNullable<typeof evidence.actions>[number];
+    const actions = (evidence.actions ?? []) as DDSEvidenceAction[];
+    const card = item.data.card as unknown as CardView;
+    return <section className="item-review">
+      <p><Link to="/instructor/lessons">← К занятиям</Link></p>
+      <h1>Разбор карточки № {item.data.card_number}</h1>
+      <div className="review-summary">
+        <p>Автооценка: <strong>{autoText}</strong></p>
+        {expertRevision && <p>Экспертная оценка: <strong>{expertRevision.score != null ? expertRevision.score.toFixed(1) : "—"}</strong></p>}
+        {detail.final?.model ? <p>Модель судьи: {detail.final.model}</p> : null}
+        {item.data.card_status ? <p>Статус карточки: <strong>{cardStatusLabel(item.data.card_status)}</strong></p> : null}
+      </div>
+      <ReviewSection title="Автоматическая проверка" open>
+        <CriteriaTable criteria={autoCriteria} rubricByID={rubricByID} />
+      </ReviewSection>
+      <ReviewSection title="Карточка и эталон">
+        <div className="dds-review-grid">
+          <div>
+            <h3>Карточка, полученная обучаемым</h3>
+            <IncidentCard card={card} />
+          </div>
+          <div>
+            <h3>Эталон отработки</h3>
+            <DDSReferenceView reference={item.data.reference} contacts={card.contacts ?? []} />
+            <DDSStatusHistory actions={actions as DDSReviewAction[]} />
+          </div>
+        </div>
+      </ReviewSection>
+      <ReviewSection title="Связь с бригадой">
+        <DDSCommsReview item={item.data} />
+        {evidence.calls?.length ? <table className="dds-review-table">
+          <thead><tr><th>Время</th><th>Контакт</th><th>Направление</th><th>Кто принял</th><th>Суть сообщения</th><th>Запись</th></tr></thead>
+          <tbody>{evidence.calls.map((call) => <tr key={call.call_id}>
+            <td>{formatDateTime(call.started_at)}</td>
+            <td>{card.contacts?.find((contact) => contact.key === call.contact_key)?.label ?? call.contact_key}</td>
+            <td>{(call as { direction?: string }).direction === "incoming" ? "входящий" : "исходящий"}</td>
+            <td>{call.accepted_by || "—"}</td>
+            <td>{call.summary || (call.ended_at ? "—" : "не завершён")}</td>
+            <td>{call.recording_sha256 ? <audio controls src={`/api/v1/items/${encodeURIComponent(itemId)}/calls/${encodeURIComponent(call.call_id)}/recording`} /> : "нет"}</td>
+          </tr>)}</tbody>
+        </table> : <p>Звонков нет.</p>}
+      </ReviewSection>
+      <ReviewSection title="Журнал">
+        <table className="dds-review-table">
+          <thead><tr><th>Время</th><th>Действие</th><th>Результат</th></tr></thead>
+          <tbody>{actions.map((action) => <tr key={action.action_id} className={action.accepted ? undefined : "is-rejected"}>
+            <td>{formatDateTime(action.server_at)}</td>
+            <td>{ddsActionText(action, card.contacts ?? [])}</td>
+            <td>{action.accepted ? "выполнено" : "отклонено системой"}</td>
+          </tr>)}</tbody>
+        </table>
+        {evidence.comments?.length ? <><h3>Комментарии</h3><ul>{evidence.comments.map((comment) => <li key={comment.seq}>{comment.text}</li>)}</ul></> : null}
+      </ReviewSection>
+      <ReviewSection title="Экспертная оценка">
+        <h3>История оценок</h3>
+        <ol>{detail.revisions.map((revision) => <li key={revision.id}>{revision.kind === "auto" ? "Автооценка" : "Экспертная оценка"} · {revision.score != null ? revision.score.toFixed(1) : "без балла"} · {formatDateTime(revision.created_at)}{revision.reason ? ` — ${revision.reason}` : ""}</li>)}</ol>
+        {expertForm}
+      </ReviewSection>
+    </section>;
+  }
+
   return <section>
     <p><Link to="/instructor/lessons">← К занятиям</Link></p>
     <h1>Разбор карточки № {item.data.card_number}</h1>
-	<p>Автооценка: {detail.automatic_state ?? "нет"}; итог: {detail.final ? `${detail.final.status}${detail.final.score == null ? "" : ` · ${detail.final.score.toFixed(1)}`}` : "ещё нет"}</p>
+	<p>Автооценка: {autoText}{expertRevision ? ` · экспертная оценка: ${expertRevision.score != null ? expertRevision.score.toFixed(1) : "—"}` : ""}</p>
 	{detail.final?.model ? <p>Модель судьи: {detail.final.model}</p> : null}
 	{isIntake ? <>
 		<h2>Автоматическая оценка</h2>
@@ -83,34 +208,17 @@ export function ItemReviewRoute() {
     {evidence.events?.length ? <><h3>События</h3><ul>{evidence.events.map((event) => <li key={event.key}>{event.key}: {event.state}{event.late ? " (поздно)" : ""}</li>)}</ul></> : null}
 	{!isIntake && (evidence.calls?.length ? <><h3>Звонки</h3>{evidence.calls.map((call) => <div key={call.call_id}><p>{call.contact_key}{(call as { direction?: string }).direction === "incoming" ? " (входящий)" : ""}: {call.accepted_by ?? "не завершён"} — {call.summary ?? ""}</p>{call.recording_sha256 && <audio controls src={`/api/v1/items/${encodeURIComponent(itemId)}/calls/${encodeURIComponent(call.call_id)}/recording`} />}</div>)}</> : <p>Звонков нет.</p>)}
     <h2>История ревизий</h2>
-    <ol>{detail.revisions.map((revision) => <li key={revision.id}>rev {revision.revision} · {revision.kind} · {revision.status} · {formatDateTime(revision.created_at)}{revision.reason ? ` — ${revision.reason}` : ""}</li>)}</ol>
-    <form className="lesson-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
-      <h2>Экспертная оценка</h2>
-      {isIntake ? <>
-        <p>Для блоков укажите набранные баллы (из максимума блока), для штрафов — начисленные штрафные баллы.</p>
-        <table><thead><tr><th>Критерий</th><th>Баллы</th></tr></thead><tbody>{sourceCriteria.map((criterion) => {
-          const rc = rubricByID[criterion.id];
-          const penalty = isPenaltyCriterion(rubricByID, criterion.id);
-          const weight = rc?.weight ?? criterion.weight;
-          const defaultPoints = penalty ? criterion.penalty_points ?? 0 : criterion.score != null ? round2(criterion.score * weight) : 0;
-          const value = pointsChanges[criterion.id] ?? defaultPoints;
-          return <tr key={criterion.id}><td>{rc?.title ?? criterion.id}{criterion.critical ? " · критичный" : ""}</td>
-            <td><input type="number" step="0.01" min={0} max={penalty ? undefined : weight} value={value}
-              onChange={(event) => setPointsChanges({ ...pointsChanges, [criterion.id]: Number(event.target.value) })} />
-              {penalty ? " баллов штрафа" : ` из ${weight}`}</td>
-          </tr>;
-        })}</tbody></table>
-      </> : <>
-        <p>«Не проверено» нужно разрешить вручную, прежде чем сохранить итог.</p>
-        <table><thead><tr><th>Критерий</th><th>Статус</th></tr></thead><tbody>{sourceCriteria.map((criterion) => <tr key={criterion.id}><td>{rubricByID[criterion.id]?.title ?? criterion.id}</td><td><select value={changes[criterion.id] ?? (criterion.status === "unavailable" ? "not_met" : criterion.status)} onChange={(event) => setChanges({ ...changes, [criterion.id]: event.target.value as CriterionStatus })}>{manualStatuses.map((status) => <option key={status} value={status}>{labels[status]}</option>)}</select></td></tr>)}</tbody></table>
-      </>}
-      <label>Причина<textarea required minLength={3} maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
-      <label>Итоговый балл (необязательно)<input type="number" min="0" max="100" step="0.01" value={override} onChange={(event) => setOverride(event.target.value)} /></label>
-      {stale && <p role="alert" className="error">Оценка изменилась, обновите страницу.</p>}
-      {mutation.isError && !stale && <p role="alert" className="error">{errorMessage(mutation.error)}</p>}
-      <p><button type="submit" disabled={mutation.isPending || sourceCriteria.length === 0}>Сохранить экспертную оценку</button></p>
-    </form>
+    {revisionsList}
+    {expertForm}
   </section>;
+}
+
+// ReviewSection is one collapsible block of the 112 review page.
+function ReviewSection({ title, open, children }: { title: string; open?: boolean; children: ReactNode }) {
+  return <details className="review-section" open={open}>
+    <summary><h2>{title}</h2></summary>
+    <div className="review-section-body">{children}</div>
+  </details>;
 }
 
 function useItem(itemId: string) { return useQuery({ queryKey: ["training", "item", itemId], queryFn: () => api.get<Item>(`/items/${encodeURIComponent(itemId)}`), enabled: itemId !== "" }); }
@@ -141,9 +249,8 @@ function buildIntakeRevisionCriteria(sourceCriteria: CriterionResult[], rubricCr
 }
 
 
+
 function IntakeReviewPanel({ item, evidence }: { item: IntakeReviewItem; evidence: IntakeReviewEvidence }) {
-  const mode = item.intake_state?.mode ?? evidence.intake_state?.mode;
-  if (mode === "card_only" || mode === "full_case") return <IntakeProfileReviewPanel item={item} evidence={evidence} />;
   const card = evidence.final_card ?? item.card;
   const dispatch = evidence.dispatch ?? item.dispatch;
   const transcript = evidence.intake_state?.transcript ?? item.intake_state?.transcript ?? [];
@@ -173,11 +280,10 @@ function IntakeReviewPanel({ item, evidence }: { item: IntakeReviewItem; evidenc
   </>;
 }
 
-function IntakeProfileReviewPanel({ item, evidence }: { item: IntakeReviewItem; evidence: IntakeReviewEvidence }) {
+function IntakeProfileReviewSections({ item, evidence }: { item: IntakeReviewItem; evidence: IntakeReviewEvidence }) {
   const card = evidence.final_card ?? item.card;
   const state = evidence.intake_state ?? item.intake_state;
   const catalog = state?.catalog;
-  const expectedProfiles = (item.intake_reference as { expected_profiles?: Record<string, Record<string, unknown>> } | undefined)?.expected_profiles;
   const notification = evidence.notification ?? item.notification;
   const isCall = state?.mode === "full_case";
   const transcript = state?.transcript ?? [];
@@ -203,7 +309,6 @@ function IntakeProfileReviewPanel({ item, evidence }: { item: IntakeReviewItem; 
       default: return action.type;
     }
   };
-  const answerText = (answer: { state: string; value?: string; values?: string[] } | undefined) => answer?.state === "known" ? answer.values?.join(", ") ?? answer.value ?? "" : answer?.state === "unknown" ? "неизвестно" : "не заполнено";
   const callerTurns = state?.caller_turns ?? [];
   // 112-5b/ADR-025: source/generation are absent from evidence sealed
   // before this slice (112-5a), so both fall back to showing just the
@@ -220,32 +325,50 @@ function IntakeProfileReviewPanel({ item, evidence }: { item: IntakeReviewItem; 
     if (turn.status === "cancelled") return `Отменён: ${turn.reason === "held" ? "удержание" : turn.reason === "ended" ? "завершение" : turn.reason === "dropped" ? "срыв звонка" : turn.reason ?? "—"}`;
     return "Без ответа на момент остановки";
   };
+  const services = notification ? notification.services.map((entry) => entry.service_code) : state?.service_review?.selected ?? [];
+  const suggested = state?.service_review?.suggested ?? state?.suggested_services ?? [];
+  const reference = item.intake_reference as IntakeReferenceLike | undefined;
+  const reviewCatalog = catalog as unknown as IntakeCatalog | undefined;
   return <>
-    <h2>{isCall ? "Кейс с разговором" : "Кейс без разговора"}</h2>
-    <p>Каталог профилей: версия {catalog?.version ?? "—"}.{!isCall && " Отправка карточки в службу для этого режима не выполняется."}</p>
-    {isCall && <><h3>Разговор с заявителем</h3>
-      <ol>{transcript.map((line, index) => <li key={line.id ?? index}>{formatDateTime(line.server_at)} · {line.speaker === "operator" ? "Оператор" : "Заявитель"}{line.input === "voice" && <span className="voice-mark" title="Надиктовано голосом" role="img" aria-label="надиктовано"><MicIcon size={13} /></span>}: {line.text}</li>)}</ol>
-      {callerTurns.length > 0 && <><h4>Ходы свободного диалога</h4>
-        <ul>{callerTurns.map((turn) => <li key={turn.turn}>Ход {turn.turn} · {formatDateTime(turn.requested_at)} · {turnStatusText(turn)}</li>)}</ul></>}</>}
-    <h3>Последовательность действий</h3><ol>{actions.map((action) => <li key={action.log_seq}>{formatDateTime(action.server_at)} · {actionText(action)}</li>)}</ol>
-    <h3>Итоговая общая карточка</h3><IntakeCardView card={card} />
-    <h3>Выбранные типы</h3><ul>{(card.incident_types ?? []).map((id) => <li key={id}>{typeName(id)}</li>)}</ul>
-    <h3>Активные профильные карты</h3>{catalog?.profiles.filter((profile) => card.profiles?.[profile.id]).map((profile) => <section key={profile.id} className="intake-review-card"><h4>{profile.name}</h4><dl>
-      {profile.fields.filter((field) => profileFieldVisible(field, card.profiles?.[profile.id].answers) || expectedProfiles?.[profile.id]?.[field.id] !== undefined).map((field) => {
-        const expected = expectedProfiles?.[profile.id]?.[field.id];
-        return <div key={field.id}><dt>{field.label}</dt><dd>{field.kind === "shared" ? intakeFieldText(field.shared === "no_on_site" ? card.no_on_site : card.no_access) : answerText(card.profiles?.[profile.id].answers[field.id])}
-          {expected !== undefined && <span className="intake-expected"> · эталон: {expectedProfileText(expected)}</span>}</dd></div>;
-      })}
-    </dl></section>)}
-    <h3>Предложение и итоговый выбор служб</h3>
-    <ul>{state?.service_review?.suggested.map((service) => <li key={service.service_code}>{service.service_code}: {service.reasons.join("; ")}</li>) ?? state?.suggested_services?.map((service) => <li key={service.service_code}>{service.service_code}: {service.reasons.join("; ")}</li>)}</ul>
-    {notification
-      ? <p>Оповещены: {notification.services.map((entry) => `${entry.service_code}${entry.suggested ? "" : " (добавлена вручную)"}`).join(", ") || "—"} · {formatDateTime(notification.notified_at)}{notification.reason ? ` · Причина изменения: ${notification.reason}` : ""}</p>
-      : state?.service_review
-        ? <p>Выбрано: {state.service_review.selected.join(", ") || "—"}{state.service_review.reason ? ` · Причина изменения: ${state.service_review.reason}` : ""}</p>
-        : <p>Оповещение ещё не выполнено.</p>}
-    <details><summary>Эталон кейса</summary><pre>{JSON.stringify(item.intake_reference ?? {}, null, 2)}</pre></details>
+    <ReviewSection title="Заполненная карточка">
+      <IntakeFinalCard card={card} catalog={reviewCatalog} services={services} withCall={isCall} notifiedAt={notification?.notified_at} />
+      <div className="review-services">
+        {notification
+          ? <p>Оповещены: {notification.services.map((entry) => `${entry.service_code}${entry.suggested ? "" : " (добавлена вручную)"}`).join(", ") || "—"} · {formatDateTime(notification.notified_at)}{notification.reason ? ` · Причина изменения: ${notification.reason}` : ""}</p>
+          : state?.service_review
+            ? <p>Выбрано: {state.service_review.selected.join(", ") || "—"}{state.service_review.reason ? ` · Причина изменения: ${state.service_review.reason}` : ""}</p>
+            : <p>Оповещение не выполнено.</p>}
+        {suggested.length > 0 && <><p>Предложение системы:</p><ul>{suggested.map((service) => <li key={service.service_code}>{service.service_code}: {service.reasons.join("; ")}</li>)}</ul></>}
+        <p className="review-muted">Каталог профилей: версия {catalog?.version ?? "—"}.</p>
+      </div>
+    </ReviewSection>
+    <ReviewSection title={isCall ? "Разговор с заявителем" : "Действия обучаемого"}>
+      <div className="review-dialogue">
+        {isCall && <div className="review-chat" aria-label="Транскрипт разговора">
+          {transcript.length === 0 && <p className="review-muted">Реплик нет.</p>}
+          {transcript.map((line, index) => <div key={line.id ?? index} className={`review-chat-line is-${line.speaker === "operator" ? "operator" : "caller"}`}>
+            <span className="review-chat-meta">{line.speaker === "operator" ? "Оператор" : "Заявитель"} · {formatTime(line.server_at)}
+              {line.input === "voice" && <span className="voice-mark" title="Надиктовано голосом" role="img" aria-label="надиктовано"><MicIcon size={13} /></span>}</span>
+            <span className="review-chat-bubble">{line.text}</span>
+          </div>)}
+        </div>}
+        <div className="review-dialogue-side">
+          <h3>Последовательность действий</h3>
+          <ol>{actions.map((action) => <li key={action.log_seq}><span className="review-muted">{formatTime(action.server_at)}</span> {actionText(action)}</li>)}</ol>
+          {callerTurns.length > 0 && <><h3>Ходы свободного диалога</h3>
+            <ul>{callerTurns.map((turn) => <li key={turn.turn}>Ход {turn.turn} · {formatTime(turn.requested_at)} · {turnStatusText(turn)}</li>)}</ul></>}
+        </div>
+      </div>
+    </ReviewSection>
+    <ReviewSection title="Эталон карточки">
+      {reference ? <IntakeReferenceCard reference={reference} catalog={reviewCatalog} aon={card.aon} localTime={card.call_local_time}
+        facts={item.intake_dialogue_reference?.facts} withCall={isCall} /> : <p>Эталон сценария не задан.</p>}
+    </ReviewSection>
   </>;
+}
+
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function cardFieldAt(card: IntakeCard, path: string): IntakeField | undefined {
@@ -303,7 +426,7 @@ function DDSStatusHistory({ actions }: { actions: DDSReviewAction[] }) {
   const saved = actions.filter((action) => action.accepted && action.type === "set_status");
   if (saved.length === 0) return <p>Статусы реагирования не проставлены.</p>;
   return <>
-    <h2>Статусы реагирования</h2>
+    <h4>Статусы, проставленные обучаемым</h4>
     <ol>{saved.map((action) => <li key={action.action_id}>{formatDateTime(action.server_at)} · <strong>{reactionLabel(action.payload?.status)}</strong>{action.payload?.comment ? ` — ${action.payload.comment}` : ""}</li>)}</ol>
   </>;
 }
@@ -342,7 +465,53 @@ function DDSCommsReview({ item }: { item: Item }) {
   if (rows.length === 0) return null;
   rows.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
   return <>
-    <h2>Связь с бригадой</h2>
     <ol>{rows.map((row) => <li key={row.key}>{row.text}</li>)}</ol>
   </>;
+}
+
+const ddsMentionLabels: Record<string, string> = { address: "адрес", incident_type: "тип происшествия", victims: "пострадавшие", reason: "причину", where_passed: "куда передано" };
+
+type DDSReference = { primary_decision?: { status?: string; comment_required?: boolean; comment_must_mention?: string[] | null }; expected_chain?: string[]; call?: { required?: boolean; to?: string; must_mention?: string[]; before_status?: string }; guide_refs?: string[]; notes?: string };
+
+// DDSReferenceView is the scenario's closed answer key in plain words for
+// the instructor: the expected first decision, the status chain, the
+// required call and the guide references (instead of raw JSON).
+function DDSReferenceView({ reference, contacts }: { reference: unknown; contacts: { key: string; label: string }[] }) {
+  const ref = (reference ?? {}) as DDSReference;
+  const status = (value?: string) => reactionLabel(value as components["schemas"]["ReactionStatus"]);
+  const mention = (items?: string[] | null) => (items ?? []).map((item) => ddsMentionLabels[item] ?? item).join(", ");
+  return <dl className="dds-reference">
+    <dt>Первичное решение</dt>
+    <dd>{ref.primary_decision?.status ? status(ref.primary_decision.status) : "не задано"}
+      {ref.primary_decision?.comment_required ? " · комментарий обязателен" : ""}
+      {ref.primary_decision?.comment_must_mention?.length ? ` · в комментарии указать: ${mention(ref.primary_decision.comment_must_mention)}` : ""}</dd>
+    <dt>Цепочка статусов</dt>
+    <dd>{ref.expected_chain?.length ? ref.expected_chain.map(status).join(" → ") : "не задана"}</dd>
+    <dt>Обязательный звонок</dt>
+    <dd>{ref.call?.required
+      ? <>{contacts.find((contact) => contact.key === ref.call?.to)?.label ?? ref.call.to}
+        {ref.call.before_status ? ` — до статуса «${status(ref.call.before_status)}»` : ""}
+        {ref.call.must_mention?.length ? `; сообщить: ${mention(ref.call.must_mention)}` : ""}</>
+      : "не требуется"}</dd>
+    {ref.guide_refs?.length ? <><dt>Памятка</dt><dd>{ref.guide_refs.join("; ")}</dd></> : null}
+    {ref.notes ? <><dt>Примечание</dt><dd>{ref.notes}</dd></> : null}
+  </dl>;
+}
+
+// ddsActionText turns one journal entry into a sentence for the instructor.
+function ddsActionText(action: { type: string; payload?: unknown }, contacts: { key: string; label: string }[]): string {
+  const payload = (action.payload ?? {}) as { status?: string; comment?: string; contact?: string; text?: string; event_key?: string; value?: string };
+  const contact = (key?: string) => contacts.find((candidate) => candidate.key === key)?.label ?? key ?? "";
+  switch (action.type) {
+    case "open": return "Открыл карточку";
+    case "set_status": return `Статус «${reactionLabel(payload.status as components["schemas"]["ReactionStatus"])}»${payload.comment ? `: ${payload.comment}` : ""}`;
+    case "add_comment": return `Комментарий: ${payload.text ?? ""}`;
+    case "call_start": return `Позвонил: ${contact(payload.contact)}`;
+    case "call_end": return "Завершил звонок";
+    case "answer_incoming": return "Ответил на входящий звонок";
+    case "close": return "Закрыл карточку";
+    case "control_report": return `Сообщение в отдел контроля: ${payload.text ?? ""}`;
+    case "set_card_field": return `Исправил поле карточки: ${payload.value ?? ""}`;
+    default: return action.type;
+  }
 }

@@ -1,0 +1,140 @@
+/*
+ * ARM-112 main screen for the operator 112 (instruction p. 12, "Главный
+ * экран"): light search panel and the dark operator block with the clock and
+ * the orange "создать новую карточку" button on top, the slate list below
+ * with dark grid rows. The shared app header is hidden on this screen: the
+ * operator block carries the clock, the operator and "выйти" itself.
+ */
+.layout:has(.arm112-main) .layout-header { display: none; }
+.layout-main:has(.arm112-main) { padding: 0; }
+
+.arm112-main {
+  --m-dark: #2b3237;
+  --m-dark-2: #353d42;
+  --m-slate: #8b9aa2;
+  --m-row: #333b40;
+  --m-row-line: #5d6a71;
+  --m-blue: #2786d6;
+  --m-orange: #ec6a3c;
+  --m-green: #34c56a;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 14px 18px 24px;
+  color: #fff;
+  background: #c9cfd2;
+  font-family: Roboto, "Segoe UI", Arial, sans-serif;
+}
+.arm112-main button { min-height: 0; padding: 0; color: inherit; background: transparent; border: 0; }
+.arm112-main button:hover:not(:disabled) { background: transparent; }
+.arm112-main button:disabled { opacity: 1; }
+
+/* Top: search panel + operator block. */
+.arm112-main-top { display: grid; flex: none; grid-template-columns: minmax(0, 1fr) minmax(740px, 48%); align-items: stretch; }
+.arm112-main-search { display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 18px 16px 14px; color: #333; background: #eef0f1; }
+.arm112-main-search-line { display: flex; align-items: flex-end; gap: 10px; color: #444; border-bottom: 1px solid #6c6c6c; }
+.arm112-main .arm112-main-search-line input { flex: 1; min-height: 0; padding: 2px 0 4px; color: #2b2b2b; background: transparent; border: 0; font-size: 30px; font-weight: 400; }
+.arm112-main .arm112-main-search-line input::placeholder { color: #2f2f2f; }
+.arm112-main .arm112-main-search-line input:focus { outline: none; }
+.arm112-main-search-line:focus-within { border-bottom: 2px solid #3f51b5; }
+.arm112-main-search-line .arm112-icon { margin-bottom: 6px; }
+.arm112-main-search-foot { display: flex; justify-content: space-between; align-items: center; }
+.arm112-main .arm112-main-link { display: inline-flex; align-items: center; gap: 3px; color: #3a3a3a; font-size: 12px; cursor: default; }
+.arm112-main .arm112-main-reset { padding: 2px 8px; color: #666; background: #f7f7f7; border: 1px solid #9c9c9c; font-size: 12px; }
+.arm112-main .arm112-main-reset:hover { color: #222; background: #fff; }
+
+.arm112-main-operator { display: grid; grid-template-columns: minmax(0, 1fr) 130px; grid-template-rows: 1fr auto; background: var(--m-dark); }
+.arm112-main-status { grid-column: 1; display: flex; align-items: center; gap: 14px; min-height: 72px; padding: 8px 10px 4px 10px; }
+.arm112-main-who { display: flex; flex: 1 1 auto; flex-direction: column; gap: 6px; min-width: 0; overflow: hidden; }
+.arm112-main-who > strong { font-size: 15px; white-space: nowrap; }
+.arm112-main-who > span { display: flex; align-items: center; gap: 6px; color: #e3e7e9; font-size: 11px; white-space: nowrap; }
+.arm112-main-arm { margin-left: 6px; }
+.arm112-main-who button { display: inline-flex; color: #fff; }
+.arm112-main-who button:disabled { cursor: default; }
+.arm112-main-who button[aria-label="Выйти"] { cursor: pointer; }
+.arm112-main-who button[aria-label="Выйти"]:hover:not(:disabled) { color: #ffb08f; }
+.arm112-main-phone { display: flex; flex-direction: column; align-items: center; gap: 1px; color: #dfe4e6; font-size: 12px; }
+.arm112-main-phone .arm112-icon { color: var(--m-green); }
+.arm112-main-clock { display: flex; align-items: flex-start; font-size: 50px; font-weight: 700; line-height: 1; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.arm112-main-clock sup { margin: -6px 0 0 3px; font-size: 20px; font-weight: 500; }
+.arm112-main .arm112-main-create { grid-column: 2; grid-row: 1 / 3; margin: 0; padding: 12px; color: #fff; background: var(--m-orange); cursor: not-allowed; }
+.arm112-main .arm112-main-create span { display: flex; align-items: center; height: 100%; padding: 6px 10px; border: 2px solid #fff; font-size: 17px; font-weight: 700; line-height: 1.08; text-align: left; }
+.arm112-main .arm112-main-create:hover:not(:disabled) { background: var(--m-orange); }
+
+.arm112-main-tabs { grid-column: 1; display: flex; }
+.arm112-main-tabs > a, .arm112-main-tabs > span { display: flex; flex: 1 1 0; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 0; padding: 5px 1px 4px; overflow: hidden; color: #fff; background: var(--m-dark-2); border-right: 1px solid #262c30; font-size: 9px; letter-spacing: -.01em; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.arm112-main-tabs > a:hover { background: #46525a; }
+.arm112-main-tabs > a.active { background: var(--m-blue); }
+.arm112-main-tabs > span.is-off { cursor: default; }
+
+/* List of incidents. */
+.arm112-main-list { display: flex; flex: 1; flex-direction: column; margin-top: 0; padding: 12px 18px 16px; background: var(--m-slate); }
+.arm112-main-list-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 8px; }
+.arm112-main-list-head h2 { display: flex; align-items: center; gap: 6px; margin: 0 0 0 20px; color: #fff; font-size: 17px; font-weight: 700; }
+.arm112-main-switches { display: flex; align-items: center; gap: 12px; color: #edf1f3; font-size: 12px; }
+.arm112-main-switch { display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px; }
+.arm112-main-switch.is-framed { border: 1px solid #f3f5f6; }
+.arm112-main-switch.is-info .arm112-icon { color: #dfe4e6; }
+.arm112-main-toggle { position: relative; width: 26px; height: 14px; background: #56636a; border-radius: 7px; }
+.arm112-main-toggle::after { position: absolute; top: 1px; left: 1px; width: 12px; height: 12px; background: #c9d0d4; border-radius: 50%; content: ""; }
+.arm112-main-toggle.is-on { background: #fff; }
+.arm112-main-toggle.is-on::after { right: 1px; left: auto; background: var(--m-blue); }
+.arm112-main .arm112-main-switches select { min-height: 0; width: 180px; padding: 3px 6px; color: #e9eef0; background: transparent; border: 1px solid #c6ced2; font-size: 11px; }
+
+.arm112-main-grid-wrap { flex: 1; overflow-x: auto; }
+.arm112-main-grid { width: 100%; min-width: 1180px; table-layout: fixed; border-collapse: separate; border-spacing: 0; background: transparent; }
+.arm112-main-grid col.c-chevron { width: 36px; }
+.arm112-main-grid col.c-links { width: 34px; }
+.arm112-main-grid col.c-icon { width: 36px; }
+.arm112-main-grid col.c-num { width: 62px; }
+.arm112-main-grid col.c-number { width: 84px; }
+.arm112-main-grid col.c-date { width: 74px; }
+.arm112-main-grid col.c-time { width: 76px; }
+.arm112-main-grid col.c-victims { width: 50px; }
+.arm112-main-grid col.c-status { width: 138px; }
+.arm112-main-grid col.c-address { width: 32%; }
+.arm112-main-grid col.c-check { width: 72px; }
+.arm112-main-grid th { padding: 4px 6px 7px; color: #e6ebed; background: transparent; border: 0; font-size: 11px; font-weight: 400; text-align: center; white-space: nowrap; }
+.arm112-main-grid th:nth-child(11), .arm112-main-grid th:nth-child(14) { text-align: left; }
+.arm112-main-grid td { height: 30px; padding: 0 6px; overflow: hidden; color: #fff; background: var(--m-row); border: 0; border-right: 1px solid var(--m-row-line); font-size: 11px; text-align: center; text-overflow: ellipsis; vertical-align: middle; white-space: nowrap; }
+.arm112-main-row tr { cursor: pointer; }
+.arm112-main-row tr:hover td { background: #414b51; }
+.arm112-main-row + .arm112-main-row td { border-top: 6px solid var(--m-slate); }
+.arm112-main-row.is-new td:first-child { box-shadow: inset 4px 0 var(--m-orange); }
+.arm112-main-grid td.c-chevron, .arm112-main-grid td.c-icon { color: #e8ecee; }
+.arm112-main-grid td.c-time { font-size: 15px; font-weight: 700; text-align: left; }
+.arm112-main-grid td.c-time sup { font-size: 9px; font-weight: 500; }
+.arm112-main-grid td.c-type { font-size: 14px; font-weight: 700; text-align: left; }
+.arm112-main-grid td.c-small { font-size: 10px; text-align: left; }
+.arm112-main-grid td.c-address { font-size: 13px; text-align: left; }
+.arm112-main-grid td.c-check { color: #c9d0d4; }
+.arm112-main-grid td.c-check.is-done { color: #fff; }
+.arm112-main-grid td .arm112-icon { vertical-align: middle; }
+.arm112-main-grid td button { display: inline-flex; padding: 3px; color: #fff; cursor: pointer; }
+.arm112-main-grid td button:hover { color: #ffb08f; }
+.arm112-main-grid td.arm112-main-empty { height: 46px; color: #e8ecee; background: #45525a; font-size: 13px; }
+
+.arm112-main-foot { display: flex; align-items: center; justify-content: flex-end; gap: 16px; margin-top: 22px; color: #edf1f3; font-size: 12px; }
+.arm112-main-foot > span { display: inline-flex; align-items: center; gap: 4px; }
+.arm112-main-lesson { display: flex; align-items: baseline; gap: 10px; margin-right: auto; padding: 4px 8px; border: 1px solid #d3dade; }
+.arm112-main-lesson h1 { margin: 0; color: #fff; font-size: 13px; font-weight: 700; }
+.arm112-main-lesson span { color: #e6ebed; }
+.arm112-main .notice, .arm112-main .error { margin: 10px 0 0; }
+
+/* Incoming call (instruction p. 3, fig. 3): a blue window over the list. */
+.arm112-call-banner {
+  position: absolute; z-index: 20; top: 200px; left: 50%;
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  width: min(1540px, calc(100% - 80px)); padding: 44px 24px 34px;
+  color: #fff; background: #1a7fc3; border: 2px solid #fff;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 35%); transform: translateX(-50%);
+  font-family: Roboto, "Segoe UI", Arial, sans-serif;
+}
+.arm112-call-banner strong { font-size: 26px; font-weight: 700; }
+.arm112-call-banner span { font-size: 19px; font-weight: 700; }
+.arm112-call-banner button.arm112-call-banner-accept { min-height: 0; margin-top: 6px; padding: 9px 26px; color: #fff; background: transparent; border: 2px solid #fff; font-size: 18px; font-weight: 700; }
+.arm112-call-banner button.arm112-call-banner-accept:hover:not(:disabled) { color: #1a7fc3; background: #fff; }
+.arm112-call-banner button.arm112-call-banner-accept:disabled { opacity: .6; }
+.arm112-call-banner button.arm112-call-banner-close { position: absolute; top: 12px; right: 14px; display: flex; min-height: 0; padding: 4px; color: #fff; background: transparent; border: 0; }
+.arm112-call-banner button.arm112-call-banner-close:hover { background: rgb(255 255 255 / 15%); }

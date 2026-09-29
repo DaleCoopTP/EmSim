@@ -40,10 +40,7 @@ export function LoginRoute() {
 
   return (
     <main className="login">
-      <div className="login-city" aria-hidden="true">
-        <div className="login-city-helicopter">⌁</div>
-        <div className="login-city-skyline" />
-      </div>
+      <div className="login-city" aria-hidden="true" />
       <section className="login-panel" aria-labelledby="login-title">
         <div className="login-title">
           <span>112</span>
@@ -87,7 +84,12 @@ export function LoginRoute() {
             {login.isPending ? "Вход…" : "Войти"}
           </button>
         </form>
-        <p className="login-help">Учебная среда для диспетчеров ДДС. Номер РМ указывается при входе обучаемого.</p>
+        <p className="login-help">
+          Техподдержка<br />
+          +7 (495) 197-89-81<br />
+          (многоканальный)<br />
+          <a href="mailto:hd-112@mos.ru">hd-112@mos.ru</a>
+        </p>
       </section>
     </main>
   );

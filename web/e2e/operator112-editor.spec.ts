@@ -50,7 +50,7 @@ test("112-7 editor: create, validate, pass it yourself, approve, and assign", as
   await page.getByRole("button", { name: "Войти" }).click();
   await expect(page.getByRole("heading", { name: "Занятия" })).toBeVisible();
 
-  await page.getByRole("link", { name: "Сценарии" }).click();
+  await page.getByRole("link", { name: "Готовые сценарии" }).click();
   await page.getByRole("link", { name: "+ Создать сценарий 112" }).click();
   await expect(page.getByRole("heading", { name: "Новый сценарий 112" })).toBeVisible();
 
@@ -71,9 +71,9 @@ test("112-7 editor: create, validate, pass it yourself, approve, and assign", as
   // Tab 4: Эталон — expected_types/case_description/expected_services are
   // full_case's own required fields (validateIntake112FullCase).
   await page.getByRole("button", { name: "Эталон" }).click();
-  await page.getByLabel("Взрыв газа", { exact: true }).check();
+  await page.getByRole("button", { name: "Взрыв газа", exact: true }).click();
   await page.getByLabel("Закрытое описание ситуации").fill("Учебный кейс, созданный через веб-редактор 112-7.");
-  await page.getByLabel("Учебная служба 104 · газ").check();
+  await page.getByRole("button", { name: "Учебная служба 104 · газ" }).click();
 
   await page.getByRole("button", { name: "Создать черновик" }).click();
   await expect(page).toHaveURL(/\/instructor\/scenarios\/[0-9a-f-]+\/edit$/);
@@ -108,8 +108,7 @@ test("112-7 editor: create, validate, pass it yourself, approve, and assign", as
   await expect(page).toHaveURL(/\/instructor\/preview\/[0-9a-f-]+\?lesson=[0-9a-f-]+$/);
   await expect(page.getByRole("heading", { name: "Предпросмотр" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Открыть кейс" }).click();
-  await page.getByRole("button", { name: "ответить" }).click();
+  await page.getByRole("dialog", { name: "Входящий звонок" }).getByRole("button", { name: "Принять" }).click();
 
   // A real exchange with the caller: the reply arrives asynchronously
   // (caller.reply on the worker), so the preview screen must pick it up

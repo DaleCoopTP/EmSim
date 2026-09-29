@@ -29,30 +29,38 @@ export function RandomFill({ lessonId, level, pairs, onDrawn }: {
 
   return (
     <fieldset className="random-fill">
-      <legend>Заполнить случайно</legend>
-      <p className="notice">
-        Для каждого выбранного РМ сервер подберёт разные сценарии его службы из выбранных разделов, уровень «{levelLabels[level]}» ({levelBands[level]}).
-        Результат можно поправить до сохранения.
+      <legend>Случайная выдача карточек</legend>
+      <p className="editor-hint">
+        Вместо ручного выбора кейсов для каждого РМ: отметьте разделы классификатора происшествий и число карточек —
+        сервер подберёт каждому обучаемому разные случайные сценарии его службы уровня «{levelLabels[level]}» ({levelBands[level]}).
+        Очереди в таблице выше заполнятся, их можно поправить, затем нажмите «Сохранить назначения».
       </p>
       {categories.isPending && <p>Загрузка разделов…</p>}
       {categories.isError && <p className="error">{errorMessage(categories.error)}</p>}
       {categories.data?.length === 0 && <p>Нет утверждённых сценариев ДДС.</p>}
-      {categories.data?.map((category) => (
-        <label key={category.code} className="random-fill-category">
-          <input type="checkbox" checked={chosen.includes(category.code)} onChange={() => toggle(category.code)} />
-          {" "}Раздел {category.code}: {category.type_names.join(", ")} — на этом уровне сценариев: {category.count_by_level[level]}
+      {categories.data && categories.data.length > 0 && (
+        <ul className="random-fill-categories">
+          {categories.data.map((category) => (
+            <li key={category.code}>
+              <label>
+                <input type="checkbox" checked={chosen.includes(category.code)} onChange={() => toggle(category.code)} />
+                <span><strong>Раздел {category.code}</strong> — {category.type_names.join(", ")}</span>
+                <small>сценариев этого уровня: {category.count_by_level[level]}</small>
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="random-fill-controls">
+        <label>Карточек на РМ
+          <input type="number" min={1} max={20} value={count} onChange={(event) => setCount(event.target.value)} />
         </label>
-      ))}
-      <label>Карточек на РМ
-        <input type="number" min={1} max={20} value={count} onChange={(event) => setCount(event.target.value)} />
-      </label>
-      {pairs.length === 0 && <p className="notice">Сначала выберите рабочее место и обучаемого хотя бы в одной строке.</p>}
-      {draw.isError && <p role="alert" className="error">{errorMessage(draw.error)}</p>}
-      <p>
         <button type="button" className="arm-secondary-action" disabled={chosen.length === 0 || !countValid || pairs.length === 0 || draw.isPending} onClick={() => draw.mutate()}>
           Заполнить случайно
         </button>
-      </p>
+      </div>
+      {pairs.length === 0 && <p className="editor-hint">Сначала выберите рабочее место и обучаемого хотя бы в одной строке.</p>}
+      {draw.isError && <p role="alert" className="error">{errorMessage(draw.error)}</p>}
     </fieldset>
   );
 }
