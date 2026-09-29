@@ -1,4 +1,4 @@
-.PHONY: demo class-up class-ca stt-model format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build seed model web-install web-build web-check verify-web
+.PHONY: demo class-up class-ca public-up stt-model format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build seed model web-install web-build web-check verify-web
 
 # ADR-038: the build version shown on the admin status screen.
 export EMSIM_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -36,6 +36,7 @@ compose-config:
 	docker compose config --quiet
 	docker compose -f compose.yaml -f compose.no-llm.yaml config --quiet
 	EMSIM_HOST=emsim.local docker compose -f compose.yaml -f compose.class.yaml config --quiet
+	EMSIM_HOST=emsim.example.org docker compose -f compose.yaml -f compose.class.yaml -f compose.public.yaml config --quiet
 	DICTATION=stub docker compose -f compose.yaml -f compose.no-llm.yaml config --quiet
 	REMOTE_LLM_URL=https://llm.example/v1 REMOTE_LLM_MODEL=model docker compose -f compose.yaml -f compose.remote-llm.yaml config --quiet
 
@@ -56,6 +57,12 @@ class-up:
 
 class-ca:
 	$(CLASS_COMPOSE) cp caddy:/data/caddy/pki/authorities/local/root.crt ./emsim-root.crt
+
+# Public demo stand: the classroom profile with a Let's Encrypt certificate
+# (compose.public.yaml). EMSIM_HOST is a public DNS name pointing at this
+# server; ports 80 and 443 must be open to the internet.
+public-up:
+	$(CLASS_COMPOSE) -f compose.public.yaml up -d --build
 
 # Offline update bundle (ADR-038): the emsim image and the images already
 # on this machine that the compose files use, plus the compose files and

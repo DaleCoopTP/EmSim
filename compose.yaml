@@ -29,6 +29,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-only-postgres-password}
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    # api and worker restart on their own after a host reboot; without this
+    # the database stays down and they crash-loop.
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U emsim -d emsim"]
       interval: 2s

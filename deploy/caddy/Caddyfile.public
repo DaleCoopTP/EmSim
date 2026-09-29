@@ -1,0 +1,19 @@
+# Public demo stand profile (compose.public.yaml): the same proxy as the
+# classroom Caddyfile, but the certificate comes from a public ACME CA
+# (Let's Encrypt, with ZeroSSL as Caddy's fallback) instead of Caddy's
+# internal CA, so any browser trusts it without installing a root.
+#
+# EMSIM_HOST must be a public DNS name whose A record points at this
+# server, and ports 80 and 443 must be reachable from the internet (the
+# ACME HTTP-01/TLS-ALPN-01 challenges). Certificates and the ACME account
+# live in the caddy-data volume.
+
+{$EMSIM_HOST} {
+	# The api checks Origin against Host on every mutation
+	# (httpapi.RequireSameOrigin): the original Host is passed through,
+	# which reverse_proxy does by default. flush_interval -1 keeps SSE
+	# (/api/v1/my/stream, /api/v1/lessons/{id}/stream) unbuffered.
+	reverse_proxy api:8080 {
+		flush_interval -1
+	}
+}

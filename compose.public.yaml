@@ -1,0 +1,17 @@
+# Public demo stand: the classroom profile (compose.class.yaml) with a
+# certificate from a public ACME CA instead of Caddy's internal one — for a
+# server reachable from the internet under a real DNS name.
+#
+#   EMSIM_HOST=emsim.example.org docker compose \
+#     -f compose.yaml -f compose.class.yaml -f compose.public.yaml up -d --build
+#   (make public-up)
+#
+# Before starting: EMSIM_HOST's A record points at the server, and ports
+# 80 and 443 are open to the internet — Caddy needs both to obtain the
+# certificate. Only Caddy is published; api, the models and the database
+# stay on internal networks, as in the classroom profile.
+
+services:
+  caddy:
+    volumes:
+      - ./deploy/caddy/Caddyfile.public:/etc/caddy/Caddyfile:ro

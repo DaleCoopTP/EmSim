@@ -232,6 +232,16 @@ docker compose run --rm worker bench-llm --concurrency 1,4,8,20 --duration 2m --
 `HTTPS_PORT` и открывайте `https://<host>:<port>/` напрямую: редирект с 80
 ведёт на стандартный 443.
 
+### Публичный демо-стенд: HTTPS с сертификатом Let's Encrypt
+
+Для сервера, доступного из интернета под настоящим DNS-именем, поверх профиля класса есть `compose.public.yaml`: тот же Caddy, но сертификат выпускает Let's Encrypt (`deploy/caddy/Caddyfile.public`), и корневой сертификат ставить на ПК не нужно.
+
+1. A-запись имени (например, `emsim.example.org`) указывает на статический IP сервера; входящие 80 и 443 открыты из интернета — без них Caddy не получит сертификат.
+2. В `.env`: `EMSIM_HOST=emsim.example.org`.
+3. `make public-up` — то же, что `docker compose -f compose.yaml -f compose.class.yaml -f compose.public.yaml up -d --build`.
+
+Развёртывание на чистой Ubuntu 24.04: `scripts/server-sync.sh user@host` (копирует дерево без весов и секретов), затем на сервере `scripts/server-bootstrap.sh` (Docker, `.env` со случайными паролями, модели, стек, демо-аккаунты) и, для замера W0, `scripts/server-bench.sh`.
+
 `docker compose up --build` собирает и веб-клиент (`web/`, стадия
 `node:22-alpine` в `Dockerfile`) и встраивает его в бинарник `emsim`
 (`web/embed.go`, `//go:embed`) — `api` сам раздаёт SPA на всех путях вне
