@@ -10,12 +10,14 @@ import { cardStatusLabel, reactionLabel } from "../../labels";
 import { expectedProfileText, profileFieldVisible } from "../../intakeProfile";
 import { IntakeAutoAssessment, isPenaltyCriterion, criterionStatusLabels, type RubricEffectiveCriterion } from "../../components/IntakeAutoAssessment";
 import { CriteriaTable } from "../../components/CriteriaTable";
+import { MicIcon } from "../../components/Arm112Icons";
+import "../../dictation.css";
 
 type CriterionStatus = CriterionResult["status"];
 type Item = components["schemas"]["Item"];
 type IntakeField = { state: string; value?: string };
 type IntakeCard = { number: string; aon: string; call_local_time: string; call_time_zone: string; applicant_name: IntakeField; applicant_status: IntakeField; age: IntakeField; address: Record<string, IntakeField>; incident_type: IntakeField; incident_types?: string[]; profiles?: Record<string, { definition_id: string; version: number; answers: Record<string, { state: string; value?: string; values?: string[] }> }>; complaint: IntakeField; victims_present: IntakeField; victims_count: IntakeField; provided_phone: IntakeField; on_site_phone?: IntakeField; channel?: IntakeField; foreign_language?: IntakeField; no_on_site?: IntakeField; no_access?: IntakeField };
-type IntakeReviewLine = { id?: string; speaker?: "caller" | "operator"; text: string; server_at: string; reveals?: string[]; topic_id?: string };
+type IntakeReviewLine = { id?: string; speaker?: "caller" | "operator"; input?: "voice"; text: string; server_at: string; reveals?: string[]; topic_id?: string };
 type IntakeReviewGeneration = { model: string; prompt_version: string; temperature?: number; top_p?: number; repeat_penalty?: number; max_tokens?: number };
 type IntakeReviewCallerTurn = { turn: number; operator_line_id?: string; status: "pending" | "answered" | "cancelled" | "failed"; adapter?: string; source?: "opening" | "scripted" | "model" | "fallback" | "stub"; generation?: IntakeReviewGeneration; requested_at: string; resolved_at?: string; reason?: string };
 type IntakeReviewAction = { type: string; accepted: boolean; server_at: string; log_seq: number; payload?: { draft?: IntakeCard; type_id?: string; services?: string[]; reason?: string }; effect?: { suggested?: { service_code: string; reasons: string[] }[] } };
@@ -154,7 +156,7 @@ function IntakeReviewPanel({ item, evidence }: { item: IntakeReviewItem; evidenc
     const changes = changedIntakeFields(previous, draft);
     return { at: action.server_at, order: action.log_seq, text: `Карточка сохранена: ${changes.join(", ") || "без изменений"}` };
   });
-  const timeline = [...transcript.map((line, index) => ({ at: line.server_at, order: index, text: `${line.speaker === "operator" ? "Оператор" : "Заявитель"}: ${line.text}` })), ...saves]
+  const timeline = [...transcript.map((line, index) => ({ at: line.server_at, order: index, text: `${line.speaker === "operator" ? "Оператор" : "Заявитель"}${line.input === "voice" ? " (надиктовано)" : ""}: ${line.text}` })), ...saves]
     .sort((a, b) => a.at.localeCompare(b.at) || a.order - b.order);
   return <>
     <h2>Разговор и сохранения карточки</h2>
@@ -222,7 +224,7 @@ function IntakeProfileReviewPanel({ item, evidence }: { item: IntakeReviewItem; 
     <h2>{isCall ? "Кейс с разговором" : "Кейс без разговора"}</h2>
     <p>Каталог профилей: версия {catalog?.version ?? "—"}.{!isCall && " Отправка карточки в службу для этого режима не выполняется."}</p>
     {isCall && <><h3>Разговор с заявителем</h3>
-      <ol>{transcript.map((line, index) => <li key={line.id ?? index}>{formatDateTime(line.server_at)} · {line.speaker === "operator" ? "Оператор" : "Заявитель"}: {line.text}</li>)}</ol>
+      <ol>{transcript.map((line, index) => <li key={line.id ?? index}>{formatDateTime(line.server_at)} · {line.speaker === "operator" ? "Оператор" : "Заявитель"}{line.input === "voice" && <span className="voice-mark" title="Надиктовано голосом" role="img" aria-label="надиктовано"><MicIcon size={13} /></span>}: {line.text}</li>)}</ol>
       {callerTurns.length > 0 && <><h4>Ходы свободного диалога</h4>
         <ul>{callerTurns.map((turn) => <li key={turn.turn}>Ход {turn.turn} · {formatDateTime(turn.requested_at)} · {turnStatusText(turn)}</li>)}</ul></>}</>}
     <h3>Последовательность действий</h3><ol>{actions.map((action) => <li key={action.log_seq}>{formatDateTime(action.server_at)} · {actionText(action)}</li>)}</ol>

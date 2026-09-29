@@ -514,3 +514,39 @@ func TestSendCallerMessageRejectedForCardOnly(t *testing.T) {
 		t.Fatal("send_caller_message must reject for card_only")
 	}
 }
+
+// TestSendCallerMessageRecordsVoiceInput is ADR-037: the optional input
+// mark lands on the operator's line only for "voice"; "text" and absence
+// are the same ordinary line, and anything else is an invalid payload.
+func TestSendCallerMessageRecordsVoiceInput(t *testing.T) {
+	catalog := pilotCatalog(t)
+	send := func(payload map[string]string) training.Decision {
+		t.Helper()
+		card := training.UnansweredIntakeCard("112-voice", "+79161313131", "02:03", "Europe/Moscow")
+		card.Profiles = map[string]training.IntakeProfile{}
+		state := training.IntakeState{Mode: "full_case", CallerMode: content.CallerModeFreeText, Finale: "notify",
+			CallStatus: "connected", Catalog: &catalog, Transcript: []training.IntakeLine{}}
+		item := training.Item{ID: uuid.New(), State: training.ItemInProgress, IntakeCard: &card, IntakeState: &state, IntakeDialogue: freeTextDialogue()}
+		data, _ := json.Marshal(payload)
+		d, err := New().Decide(item, training.Command{CommandID: uuid.New(), Type: training.CommandSendCallerMessage, Payload: data}, time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	if d := send(map[string]string{"text": "Что случилось?", "input": "voice"}); !d.Accepted || d.IntakeState.Transcript[0].Input != "voice" {
+		t.Fatalf("voice line = %+v", d)
+	}
+	for _, input := range []string{"", "text"} {
+		p := map[string]string{"text": "Что случилось?"}
+		if input != "" {
+			p["input"] = input
+		}
+		if d := send(p); !d.Accepted || d.IntakeState.Transcript[0].Input != "" {
+			t.Fatalf("input=%q must record an ordinary line: %+v", input, d)
+		}
+	}
+	if d := send(map[string]string{"text": "Что случилось?", "input": "telepathy"}); d.Accepted {
+		t.Fatal("unknown input value accepted")
+	}
+}

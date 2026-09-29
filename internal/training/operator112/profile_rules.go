@@ -494,7 +494,8 @@ func (e exercise) decideProfileFlow(item training.Item, cmd training.Command, no
 			return reject(item, training.RejectTransitionNotAllowed), nil
 		}
 		var p struct {
-			Text string `json:"text"`
+			Text  string `json:"text"`
+			Input string `json:"input"`
 		}
 		if !payload(cmd.Payload, &p) {
 			return reject(item, training.RejectInvalidPayload), nil
@@ -503,10 +504,18 @@ func (e exercise) decideProfileFlow(item training.Item, cmd training.Command, no
 		if text == "" || utf8.RuneCountInString(text) > 500 {
 			return reject(item, training.RejectInvalidPayload), nil
 		}
+		// ADR-037: how the text was entered. Only "voice" is recorded;
+		// "text" and absence are the same ordinary typed line.
+		if p.Input != "" && p.Input != "text" && p.Input != "voice" {
+			return reject(item, training.RejectInvalidPayload), nil
+		}
 		// appendLine computes this same id from len(state.Transcript) —
 		// captured before the call so the new turn can reference it.
 		lineID := cmd.CommandID.String() + ":" + strconv.Itoa(len(state.Transcript)+1)
 		appendLine(&state, item, cmd, now, "", "operator", text, "", "", nil)
+		if p.Input == "voice" {
+			state.Transcript[len(state.Transcript)-1].Input = "voice"
+		}
 		turn := len(state.CallerTurns) + 1
 		state.CallerTurns = append(state.CallerTurns, training.IntakeCallerTurn{
 			Turn: turn, OperatorLineID: lineID, Status: training.CallerTurnPending, RequestedAt: now,

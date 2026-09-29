@@ -85,6 +85,7 @@
         "speaker": {"enum": ["caller", "operator"]}, "call_id": {"type": "string", "format": "uuid"},
         "command_id": {"type": "string", "format": "uuid"}, "question_id": {"type": "string"},
         "topic_id": {"type": "string"}, "reveals": {"type": "array", "items": {"type": "string"}},
+        "input": {"enum": ["voice"], "description": "ADR-037: operator line entered by dictation; a client claim, no audio is kept."},
         "text": {"type": "string"}, "server_at": {"type": "string", "format": "date-time"}
       }}}
     }},

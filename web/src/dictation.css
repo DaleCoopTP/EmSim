@@ -1,0 +1,8 @@
+/* 112-8a/ADR-037: voice input. Kept apart from index.css; uses its ARM-112 tokens. */
+.voice-mark { display: inline-flex; vertical-align: -2px; margin-left: 4px; color: var(--a112-label, #666); }
+.caller-chat-mic { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border-radius: 50%; }
+.caller-chat-mic[aria-pressed="true"] { background: var(--a112-red, #c0392b); color: #fff; animation: caller-chat-rec 1.2s ease-in-out infinite; }
+.caller-chat-dictation { color: var(--a112-label, #666); font-size: 11px; }
+.caller-chat-dictation.error { color: var(--a112-red, #c0392b); }
+@keyframes caller-chat-rec { 50% { opacity: 0.6; } }
+@media (prefers-reduced-motion: reduce) { .caller-chat-mic[aria-pressed="true"] { animation: none; } }

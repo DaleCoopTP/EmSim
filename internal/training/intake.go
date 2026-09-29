@@ -154,16 +154,21 @@ func validVictimsPresent(field IntakeField) bool {
 }
 
 type IntakeLine struct {
-	ID         string    `json:"id,omitempty"`
-	SourceID   string    `json:"source_id,omitempty"`
-	Speaker    string    `json:"speaker,omitempty"`
-	CallID     string    `json:"call_id,omitempty"`
-	CommandID  string    `json:"command_id,omitempty"`
-	QuestionID string    `json:"question_id,omitempty"`
-	TopicID    string    `json:"topic_id,omitempty"`
-	Reveals    []string  `json:"reveals,omitempty"`
-	Text       string    `json:"text"`
-	ServerAt   time.Time `json:"server_at"`
+	ID         string   `json:"id,omitempty"`
+	SourceID   string   `json:"source_id,omitempty"`
+	Speaker    string   `json:"speaker,omitempty"`
+	CallID     string   `json:"call_id,omitempty"`
+	CommandID  string   `json:"command_id,omitempty"`
+	QuestionID string   `json:"question_id,omitempty"`
+	TopicID    string   `json:"topic_id,omitempty"`
+	Reveals    []string `json:"reveals,omitempty"`
+	// Input is 112-8a/ADR-037's mark on an operator's free-text line:
+	// "voice" when the text was dictated (and possibly edited), empty
+	// otherwise. A client-side claim shown in the review, not evidence
+	// of what was said; no audio is kept.
+	Input    string    `json:"input,omitempty"`
+	Text     string    `json:"text"`
+	ServerAt time.Time `json:"server_at"`
 }
 
 type IntakeQuestionOption struct {

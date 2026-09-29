@@ -23,3 +23,4 @@ export const BellIcon = (props: IconProps) => <Svg {...props}><path fill="curren
 export const MessageIcon = (props: IconProps) => <Svg {...props}><path fill="currentColor" d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-7 12h-2v-2h2zm0-4h-2V6h2z" /></Svg>;
 export const CloseIcon = (props: IconProps) => <Svg {...props}><path fill="none" stroke="currentColor" strokeWidth="2.4" d="m5 5 14 14M19 5 5 19" /></Svg>;
 export const PlusIcon = (props: IconProps) => <Svg {...props}><path fill="none" stroke="currentColor" strokeWidth="2" d="M12 3v18M3 12h18" /></Svg>;
+export const MicIcon = (props: IconProps) => <Svg {...props}><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z" /></Svg>;

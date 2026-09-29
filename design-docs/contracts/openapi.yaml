@@ -1243,6 +1243,7 @@ components:
               question_id: { type: string }
               topic_id: { type: string }
               reveals: { type: array, items: { type: string }, description: Только факты, уже раскрытые этой репликой. }
+              input: { type: string, enum: [voice], description: 'ADR-037: реплика оператора набрана диктовкой; заявление клиента, не доказательство сказанного. Отсутствует у обычной.' }
               text: { type: string }
               server_at: { type: string, format: date-time }
         has_saved_draft: { type: boolean }
@@ -2110,6 +2111,7 @@ components:
             required: [text]
             properties:
               text: { type: string, minLength: 1, maxLength: 500 }
+              input: { type: string, enum: [text, voice], description: 'ADR-037: voice — текст получен диктовкой (и мог быть отредактирован); отсутствие и text — обычный ввод. Сервер сохраняет метку у реплики, аудио не хранится.' }
         description: '112-5a/ADR-024: одно сообщение оператора заявителю в свободном тексте (intake_state.caller_mode=free_text). Принимается только при call_status=connected и отсутствии ожидающего хода; ответ заявителя формируется асинхронно worker и появляется в intake_state.caller_turns/transcript отдельным событием, не в этой квитанции.'
 
     Receipt:
