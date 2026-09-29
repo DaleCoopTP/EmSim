@@ -29,6 +29,9 @@
 | [023](023-operator112-notify-and-save.md) | Оповещение служб «Сохранить → оповестить и сохранить карточку» | accepted |
 | [024](024-operator112-async-caller-reply.md) | Асинхронный ход свободного диалога с заявителем | accepted |
 | [025](025-operator112-ai-caller.md) | ИИ-заявитель 112 на интерактивном пути, уточняет ADR-003 | accepted |
+| [026](026-operator112-assessment-rubric-v2.md) | Оператор 112: детерминированная рубрика v2 — шесть блоков и четыре штрафа против эталона | accepted |
+| [027](027-operator112-scenario-editor.md) | Оператор 112: веб-редактор сценариев, черновики, предпросмотр «пройти самому» | accepted |
+| [028](028-operator112-description-llm-judge.md) | Оператор 112: LLM-судья описания заявителя (`operator112/rubric-v3`) | accepted |
 | [029](029-operator112-local-inference-container.md) | Локальная модель (`llama-server`) в составе compose, ИИ-заявитель и судья по умолчанию | accepted |
 | [030](030-dds-dispatcher-role.md) | Роль диспетчера ДДС: цикл статусов реагирования, закрытие финальным статусом, статус карточки, архив пилотов | accepted |
 | [031](031-dds-crew-communication.md) | ДДС: доклады бригады после звонка (`since: call_ended`), входящие звонки, роли контактов, реакция на доклад в мониторе | accepted |

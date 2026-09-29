@@ -14,7 +14,7 @@
 /*.zip
 *.log
 
-# Reference copy of orchestration-core (ported by copy, see docs/technical-discovery.md)
+# Reference copy of orchestration-core (ported by copy, see design-docs/adr/010-reuse-core-queue-by-copy.md)
 /orchestration-core-main/
 
 # Model weights for compose.yaml's llm service (ADR-029, `make model`)

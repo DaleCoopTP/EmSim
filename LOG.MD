@@ -3944,3 +3944,14 @@ Status: всё зелёное.
 - Падения `dds-lesson-settings` и `operator112-dictation` из прошлого прогона не повторились (вероятно, лимит входов — починен `LOGIN_RATE_PER_MINUTE` в `run.mjs`).
 - Проверено: `make test-integration` — всё ok (единственное падение `TestOperator112ProfileCases` — таймаут Docker при старте PostgreSQL, отдельный перезапуск ok); `npm run test:e2e` — 16/16 (контрольный прогон без обновления эталонов); `make verify`, `make verify-web`, `npm run lint` — ok.
 - Сервер: статический IP тестовой ВМ Yandex Cloud — 89.169.155.48 (был 51.250.75.74); в репозитории адрес не зашит (`scripts/server-sync.sh` принимает его аргументом, классный профиль — `EMSIM_HOST`).
+
+## 2026-09-29 — Документация для жюри: новый README, docs/, удаление устаревших документов
+
+Status: реализовано (только документация).
+
+- Решение пользователя: одна точка входа для жюри — корневой `README.md` на русском с основными положениями и ссылками на углублённые документы; устаревшие документы удалить.
+- Удалено (остаётся в истории git): 25 `slice-*-plan.md` и `slice-planning*.md`, `fifth_slice_plan.md`, `additional_requirements.md`, `docs/architecture/`, `docs/{architecture-review,technical-discovery,scope-v1,product-task,qa-session-summary}.md`, `docs/qa-session-transcript.txt`, `design-docs/requirments_traceability.md`, черновик `docs/submission/`. `LOG.MD` и `CLAUDE.md` оставлены.
+- Новое: `README.md` (переписан), `docs/{architecture,assessment,deployment,api,development,user-guide,status}.md`; `seed/README.md` переписан как описание каталога; `web/README.md` переведён; `design-docs/README.md` переписан; в RFC-001 — пометка о статусе; в индекс ADR добавлены 026–028; ссылки на удалённые файлы убраны из `CLAUDE.md` (п. 4–6 источников истины), `docs/reference-ui/README.md`, `.env.example`, `.gitignore`.
+- Факты сверены с кодом: 80 операций OpenAPI, 70 реализованы (нет generate/regenerate, DELETE scenario, admin/import/*, recommendation, users/groups progress, tasks/{id}); 30 активных сценариев (ДДС района 10, 03 — 6, 112 — 14); тестов: 649 unit, 134 интеграционных, 16 e2e (подсчёт функций, не прогон); замер 8 vCPU — из записи выше.
+- Проверено: скрипт проверки относительных ссылок в md — битых нет. Тесты не запускались (код не менялся). Ссылки на планы срезов в комментариях Go-кода и в тексте ADR оставлены как исторические.
+- Next: пользователь заполняет заказчика/команду/видео, если нужно; при желании — PDF из README.

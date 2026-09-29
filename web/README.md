@@ -1,158 +1,80 @@
-# EmSim web client
+# Веб-клиент EmSim
 
-TypeScript/React SPA (RFC-001 §4.4), embedded into and served by the
-`emsim api` process (`web/embed.go`, `cmd/emsim/static.go`) — see the root
-[README.md](../README.md) for the full `docker compose up` flow.
+Одностраничное приложение на TypeScript и React. Собранный клиент встраивается в бинарник `emsim` (`web/embed.go`) и раздаётся процессом `api` на всех путях вне `/api/`; отдельный веб-сервер не нужен. Запуск всего стека — в корневом [README.md](../README.md).
+
+## Команды
 
 ```bash
 npm ci
-npm run dev     # http://localhost:5173, proxies /api to :8080 (start `go run ./cmd/emsim api` separately)
-npm run check   # regenerate API types from ../design-docs/contracts/openapi.yaml, then tsc -b
-npm run build   # -> dist/, embedded by web/embed.go's //go:embed
-npm run test:e2e # isolated Chromium + compose browser acceptance tests (DDS, 112 incoming-call, 112 card_only, 112 full_case, 112 free-text caller chat, 112 dictation)
+npm run dev        # http://localhost:5173, запросы /api проксируются на :8080 (emsim api запускается отдельно)
+npm run check      # сгенерировать типы API из ../design-docs/contracts/openapi.yaml и проверить tsc
+npm run build      # сборка в dist/, которую встраивает web/embed.go
+npm run lint       # oxlint
+npm run test:e2e   # браузерные сценарии в изолированном compose-стеке
 ```
 
-`src/api/schema.d.ts` is generated (`npm run generate:api`, an
-`openapi-typescript` wrapper) and gitignored — never edit it directly.
-`dist/` is likewise gitignored except for a `.gitkeep` placeholder, so
-`go build` works without Node ever having run; `make web-build` (or the
-Dockerfile's Node stage) populates it.
+`src/api/schema.d.ts` генерируется из OpenAPI (`npm run generate:api`) и в git не хранится — вручную его не правят. `dist/` тоже не хранится, кроме заглушки `.gitkeep`, поэтому `go build` работает без Node; наполняют его `make web-build` или стадия Node в `Dockerfile`.
 
-The DDS workplace (`routes/trainee/Workplace.tsx`) works a card the way the
-DDS guide describes (ADR-030): after "Открыть карточку", the trainee's own
-service in the card's service list becomes a live block
-(`ServiceStatusBlock`, passed to `IncidentCard` as `mineSlot`) with the
-current reaction status, a ▾ history of saved statuses and comments, and
-the ✎ pencil — a select built from `allowed_transitions`, a comment, and
-"Сохранить". A status in `terminal_statuses` warns that saving closes the
-card, and the server closes it. The queue, the card header and the
-instructor monitor show the derived `card_status` (red for «Не оповещено»,
-«Отказ», «Не завершено»); the instructor review lists the saved statuses
-with comments. The old accept/reject/comment/close buttons and the okrug
-form stay only for items whose `terminal_statuses` is empty (the archived
-slice 2–7 pilots).
+## Стек
 
-ДДС-2 (ADR-031) puts `CrewCommsPanel` («Связь с бригадой») beside the card
-for those items. It holds:
-- the ringing `incoming_call` banner with a countdown and «Ответить»
-  (`answer_incoming`);
-- the answered call's words and «Завершить разговор» (`call_end` without a
-  call log);
-- the phone, its contacts grouped by `role`, showing a phrase's text when
-  there is no recording;
-- one time-ordered log of reports and calls, with missed calls in red.
+React 18, React Router, TanStack Query для данных, `EventSource` для SSE, Vite. UI-кит не используется: стили повторяют интерфейс АРМ-112 по снимкам из [docs/reference-ui](../docs/reference-ui/README.md).
 
-The instructor monitor's «Связь» column reads `rows[].reports`: the latest
-report, its age and the actual reaction delay. The review screen
-(`DDSCommsReview`) lists every report and call with its text, answer and
-reaction times.
+## Структура
 
-The operator 112 intake has its own trainee workspace and instructor review
-screens. Prepared questions now reveal only their spoken answers; hold and
-resume preserve the server-side dialogue across reloads. The pre-slice
-incoming-call route (`Operator112IncomingWorkplace`, one training service
-labelled 03, `dispatch_intake`) is untouched and still used by scenarios
-that predate the card_only/full_case split. See
-[slice-112-3-plan.md](../slice-112-3-plan.md).
-The `card_only` and `full_case` (112-4) routes share one component
-(`Operator112ProfileCase.tsx`) on the ARM-112 layout from the operator
-instruction (`docs/reference-ui/112-instruction/image37.png`): phone strip
-with the elapsed timer, applicant row, address and description on the left,
-incident type search with the per-service maps on the right, and the orange
-services bar. Selecting an incident type adds profile 104, profile 101, or
-both, with blank answers. `full_case` additionally starts as a ringing call —
-the trainee answers, asks prepared questions (their own transcript/questions
-panel), then adds the incident type(s) and cards the same way `card_only`
-does; "нет контакта"/"срыв звонка" close the card without a notification,
-same as the incoming-call route. Controls the simulator does not model (SMS,
-call records, reminders, links) are shown disabled.
-Items created for this slice on carry `intake_state.finale=notify`: after
-saving the draft, the bar's «+» opens «Список оповещаемых служб» with the
-rule-suggested services already checked (manual changes require a reason),
-and «оповестить и сохранить карточку» (`notify_services`) writes one
-immutable notification record and locks the card; «завершить»
-(`complete_intake`) needs that notification (and, for `full_case`, the call
-ended). Items already open before this slice shipped have no `finale` and
-keep the prior modal/labels and `review_service_selection`/
-`complete_profile_case` route unchanged. × on the bar returns to the case
-list either way. See [slice-112-4-plan.md](../slice-112-4-plan.md) and
-[ADR-023](../design-docs/adr/023-operator112-notify-and-save.md).
-The instructor review (`ItemReview.tsx`) shows the dialogue transcript for
-`full_case`/incoming-call routes, the profile cards and action log for
-`card_only`/`full_case`, and either the notification record (recipients,
-suggested-vs-manual, reason, time) or the legacy dispatch/service-review
-snapshot, whichever the item actually produced. For a `caller_mode:
-"free_text"` case (112-5a) it also lists each caller-chat turn's status
-(answered with its adapter, no reply for a technical reason, cancelled by
-hold/end/dropped call, or still pending at stop) under its own "Ходы
-свободного диалога" heading, and the action log labels
-`send_caller_message`. The monitor (`Monitor.tsx`) row for an active 112
-item shows the incident type once chosen and "· оповещено" once notified,
-alongside the call state, and labels `send_caller_message` as the last
-action the same way.
-An assignment can contain several ordered 112 cases. The next case is offered
-when the current one closes, and the trainee can return to the case list after
-finishing the last case while the workplace remains open.
-The assignment editor preselects the next available case after an addition and
-can append cases to an already saved queue before the lesson starts.
-The compact applicant row contains name, applicant status, and editable
-telecom provider/channel. The entire address panel grows with its fields,
-while short screens scroll the page. The card's training availability
-indicator is local to the current browser and workstation: an open card
-forces "unavailable" until ten seconds after closure, then restores the
-manual choice. It does not report SIP connectivity.
+| Каталог | Что там |
+|---|---|
+| `src/api/` | клиенты REST и SSE, типы из OpenAPI |
+| `src/components/` | общие компоненты: карточка АРМ-112, таблица критериев, автооценка 112, эталон карточки |
+| `src/lib/` | запись микрофона и WAV для диктовки, вспомогательные функции |
+| `src/routes/trainee/` | рабочее место обучаемого и история |
+| `src/routes/instructor/` | занятия, монитор, разбор, отчёт, каталог и редактор сценариев |
+| `src/routes/admin/` | экраны администратора |
+| `e2e/` | сценарии Playwright |
 
-For `full_case` items with `intake_state.caller_mode: "free_text"`
-(112-5a, [ADR-024](../design-docs/adr/024-operator112-async-caller-reply.md)),
-`CallerChat.tsx` replaces the prepared-questions transcript panel with a
-floating chat window (collapsible to a launcher button with an unread badge;
-open/collapsed persists per item in localStorage). The operator types
-free-text messages; the caller's reply arrives asynchronously (a worker task,
-not part of the command's own transaction) and never bumps `item.seq`, so an
-unsaved card draft survives it — the card's own `useEffect` resets the draft
-off `JSON.stringify(item.card)`, not `item.seq`, specifically because every
-accepted command (including a chat message) bumps the latter. While a reply
-is pending the window shows "Заявитель печатает…"; hold, end-call, or a
-dropped/no-contact close cancel that pending turn instead of leaving it
-stuck. This slice's replies come from a deterministic six-phrase stub
-(`adapter: "stub/v1"`); 112-5b swaps only the `CallerReplier` port for a real
-model.
+## Рабочее место ДДС
 
-Dictation (112-8a, [ADR-037](../design-docs/adr/037-operator112-dictation.md)):
-when the item carries `dictation.available`, the chat input has a microphone
-button. `lib/microphone.ts` records one phrase through an AudioWorklet and
-`lib/wav.ts` downsamples it to 16 kHz mono PCM16 WAV in the browser;
-`api/dictation.ts` posts it to `POST /items/{id}/dictation` and the recognised
-text is appended to the input box — never sent by itself. The operator edits
-it and sends the ordinary `send_caller_message`, with `payload.input: "voice"`
-if the text was dictated; the instructor's review marks such lines with a
-microphone icon. Audio lives only in memory: nothing is stored in the browser
-or on the server. The microphone needs HTTPS or localhost; a missing
-permission, a busy or unavailable engine only show a message next to the input
-and typing keeps working. `e2e` runs the api with `DICTATION=stub`, so the
-flow is exercised with the fake microphone and no speech model.
+`routes/trainee/Workplace.tsx`. После «Открыть карточку» блок своей службы в списке служб карточки становится рабочим: текущий статус реагирования, «▾ История статусов» и «✎» — выбор статуса из разрешённых переходов, комментарий, «Сохранить». Если статус финальный, интерфейс предупреждает, что сохранение закроет карточку.
 
-`test:e2e` creates a uniquely named Compose project with its own volumes and
-free localhost ports, feeds Chromium `seed/voice-assets/crew_leader_greeting.wav`
-as a fake microphone, and removes that project after the test. Install the
-browser once locally with:
+Справа — панель «Связь с бригадой»:
+
+- баннер входящего звонка с обратным отсчётом и «Ответить»;
+- слова собеседника и «Завершить разговор»;
+- телефон с контактами, сгруппированными по ролям; если записанной фразы нет, показывается её текст;
+- единый журнал докладов и звонков по времени, пропущенные — красным.
+
+Список карточек, шапка карточки и монитор преподавателя показывают вычисляемый статус карточки. Старые кнопки «принять / отклонить / комментарий / закрыть» и правка округа остаются только для архивных пилотов, у служб которых нет финальных статусов.
+
+## Рабочее место оператора 112
+
+`routes/trainee/Operator112ProfileCase.tsx` — карточка в вёрстке АРМ-112: полоса телефона с таймером, строка заявителя, адрес и описание слева, поиск типа происшествия и профильные карты справа, оранжевая панель служб снизу. Выбор типа добавляет карты 101, 103 или 104 с пустыми ответами. Элементы, которые тренажёр не моделирует (СМС, напоминания, связи), показаны неактивными.
+
+- **Вызов.** Карточка начинается с входящего вызова; «Нет контакта» и «Срыв звонка» закрывают её без оповещения.
+- **Оповещение.** После сохранения черновика «+» на панели служб открывает «Список оповещаемых служб» с предложенными по правилам службами (ручное изменение требует причины). «Оповестить и сохранить карточку» фиксирует неизменяемую запись и блокирует карточку; «Завершить» доступно после оповещения и окончания разговора.
+- **Чат с заявителем** (`CallerChat.tsx`) — плавающее окно, которое можно свернуть в кнопку со счётчиком непрочитанных. Ответ заявителя приходит асинхронно и не меняет версию карточки, поэтому несохранённый черновик не теряется. Пока ответ готовится, окно показывает «Заявитель печатает…».
+- **Диктовка.** Если сервер сообщает, что диктовка доступна, у поля ввода появляется микрофон. `lib/microphone.ts` записывает одну фразу через AudioWorklet, `lib/wav.ts` переводит её в WAV 16 кГц моно, клиент отправляет её на `POST /items/{id}/dictation` и дописывает распознанный текст в поле ввода — сам он не отправляется. Аудио живёт только в памяти. Микрофону нужен HTTPS или `localhost`; при отказе в доступе или недоступном распознавании показывается сообщение, печать работает.
+
+Старый маршрут входящего вызова (`Operator112Workplace.tsx`) сохранён для архивных сценариев.
+
+**Ознакомительный режим** (`Arm112Tour.tsx`, `Arm112CardTour.tsx`, `DDSCardTour.tsx`): кнопка на главном экране запускает тур с подсказками рядом с элементами интерфейса; при открытии главного экрана тур стартует сам, его можно закрыть. Памятка по интерфейсу — `public/arm112-reference.pdf`.
+
+## Экраны преподавателя
+
+- `Lessons.tsx`, `LessonDetail.tsx`, `LessonSettings.tsx`, `RandomFill.tsx` — создание занятия, назначения, нормативы, веса и порог, случайное заполнение очередей.
+- `Monitor.tsx` — монитор занятия по SSE; для ДДС колонка «Связь», для 112 — состояние вызова, тип, отметка об оповещении.
+- `LessonAssessments.tsx`, `ItemReview.tsx` — разбор: разговор с источником каждой реплики заявителя и отметкой надиктованных фраз, карточка и эталон, статусы и связь ДДС, автооценка по критериям (`components/CriteriaTable.tsx`, `components/IntakeAutoAssessment.tsx`) и форма экспертной ревизии.
+- `LessonReport.tsx` — отчёт, CSV и PDF.
+- `ScenarioCatalogue.tsx`, `ScenarioDetail.tsx`, `ScenarioEditor.tsx`, `ScenarioPreview.tsx` — каталог, просмотр, редактор сценариев 112 и предпросмотр «пройти самому».
+
+## Экраны администратора
+
+`routes/admin/`: `Users` (создание, CSV-импорт с листом паролей, которые сервер показывает один раз, блокировка, сеансы), `Workstations`, `Status` (нагрузка, версия, резервные копии, целостность, режим обслуживания, упавшие задачи), `Audit`, `Reports` (использование и сбои, CSV), `Config` (только чтение). `routes/ChangePassword.tsx` — обязательная смена пароля; до неё сервер отклоняет остальные запросы.
+
+## e2e
+
+`npm run test:e2e` (`e2e/run.mjs`) поднимает compose-проект с уникальным именем, своими томами и свободными портами, без моделей и с заглушкой диктовки. Chromium получает `seed/voice-assets/crew_leader_greeting.wav` как микрофон. После прогона удаляется только этот проект. Для экранов администратора стек запускается с `PASSWORD_FORCE_CHANGE=admin` и `LOGIN_LOCKOUT_ATTEMPTS=3`.
+
+Браузер для локального запуска ставится один раз:
 
 ```bash
 PLAYWRIGHT_BROWSERS_PATH="$PWD/.playwright-browsers" npx playwright install chromium
 ```
-
-## Administrator screens (ADR-038)
-
-Under `routes/admin/`: `Users` (create one by one, `ImportPanel` for a CSV
-class — the server's generated passwords are shown once and offered as a
-sheet built in the browser — lock badge with «Разблокировать», and
-`SessionsPanel`), `Workstations`, `Status` (load, build version, backups,
-`IntegrityPanel`, maintenance mode, failed tasks), `Audit`, `Reports`
-(usage as one-series day bars plus totals, and failures; both with CSV) and
-`Config` (read-only). `routes/ChangePassword.tsx` is where `RequireAuth`
-sends a session whose `user.credentials_change_required` is set; the server
-refuses everything else for it (`403 password_change_required`). Labels for
-audit actions, task kinds and integrity sections live in `adminLabels.ts`.
-The e2e specs `admin-*.spec.ts` need the stack to run with
-`PASSWORD_FORCE_CHANGE=admin` and `LOGIN_LOCKOUT_ATTEMPTS=3` (`e2e/run.mjs`
-sets both).
