@@ -131,14 +131,14 @@ export function CallerChat({ item, open, onToggle, pending, rejected, onSend }: 
   </button>;
 
   return <div className="caller-chat" role="dialog" aria-label="Чат с заявителем">
-    <header className="caller-chat-head">
+    <header className="caller-chat-head" data-tour-target="card-chat-header">
       <div className="caller-chat-head-title"><strong>Заявитель</strong><span>{item.card.aon}</span></div>
       <span className="caller-chat-head-status">
         {state.call_status === "connected" ? "разговор" : state.call_status === "held" ? "на удержании" : state.call_status === "ended" ? "завершён" : ""}
       </span>
       <button type="button" className="caller-chat-collapse" aria-label="Свернуть чат" onClick={onToggle}><CloseIcon size={14} /></button>
     </header>
-    <div className="caller-chat-log" aria-live="polite">
+    <div className="caller-chat-log" data-tour-target="card-chat-log" aria-live="polite">
       {state.transcript.length === 0 && <p className="caller-chat-hint">Напишите первое сообщение заявителю.</p>}
       {state.transcript.map((line, index) => <p key={line.id ?? index} className={`caller-chat-line caller-chat-${line.speaker ?? "operator"}`}>{line.text}</p>)}
       {waiting && <p className="caller-chat-typing">Заявитель печатает…</p>}
@@ -148,19 +148,20 @@ export function CallerChat({ item, open, onToggle, pending, rejected, onSend }: 
     {held && <p className="caller-chat-hint">Вызов на удержании. Вернитесь к разговору, чтобы написать заявителю.</p>}
     {!held && !connected && <p className="caller-chat-hint">Разговор завершён. История сохранена.</p>}
     {(connected || held) && <div className="caller-chat-input">
-      <textarea aria-label="Сообщение заявителю" value={text} disabled={!canType}
+      <textarea aria-label="Сообщение заявителю" data-tour-target="card-chat-input" value={text} disabled={!canType}
         placeholder={waiting ? "Ожидание ответа…" : "Напишите сообщение…"}
         onChange={(event) => { setText(event.target.value); if (!event.target.value.trim()) setVoiceUsed(false); }}
         onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} />
       {phase === "recording" && <p className="caller-chat-dictation" role="status">Идёт запись… нажмите на микрофон, когда закончите.</p>}
       {phase === "recognizing" && <p className="caller-chat-dictation" role="status">Распознаю речь…</p>}
       {dictationError && <p className="caller-chat-dictation error" role="alert">{dictationError}</p>}
-      <div className="caller-chat-input-row">
+      <div className="caller-chat-input-row" data-tour-target="card-chat-actions">
         {dictation?.available && <button type="button" className="caller-chat-mic" aria-pressed={phase === "recording"}
+          data-tour-target="card-chat-mic"
           aria-label={phase === "recording" ? "Остановить запись" : "Надиктовать сообщение"} title={phase === "recording" ? "Остановить запись" : "Надиктовать сообщение"}
           disabled={phase === "recognizing" || (phase === "idle" && !canType)} onClick={() => void toggleDictation()}><MicIcon size={16} /></button>}
-        <span className={tooLong ? "caller-chat-counter error" : "caller-chat-counter"}>{charCount(text)} / {maxLength}</span>
-        <button type="button" disabled={!canType || !trimmed || tooLong} onClick={submit}>Отправить</button>
+        <span className={tooLong ? "caller-chat-counter error" : "caller-chat-counter"} data-tour-target="card-chat-counter">{charCount(text)} / {maxLength}</span>
+        <button type="button" data-tour-target="card-chat-send" disabled={!canType || !trimmed || tooLong} onClick={submit}>Отправить</button>
       </div>
     </div>}
   </div>;

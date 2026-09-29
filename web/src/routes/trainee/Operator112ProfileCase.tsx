@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { executeCommand, type Command, type Receipt } from "../../api/commands";
 import { errorMessage } from "../../api/errors";
@@ -9,6 +9,7 @@ import { BellIcon, CloseIcon, GlobeIcon, HangupIcon, HelpIcon, LinkIcon, MapIcon
 import { formatDateTime } from "../../format";
 import { armCardNumber, armOperatorNumber, armShortName } from "../../arm112Number";
 import { IncomingCallDialog } from "./Arm112Main";
+import { Arm112CardTour } from "./Arm112CardTour";
 import { CallerChat } from "./CallerChat";
 import { applicantStatuses, serviceNames, serviceTiles } from "../../intakeServices";
 import { profileFieldVisible } from "../../intakeProfile";
@@ -86,12 +87,12 @@ function invalidFields(card: IntakeCard): Set<string> {
 // Underlined ARM field: caption above, value on the line. The "?" toggle keeps
 // the domain distinction "заявитель не знает" without the reference layout
 // losing its plain look.
-function ArmField({ label, field, onChange, disabled, className, placeholder, invalid, children }: {
+function ArmField({ label, field, onChange, disabled, className, placeholder, invalid, children, tourTarget }: {
   label: string; field: IntakeField | undefined; onChange: (value: IntakeField) => void; disabled: boolean;
-  className?: string; placeholder?: string; invalid?: boolean; children?: ReactNode;
+  className?: string; placeholder?: string; invalid?: boolean; children?: ReactNode; tourTarget?: string;
 }) {
   const unknown = field?.state === "unknown";
-  return <div className={`arm112-field${unknown ? " is-unknown" : ""}${invalid ? " is-invalid" : ""}${className ? ` ${className}` : ""}`}>
+  return <div className={`arm112-field${unknown ? " is-unknown" : ""}${invalid ? " is-invalid" : ""}${className ? ` ${className}` : ""}`} data-tour-target={tourTarget}>
     <label><span>{label}:</span>
       <input aria-label={`${label}: значение`} aria-invalid={invalid || undefined} value={knownValue(field)} maxLength={1000} disabled={disabled || unknown}
         placeholder={unknown ? "неизвестно" : placeholder} onChange={(event) => onChange(fromText(event.target.value))} />
@@ -102,12 +103,12 @@ function ArmField({ label, field, onChange, disabled, className, placeholder, in
   </div>;
 }
 
-function PhoneBox({ label, field, aon, onChange, disabled, icons, copyAon }: {
-  label: string; field?: IntakeField; aon: string; onChange?: (value: IntakeField) => void; disabled: boolean; icons: ReactNode; copyAon?: boolean;
+function PhoneBox({ label, field, aon, onChange, disabled, icons, copyAon, tourTarget }: {
+  label: string; field?: IntakeField; aon: string; onChange?: (value: IntakeField) => void; disabled: boolean; icons: ReactNode; copyAon?: boolean; tourTarget?: string;
 }) {
   return <>
     <div className="arm112-phone-side" aria-hidden="true"><PhoneIcon size={22} /><SmsIcon size={17} /></div>
-    <div className="arm112-phone">
+    <div className="arm112-phone" data-tour-target={tourTarget}>
       <div className="arm112-phone-head"><span>{label}</span><span className="arm112-phone-icons" aria-hidden="true">{icons}</span></div>
       {onChange ? <input aria-label={`${label}: значение`} value={knownValue(field)} placeholder={phonePlaceholder} maxLength={40} disabled={disabled}
         onChange={(event) => onChange(fromText(event.target.value))} />
@@ -121,6 +122,9 @@ function PhoneBox({ label, field, aon, onChange, disabled, icons, copyAon }: {
 // card opens and answers it without a second click.
 export function Operator112ProfileCase({ me, item, onClose, acceptOnOpen }: { me: Me; item: IntakeItem; onClose?: () => void; acceptOnOpen?: boolean }) {
   const client = useQueryClient();
+  const cardRef = useRef<HTMLElement>(null);
+  const [cardTourOpen, setCardTourOpen] = useState(true);
+  const closeCardTour = useCallback(() => setCardTourOpen(false), []);
   const [storage] = useState(() => availableLocalStorage());
   const [pending, setPending] = useState<PendingCommand | null>(() => storage ? loadPending(storage, me.user.id, item.id) : null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
@@ -160,6 +164,7 @@ export function Operator112ProfileCase({ me, item, onClose, acceptOnOpen }: { me
     try { storage?.setItem(chatStorageKey, next ? "open" : "closed"); } catch { /* per-viewer convenience only */ }
     return next;
   });
+  const openChatForTour = useCallback(() => setChatOpen(true), []);
   const state = item.intake_state;
   const catalog = state.catalog;
   const terminal = item.state === "closed" || item.state === "interrupted";
@@ -295,7 +300,7 @@ export function Operator112ProfileCase({ me, item, onClose, acceptOnOpen }: { me
   </div>;
   const operator = [armOperatorNumber(me.user.id), me.workstation ? `АРМ ${me.workstation.number}` : null, armShortName(me.user.full_name)].filter(Boolean).join(", ");
 
-  return <section className="arm112 intake-profile-case">
+  return <section ref={cardRef} className="arm112 intake-profile-case">
     <header className="arm112-top">
       <div className="arm112-line">
         <span className="arm112-hangup" aria-hidden="true"><HangupIcon size={26} /></span>
@@ -303,19 +308,19 @@ export function Operator112ProfileCase({ me, item, onClose, acceptOnOpen }: { me
           <span>{state.call_status === "ringing" ? "входящий вызов" : state.call_status === "connected" ? "разговор" : state.call_status === "held" ? "на удержании" : "разговор завершён"}</span>
           <div>
             {item.state === "opened" && state.call_status === "ringing" && callWindowHidden && <button type="button" disabled={!!pending} onClick={() => send("answer_incoming", {})}>ответить</button>}
-            {state.call_status === "connected" && !terminal && <button type="button" disabled={!!pending} onClick={() => send("hold_incoming", {})}>удержать</button>}
-            {state.call_status === "held" && !terminal && <button type="button" disabled={!!pending} onClick={() => send("resume_incoming", {})}>вернуться к разговору</button>}
-            {(state.call_status === "connected" || state.call_status === "held") && !terminal && <button type="button" disabled={!!pending} onClick={() => send("end_incoming", {})}>завершить разговор</button>}
-            {state.caller_mode === "free_text" && bodyReady && <button type="button" aria-pressed={chatOpen} onClick={toggleChat}>{chatOpen ? "скрыть чат" : "чат с заявителем"}</button>}
+            {state.call_status === "connected" && !terminal && <button type="button" data-tour-target="card-call-hold" disabled={!!pending} onClick={() => send("hold_incoming", {})}>удержать</button>}
+            {state.call_status === "held" && !terminal && <button type="button" data-tour-target="card-call-resume" disabled={!!pending} onClick={() => send("resume_incoming", {})}>вернуться к разговору</button>}
+            {(state.call_status === "connected" || state.call_status === "held") && !terminal && <button type="button" data-tour-target="card-call-end" disabled={!!pending} onClick={() => send("end_incoming", {})}>завершить разговор</button>}
+            {state.caller_mode === "free_text" && bodyReady && <button type="button" data-tour-target="card-chat-toggle" aria-pressed={chatOpen} onClick={toggleChat}>{chatOpen ? "скрыть чат" : "чат с заявителем"}</button>}
           </div>
         </div> : <div className="arm112-line-state"><span>не подключен</span></div>}
       </div>
-      <PhoneBox label="АОН" aon={item.card.aon} disabled icons={<><HelpIcon size={15} /><PinIcon size={15} /><GlobeIcon size={15} /></>} />
-      <PhoneBox label="предоставленный" field={draft.provided_phone} aon={item.card.aon} disabled={!editable} copyAon icons={<GlobeIcon size={15} />} onChange={(value) => update("provided_phone", value)} />
-      <PhoneBox label="телефон на место" field={draft.on_site_phone ?? empty} aon={item.card.aon} disabled={!editable} copyAon icons={<GlobeIcon size={15} />} onChange={(value) => update("on_site_phone", value)} />
+      <PhoneBox label="АОН" aon={item.card.aon} disabled tourTarget="card-aon" icons={<><HelpIcon size={15} /><PinIcon size={15} /><GlobeIcon size={15} /></>} />
+      <PhoneBox label="предоставленный" field={draft.provided_phone} aon={item.card.aon} disabled={!editable} copyAon tourTarget="card-provided-phone" icons={<GlobeIcon size={15} />} onChange={(value) => update("provided_phone", value)} />
+      <PhoneBox label="телефон на место" field={draft.on_site_phone ?? empty} aon={item.card.aon} disabled={!editable} copyAon tourTarget="card-on-site-phone" icons={<GlobeIcon size={15} />} onChange={(value) => update("on_site_phone", value)} />
       <div className="arm112-records">
         <div><button type="button" disabled title={unavailable}>записи звонков</button><button type="button" disabled title={unavailable}>список SMS</button></div>
-        <select className="arm112-plain" aria-label="Канал связи" value={channelValue} disabled={!editable}
+        <select className="arm112-plain" aria-label="Канал связи" data-tour-target="card-channel" value={channelValue} disabled={!editable}
           onChange={(event) => update("channel", event.target.value === "unknown" ? { state: "unknown" } : fromText(event.target.value))}>
           <option value="">канал связи</option>
           {channels.map((channel) => <option key={channel} value={channel}>{channel}</option>)}
@@ -345,10 +350,10 @@ export function Operator112ProfileCase({ me, item, onClose, acceptOnOpen }: { me
     </div> : <>
       <form id="profile-case-form" className="arm112-body" onSubmit={save}>
         <div className="arm112-strip arm112-applicant">
-          <input className={`arm112-plain${invalid.has("applicant_name") ? " is-invalid" : ""}`} aria-invalid={invalid.has("applicant_name") || undefined}
+          <input className={`arm112-plain${invalid.has("applicant_name") ? " is-invalid" : ""}`} data-tour-target="card-applicant-name" aria-invalid={invalid.has("applicant_name") || undefined}
             aria-label="Фамилия и имя заявителя" placeholder="Фамилия и имя заявителя" maxLength={1000}
             value={knownValue(draft.applicant_name)} disabled={!editable} onChange={(event) => update("applicant_name", fromText(event.target.value))} />
-          <select className="arm112-plain" aria-label="Статус заявителя" value={statusValue} disabled={!editable}
+          <select className="arm112-plain" aria-label="Статус заявителя" data-tour-target="card-applicant-status" value={statusValue} disabled={!editable}
             onChange={(event) => update("applicant_status", event.target.value === "unknown" ? { state: "unknown" } : fromText(event.target.value))}>
             <option value="">выберите статус</option>
             {applicantStatuses.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -376,34 +381,34 @@ export function Operator112ProfileCase({ me, item, onClose, acceptOnOpen }: { me
         <div className="arm112-left">
           <section className="arm112-panel arm112-address" aria-label="Адрес">
             <div className="arm112-address-head"><span>Адрес:</span><MapIcon size={17} /></div>
-            <div className="arm112-address-line"><output aria-label="Адрес целиком">{addressSummary}</output>
+            <div className="arm112-address-line"><output aria-label="Адрес целиком" data-tour-target="card-address-summary">{addressSummary}</output>
               <button type="button" className="arm112-x" aria-label="Очистить адрес целиком" disabled={!editable} onClick={clearAddress}><CloseIcon size={18} /></button></div>
             <div className="arm112-address-row arm112-cols-3">
-              <ArmField label="Страна" field={address.country} invalid={invalid.has("address.country")} disabled={!editable} onChange={(v) => updateAddress("country", v)} />
-              <ArmField label="Субъект" field={address.region} invalid={invalid.has("address.region")} disabled={!editable} onChange={(v) => updateAddress("region", v)} />
-              <ArmField label="Населённый пункт" field={address.city} invalid={invalid.has("address.city")} disabled={!editable} onChange={(v) => updateAddress("city", v)} />
+              <ArmField label="Страна" tourTarget="card-address-country" field={address.country} invalid={invalid.has("address.country")} disabled={!editable} onChange={(v) => updateAddress("country", v)} />
+              <ArmField label="Субъект" tourTarget="card-address-region" field={address.region} invalid={invalid.has("address.region")} disabled={!editable} onChange={(v) => updateAddress("region", v)} />
+              <ArmField label="Населённый пункт" tourTarget="card-address-city" field={address.city} invalid={invalid.has("address.city")} disabled={!editable} onChange={(v) => updateAddress("city", v)} />
             </div>
             <div className="arm112-address-row arm112-cols-wide">
-              <ArmField label="Объект" field={address.object} invalid={invalid.has("address.object")} disabled={!editable} onChange={(v) => updateAddress("object", v)} />
-              <ArmField label="Округ" field={address.okrug} invalid={invalid.has("address.okrug")} disabled={!editable} onChange={(v) => updateAddress("okrug", v)} />
-              <ArmField label="Район" field={address.district} invalid={invalid.has("address.district")} disabled={!editable} onChange={(v) => updateAddress("district", v)} />
+              <ArmField label="Объект" tourTarget="card-address-object" field={address.object} invalid={invalid.has("address.object")} disabled={!editable} onChange={(v) => updateAddress("object", v)} />
+              <ArmField label="Округ" tourTarget="card-address-okrug" field={address.okrug} invalid={invalid.has("address.okrug")} disabled={!editable} onChange={(v) => updateAddress("okrug", v)} />
+              <ArmField label="Район" tourTarget="card-address-district" field={address.district} invalid={invalid.has("address.district")} disabled={!editable} onChange={(v) => updateAddress("district", v)} />
             </div>
             <div className="arm112-address-row arm112-cols-wide">
-              <ArmField label="Улица" field={address.street} invalid={invalid.has("address.street")} disabled={!editable} onChange={(v) => updateAddress("street", v)} />
-              <ArmField label="Дом/Вл" field={address.house} invalid={invalid.has("address.house")} disabled={!editable} onChange={(v) => updateAddress("house", v)} />
-              <ArmField label="Корпус" field={address.building} invalid={invalid.has("address.building")} disabled={!editable} onChange={(v) => updateAddress("building", v)} />
+              <ArmField label="Улица" tourTarget="card-address-street" field={address.street} invalid={invalid.has("address.street")} disabled={!editable} onChange={(v) => updateAddress("street", v)} />
+              <ArmField label="Дом/Вл" tourTarget="card-address-house" field={address.house} invalid={invalid.has("address.house")} disabled={!editable} onChange={(v) => updateAddress("house", v)} />
+              <ArmField label="Корпус" tourTarget="card-address-building" field={address.building} invalid={invalid.has("address.building")} disabled={!editable} onChange={(v) => updateAddress("building", v)} />
             </div>
             <div className="arm112-address-row arm112-cols-5">
-              <ArmField label="Стр/соор" field={address.structure} invalid={invalid.has("address.structure")} disabled={!editable} onChange={(v) => updateAddress("structure", v)} />
-              <ArmField label="Квартира/офис" field={address.flat} invalid={invalid.has("address.flat")} disabled={!editable} onChange={(v) => updateAddress("flat", v)} />
-              <ArmField label="Подъезд" field={address.entrance} invalid={invalid.has("address.entrance")} disabled={!editable} onChange={(v) => updateAddress("entrance", v)} />
-              <ArmField label="Этаж" field={address.floor} invalid={invalid.has("address.floor")} disabled={!editable} onChange={(v) => updateAddress("floor", v)} />
-              <ArmField label="Код" field={address.code} invalid={invalid.has("address.code")} disabled={!editable} onChange={(v) => updateAddress("code", v)} />
+              <ArmField label="Стр/соор" tourTarget="card-address-structure" field={address.structure} invalid={invalid.has("address.structure")} disabled={!editable} onChange={(v) => updateAddress("structure", v)} />
+              <ArmField label="Квартира/офис" tourTarget="card-address-flat" field={address.flat} invalid={invalid.has("address.flat")} disabled={!editable} onChange={(v) => updateAddress("flat", v)} />
+              <ArmField label="Подъезд" tourTarget="card-address-entrance" field={address.entrance} invalid={invalid.has("address.entrance")} disabled={!editable} onChange={(v) => updateAddress("entrance", v)} />
+              <ArmField label="Этаж" tourTarget="card-address-floor" field={address.floor} invalid={invalid.has("address.floor")} disabled={!editable} onChange={(v) => updateAddress("floor", v)} />
+              <ArmField label="Код" tourTarget="card-address-code" field={address.code} invalid={invalid.has("address.code")} disabled={!editable} onChange={(v) => updateAddress("code", v)} />
             </div>
             <div className="arm112-address-row arm112-cols-descriptive">
-              <ArmField label="Описательный адрес" field={address.descriptive} invalid={invalid.has("address.descriptive")} disabled={!editable} onChange={(v) => updateAddress("descriptive", v)} />
-              <ArmField label="Ориентир" field={address.landmark} invalid={invalid.has("address.landmark")} disabled={!editable} onChange={(v) => updateAddress("landmark", v)} />
-              <button type="button" className="arm112-small" disabled={!editable} onClick={clearAddress}>очистить адрес</button>
+              <ArmField label="Описательный адрес" tourTarget="card-address-descriptive" field={address.descriptive} invalid={invalid.has("address.descriptive")} disabled={!editable} onChange={(v) => updateAddress("descriptive", v)} />
+              <ArmField label="Ориентир" tourTarget="card-address-landmark" field={address.landmark} invalid={invalid.has("address.landmark")} disabled={!editable} onChange={(v) => updateAddress("landmark", v)} />
+              <button type="button" className="arm112-small" data-tour-target="card-address-clear" disabled={!editable} onClick={clearAddress}>очистить адрес</button>
             </div>
           </section>
           <section className={`arm112-panel arm112-description${invalid.has("complaint") ? " is-invalid" : ""}`}>
@@ -515,6 +520,9 @@ export function Operator112ProfileCase({ me, item, onClose, acceptOnOpen }: { me
 
     {isCall && state.caller_mode === "free_text" && bodyReady && <CallerChat item={item} open={chatOpen} onToggle={toggleChat} pending={!!pending} rejected={chatRejection}
       onSend={(text, input) => send("send_caller_message", input ? { text, input } : { text })} />}
+    {cardTourOpen && editable && <Arm112CardTour rootRef={cardRef} onClose={closeCardTour}
+      callStatus={state.call_status} hasChat={isCall && state.caller_mode === "free_text"}
+      dictationAvailable={!!item.dictation?.available} onChatStep={openChatForTour} />}
   </section>;
 }
 
