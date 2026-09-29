@@ -1,9 +1,10 @@
-import { useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import type { CardView, Item } from "../../api/workplace";
 import { formatPhone } from "../../arm112Number";
 import { BellIcon, BoltIcon, CloseIcon, PrintIcon, WarningIcon, HangupIcon, LinkIcon, MessageIcon, PhoneIcon, SmsIcon, StopwatchIcon } from "../../components/Arm112Icons";
 import { formatDateTime } from "../../format";
 import { applicantStatusLabel, cardStatusAlarm, cardStatusLabel, reactionLabel } from "../../labels";
+import { DDSCardTour } from "./DDSCardTour";
 
 type DDSItem = Omit<Item, "card"> & { card: CardView };
 
@@ -42,8 +43,11 @@ export function DDSArmCard({ item, serverNowMs, statusSlot, comms, footer, onOpe
   // are not sent to the server and are not assessed (user decision 2026-09-29).
   const [emergency, setEmergency] = useState(false);
   const [incidentFlag, setIncidentFlag] = useState(false);
+  const [tourOpen, setTourOpen] = useState(true);
+  const cardRef = useRef<HTMLElement>(null);
+  const closeTour = useCallback(() => setTourOpen(false), []);
 
-  return <section className="arm112 dds-arm" aria-label={`Карточка происшествия № ${card.number}`}>
+  return <section ref={cardRef} className="arm112 dds-arm" aria-label={`Карточка происшествия № ${card.number}`}>
     <header className="arm112-top">
       <div className="arm112-line">
         <span className="arm112-hangup" aria-hidden="true"><HangupIcon size={26} /></span>
@@ -51,10 +55,10 @@ export function DDSArmCard({ item, serverNowMs, statusSlot, comms, footer, onOpe
           <div><button type="button" disabled title={unavailable}>записи звонков</button><button type="button" disabled title={unavailable}>список SMS</button></div>
         </div>
       </div>
-      <Phone label="АОН" value={card.phones?.aon} />
-      <Phone label="предоставленный" value={card.phones?.provided ?? card.applicant?.phone} />
-      <Phone label="телефон на место" value={card.phones?.on_site} />
-      <div className="arm112-incident">
+      <Phone label="АОН" value={card.phones?.aon} tourTarget="dds-aon" />
+      <Phone label="предоставленный" value={card.phones?.provided ?? card.applicant?.phone} tourTarget="dds-provided-phone" />
+      <Phone label="телефон на место" value={card.phones?.on_site} tourTarget="dds-on-site-phone" />
+      <div className="arm112-incident" data-tour-target="dds-card-identity">
         <strong>Происшествие {card.number}</strong>
         <span>Зарег. <span className="dds-card-registration">{formatDateTime(card.registered_at)}</span>{card.channel ? ` · ${card.channel}` : ""}</span>
         <span>Статус: <span className={`card-status-badge${cardStatusAlarm(item.card_status) ? " card-status-alarm" : ""}`}>{cardStatusLabel(item.card_status)}</span></span>
@@ -68,11 +72,11 @@ export function DDSArmCard({ item, serverNowMs, statusSlot, comms, footer, onOpe
       <button type="button" disabled={opening} onClick={onOpen}>Открыть карточку</button>
     </div> : <div className="arm112-body dds-arm-body">
       <div className="arm112-strip arm112-applicant">
-        <span className="dds-arm-applicant">{card.applicant?.name ?? "Заявитель не указан"}</span>
+        <span className="dds-arm-applicant" data-tour-target="dds-applicant">{card.applicant?.name ?? "Заявитель не указан"}</span>
         {applicantStatus && <span className="dds-arm-muted">{applicantStatus.toLocaleLowerCase("ru-RU")}</span>}
       </div>
       <div className="dds-arm-flagrow">
-      <div className="arm112-strip dds-arm-flags">
+      <div className="arm112-strip dds-arm-flags" data-tour-target="dds-flags">
         <span>Пострадавшие: <b>{victims > 0 ? victims : "нет"}</b></span>
         <span>Отказ от скорой: <b>нет</b></span>
         <span>Заблокированные: <b>нет</b></span>
@@ -86,7 +90,7 @@ export function DDSArmCard({ item, serverNowMs, statusSlot, comms, footer, onOpe
       </div>
 
       <div className="arm112-left">
-        <section className="arm112-panel dds-arm-address" aria-label="Адрес">
+        <section className="arm112-panel dds-arm-address" aria-label="Адрес" data-tour-target="dds-address">
           <p className="dds-arm-address-line">{formatAddress(card.address)}</p>
           {card.address.okrug && <p className="dds-arm-muted">Округ: {card.address.okrug}</p>}
         </section>
@@ -95,8 +99,8 @@ export function DDSArmCard({ item, serverNowMs, statusSlot, comms, footer, onOpe
 
       <div className="arm112-right">
         <section className="arm112-profile dds-arm-incident">
-          <header><h3>{card.incident.type_name ?? "Тип не указан"}{card.incident.type_code ? ` · ${card.incident.type_code}` : ""}</h3></header>
-          <p aria-label="Описание со слов заявителя">{card.incident.description ?? "Описание не указано."}</p>
+          <header data-tour-target="dds-incident-type"><h3>{card.incident.type_name ?? "Тип не указан"}{card.incident.type_code ? ` · ${card.incident.type_code}` : ""}</h3></header>
+          <p aria-label="Описание со слов заявителя" data-tour-target="dds-description">{card.incident.description ?? "Описание не указано."}</p>
         </section>
         {features && <section className="arm112-panel dds-arm-class"><span className="dds-arm-muted">Класс.:</span> <b>{features}</b></section>}
         {comms}
@@ -118,15 +122,15 @@ export function DDSArmCard({ item, serverNowMs, statusSlot, comms, footer, onOpe
 
     <footer className="arm112-bar dds-arm-bar">
       <span className="arm112-bar-label">Службы:</span>
-      <ul className="arm112-services" aria-label="Список оповещения">
-        {card.notification_list.map((service, index) => <li key={index} className={`dds-arm-tile${service.mine ? " is-mine" : ""}`} title={service.service}>
+      <ul className="arm112-services" aria-label="Список оповещения" data-tour-target="dds-services">
+        {card.notification_list.map((service, index) => <li key={index} className={`dds-arm-tile${service.mine ? " is-mine" : ""}`} title={service.service} data-tour-target={service.mine ? "dds-own-service" : undefined}>
           <strong>{service.service ?? "Служба"}</strong>
           {service.mine ? statusSlot : <span>{reactionLabel(service.status)}</span>}
         </li>)}
         {fixedReferenceServices.map((name) => <li key={name} className="dds-arm-tile" title={name}><strong>{name}</strong><span>{reactionLabel("added")}</span></li>)}
       </ul>
       <div className="arm112-bar-actions">
-        <button type="button" className="arm112-bar-text dds-arm-back" onClick={onClose}>к списку происшествий</button>
+        <button type="button" className="arm112-bar-text dds-arm-back" data-tour-target="dds-back" onClick={onClose}>к списку происшествий</button>
         <button type="button" className="arm112-bar-square" aria-label="Связать карточки" title={unavailable} disabled><LinkIcon size={24} /></button>
         <button type="button" className="arm112-bar-square" aria-label="Напоминание" title={unavailable} disabled><StopwatchIcon size={24} /></button>
         <button type="button" className="arm112-bar-square" aria-label="Важное происшествие" title={unavailable} disabled><BellIcon size={24} /></button>
@@ -134,6 +138,9 @@ export function DDSArmCard({ item, serverNowMs, statusSlot, comms, footer, onOpe
         <button type="button" className="arm112-bar-square" aria-label="К списку происшествий" title="Закрыть карточку и вернуться к списку" onClick={onClose}><CloseIcon size={24} /></button>
       </div>
     </footer>
+    {tourOpen && !offered && <DDSCardTour rootRef={cardRef} onClose={closeTour}
+      hasPhone={!!comms && item.state !== "closed" && item.state !== "interrupted"}
+      hasOwnService={card.notification_list.some((service) => service.mine)} />}
   </section>;
 }
 
@@ -151,17 +158,17 @@ function DDSTimer({ item, serverNowMs }: { item: DDSItem; serverNowMs: number })
   const overdue = !!stage && seconds < 0;
   const abs = Math.abs(seconds);
   const text = stage ? `${overdue ? "+" : ""}${Math.floor(abs / 60)}:${String(abs % 60).padStart(2, "0")}` : "—:—";
-  return <div className={`arm112-timer dds-arm-timer${overdue ? " is-alert" : ""}`} role="timer" aria-label={stage ? `Норматив «${stage.label}»: ${overdue ? "просрочен на" : "осталось"} ${text}` : "Карточка закрыта"}>
+  return <div className={`arm112-timer dds-arm-timer${overdue ? " is-alert" : ""}`} role="timer" data-tour-target="dds-timer" aria-label={stage ? `Норматив «${stage.label}»: ${overdue ? "просрочен на" : "осталось"} ${text}` : "Карточка закрыта"}>
     <strong>{text}</strong>
     <span>{stage ? stage.label : "закрыта"}</span>
     {overdue && <small>просрочено</small>}
   </div>;
 }
 
-function Phone({ label, value }: { label: string; value?: string }) {
+function Phone({ label, value, tourTarget }: { label: string; value?: string; tourTarget?: string }) {
   return <>
     <div className="arm112-phone-side" aria-hidden="true"><PhoneIcon size={22} /><SmsIcon size={17} /></div>
-    <div className="arm112-phone">
+    <div className="arm112-phone" data-tour-target={tourTarget}>
       <div className="arm112-phone-head"><span>{label}</span></div>
       <output aria-label={label} className={value ? "" : "is-empty"}>{value ? formatPhone(value) : "+7 (   )   -   -"}</output>
     </div>

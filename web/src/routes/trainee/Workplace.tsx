@@ -569,12 +569,12 @@ function PhonePanel({ item, onChanged }: { item: DDSItem; onChanged: () => Promi
 
   return (
     <section className="phone-panel">
-      <header className="phone-panel-header">
+      <header className="phone-panel-header" data-tour-target="dds-phone-header">
         <div><span className="phone-panel-overline">Встроенный симулятор</span><h3>Телефон Т16Р</h3></div>
         <div className="phone-display"><span>Линия ДДС</span><strong>{contacts.find((candidate) => candidate.key === contact)?.number ?? "—"}</strong></div>
       </header>
       <div className="phone-panel-body">
-        <div className="phone-contacts" aria-label="Контакты для вызова">
+        <div className="phone-contacts" aria-label="Контакты для вызова" data-tour-target="dds-phone-contacts">
           <span className="phone-section-label">Кому звоним</span>
           {grouped.map((group) => (
             <div key={group.role} className="phone-contact-group" role="group" aria-label={contactRoleLabels[group.role]}>
@@ -587,7 +587,7 @@ function PhonePanel({ item, onChanged }: { item: DDSItem; onChanged: () => Promi
         {!callId ? (
           <div className="phone-start-control">
             <span>{incomingActive ? "Линия занята входящим звонком" : <>Громкая связь <b aria-label="включена">●</b></>}</span>
-            <button type="button" className="phone-call-button" onClick={() => void start()} disabled={!contact || isEnding || incomingActive}>Вызов</button>
+            <button type="button" className="phone-call-button" data-tour-target="dds-phone-call" onClick={() => void start()} disabled={!contact || isEnding || incomingActive}>Вызов</button>
           </div>
         ) : (
           <div className="phone-call-control">
@@ -656,7 +656,7 @@ function CrewCommsPanel({ item, serverNowMs, disabled, onAnswer, onEndIncoming, 
 
   return (
     <aside className="dds-comms-panel" aria-label="Связь с бригадой">
-      <h3>Связь с бригадой</h3>
+      <h3 data-tour-target="dds-comms-header">Связь с бригадой</h3>
       {ringing && !finished && (
         <div className="dds-incoming-call" role="alert">
           <div>
@@ -675,7 +675,7 @@ function CrewCommsPanel({ item, serverNowMs, disabled, onAnswer, onEndIncoming, 
         </div>
       )}
       {phone}
-      <ol className="dds-comms-log" aria-label="Журнал связи">
+      <ol className="dds-comms-log" aria-label="Журнал связи" data-tour-target="dds-comms-log">
         {entries.map((entry) => (
           <li key={entry.key} className={entry.alarm ? "dds-comms-alarm" : undefined}>
             <div className="dds-comms-meta">

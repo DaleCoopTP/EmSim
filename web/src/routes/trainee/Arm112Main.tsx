@@ -12,7 +12,7 @@ import {
   GearIcon, GlassesIcon, GlobeIcon, HeadsetIcon, HelicopterIcon, HelpIcon, InfoIcon, LinkIcon, MenuIcon, ScreenIcon, SearchIcon, StopwatchIcon,
 } from "../../components/Arm112Icons";
 import type { IntakeField, IntakeItem } from "./Operator112Workplace";
-import { Arm112Tour } from "./Arm112Tour";
+import { Arm112Tour, DDSMainTour } from "./Arm112Tour";
 import "../../arm112-main.css";
 
 const unavailable = "Недоступно в учебном АРМ";
@@ -34,7 +34,8 @@ export function Arm112Main({ me, run, items, search, onSearch, onOpen, notices, 
   onOpen: (id: string, accept?: boolean) => void;
   notices?: ReactNode;
 }) {
-  const [tourOpen, setTourOpen] = useState(() => run.exercise_type === "operator112_intake");
+  const is112 = run.exercise_type === "operator112_intake";
+  const [tourOpen, setTourOpen] = useState(true);
   const [tourPreviewOpen, setTourPreviewOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   const tourButtonRef = useRef<HTMLButtonElement>(null);
@@ -63,7 +64,7 @@ export function Arm112Main({ me, run, items, search, onSearch, onOpen, notices, 
         </div>
       </div>
       <OperatorBlock me={me} operatorNo={operatorNo} workstationNo={workstationNo}
-        is112={run.exercise_type === "operator112_intake"} tourButtonRef={tourButtonRef}
+        tourButtonRef={tourButtonRef}
         onStartTour={() => setTourOpen(true)} />
     </header>
 
@@ -110,15 +111,16 @@ export function Arm112Main({ me, run, items, search, onSearch, onOpen, notices, 
     </section>
 
     <IncomingCallBanner items={items} onAccept={(id) => onOpen(id, true)} />
-    {tourOpen && <Arm112Tour rootRef={mainRef} onClose={closeTour} hasCard={visible.length > 0} onPreviewStep={setTourPreviewOpen} />}
+    {tourOpen && (is112
+      ? <Arm112Tour rootRef={mainRef} onClose={closeTour} hasCard={visible.length > 0} onPreviewStep={setTourPreviewOpen} />
+      : <DDSMainTour rootRef={mainRef} onClose={closeTour} hasCard={visible.length > 0} onPreviewStep={setTourPreviewOpen} />)}
   </section>;
 }
 
-function OperatorBlock({ me, operatorNo, workstationNo, is112, tourButtonRef, onStartTour }: {
+function OperatorBlock({ me, operatorNo, workstationNo, tourButtonRef, onStartTour }: {
   me: Me;
   operatorNo: string;
   workstationNo: string;
-  is112: boolean;
   tourButtonRef: React.RefObject<HTMLButtonElement>;
   onStartTour: () => void;
 }) {
@@ -148,7 +150,7 @@ function OperatorBlock({ me, operatorNo, workstationNo, is112, tourButtonRef, on
     { label: "регионы", icon: <GlobeIcon size={20} /> },
   ];
 
-  return <div className={`arm112-main-operator${is112 ? " has-tour" : ""}`}>
+  return <div className="arm112-main-operator has-tour">
     <div className="arm112-main-status">
       <div className="arm112-main-who">
         <strong>{date}</strong>
@@ -166,9 +168,7 @@ function OperatorBlock({ me, operatorNo, workstationNo, is112, tourButtonRef, on
         {two(now.getHours())}:{two(now.getMinutes())}<sup>:{two(now.getSeconds())}</sup>
       </time>
     </div>
-    {is112
-      ? <button ref={tourButtonRef} type="button" className="arm112-main-create" onClick={onStartTour}><span>ознакомительный режим</span></button>
-      : <button type="button" className="arm112-main-create" disabled title="В тренажёре карточка создаётся входящим вызовом"><span>создать новую карточку</span></button>}
+    <button ref={tourButtonRef} type="button" className="arm112-main-create" onClick={onStartTour}><span>ознакомительный режим</span></button>
     <nav className="arm112-main-tabs" aria-label="Разделы АРМ">
       {tabs.map((tab) => tab.to
         ? <NavLink key={tab.label} to={tab.to} end>{tab.icon}<span>{tab.label}</span></NavLink>

@@ -49,6 +49,25 @@ const cardSteps: readonly TourStep[] = [
   ],
 ];
 const fullMainSteps: readonly TourStep[] = [...introSteps, ...cardSteps];
+const ddsMainSteps: readonly TourStep[] = [
+  [{ target: "auto-update", text: "Автообновление показывает новые и изменённые карточки без перезагрузки страницы." }],
+  [{ target: "grid", text: "Здесь находится список происшествий, переданных на ваше рабочее место ДДС." }],
+  [
+    { target: "preview-toggle", text: "Стрелка раскрывает краткие сведения о карточке прямо в списке." },
+    { target: "card-number", text: "Номер происшествия помогает найти нужную карточку." },
+    { target: "card-status", text: "Здесь показан текущий статус карточки." },
+  ],
+  [
+    { target: "preview-services", text: "Здесь видно, каким службам передана карточка и как они отреагировали." },
+    { target: "preview-applicant", text: "Имя и телефон заявителя можно проверить, не открывая карточку." },
+    { target: "preview-information", text: "Краткое описание передаёт тип происшествия и слова заявителя." },
+  ],
+  [
+    { target: "preview-activity", text: "Здесь появляются сведения об исходящих звонках по карточке." },
+    { target: "address", text: "Адрес показывает место происшествия. Нажмите на строку, чтобы открыть карточку." },
+    { target: "control-indicator", text: "Эта кнопка тоже открывает карточку для работы." },
+  ],
+];
 
 type Spotlight = { top: number; right: number; bottom: number; left: number; text: string };
 type Layout = { width: number; height: number; spots: Spotlight[] };
@@ -108,6 +127,13 @@ export function Arm112Tour({ rootRef, onClose, hasCard, onPreviewStep }: {
 }) {
   return <SpotlightTour rootRef={rootRef} onClose={onClose} steps={hasCard ? fullMainSteps : introSteps}
     onStepChange={(next) => onPreviewStep(hasCard && next >= introSteps.length + 5)} closePosition="left" />;
+}
+
+export function DDSMainTour({ rootRef, onClose, hasCard, onPreviewStep }: {
+  rootRef: RefObject<HTMLElement>; onClose: () => void; hasCard: boolean; onPreviewStep: (open: boolean) => void;
+}) {
+  return <SpotlightTour rootRef={rootRef} onClose={onClose} steps={hasCard ? ddsMainSteps : ddsMainSteps.slice(0, 2)}
+    onStepChange={(next) => onPreviewStep(hasCard && next >= 3)} closePosition="left" label="Ознакомительный режим ДДС" />;
 }
 
 export function SpotlightTour({ rootRef, onClose, steps, onStepChange, tipPlacements, closePosition = "right", label = "Ознакомительный режим" }: {
