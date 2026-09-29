@@ -79,9 +79,18 @@ export async function startRecorder(maxSeconds: number, onLimit: () => void): Pr
   return {
     stop: async () => {
       finish();
-      const merged = new Float32Array(total);
+      // The worklet delivers 128-sample blocks, so total may overshoot the
+      // limit by part of a block; trim it, or at 44.1 kHz a phrase that hit
+      // the limit resamples to a hair over max_seconds and the server
+      // rejects it as too long.
+      const length = Math.min(total, limit);
+      const merged = new Float32Array(length);
       let offset = 0;
-      for (const chunk of chunks) { merged.set(chunk.subarray(0, Math.min(chunk.length, total - offset)), offset); offset += chunk.length; }
+      for (const chunk of chunks) {
+        if (offset >= length) break;
+        merged.set(chunk.subarray(0, Math.min(chunk.length, length - offset)), offset);
+        offset += chunk.length;
+      }
       return encodeWav(downsample(merged, sampleRate));
     },
     cancel: finish,
