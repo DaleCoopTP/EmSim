@@ -139,3 +139,48 @@ func TestAPIFromEnvironmentRejectsNonPositiveSessionTTL(t *testing.T) {
 		t.Fatalf("APIFromEnvironment() with SESSION_TTL=0s error = %v, want ErrInvalidAPIConfiguration", err)
 	}
 }
+
+// TestAPIFromEnvironmentDictation covers ADR-037's settings: off by
+// default, whisper needs STT_URL, stub does not, and out-of-range or
+// unparseable values fail startup.
+func TestAPIFromEnvironmentDictation(t *testing.T) {
+	values := map[string]string{
+		"DATABASE_URL":      "postgres://example.invalid/emsim",
+		"API_LISTEN_ADDR":   "127.0.0.1:8080",
+		"ADMIN_LISTEN_ADDR": "127.0.0.1:8081",
+	}
+	lookup := func(name string) string { return values[name] }
+	config, err := APIFromEnvironment(lookup)
+	if err != nil || config.Dictation.Engine != DictationOff {
+		t.Fatalf("default = %+v, %v; want dictation off", config.Dictation, err)
+	}
+	values["DICTATION"] = "whisper"
+	if _, err := APIFromEnvironment(lookup); !errors.Is(err, ErrInvalidAPIConfiguration) {
+		t.Fatalf("whisper without STT_URL error = %v", err)
+	}
+	values["STT_URL"] = "http://stt:8080"
+	config, err = APIFromEnvironment(lookup)
+	if err != nil {
+		t.Fatalf("whisper with STT_URL: %v", err)
+	}
+	want := Dictation{Engine: DictationWhisper, STTURL: "http://stt:8080", Language: "ru", Model: "ggml-small",
+		Timeout: 15 * time.Second, QueueWait: 5 * time.Second, Concurrency: 2, MaxSeconds: 30}
+	if config.Dictation != want {
+		t.Fatalf("Dictation = %+v, want %+v", config.Dictation, want)
+	}
+	values["DICTATION"], values["STT_URL"] = "stub", ""
+	if config, err := APIFromEnvironment(lookup); err != nil || config.Dictation.Engine != DictationStub {
+		t.Fatalf("stub = %+v, %v", config.Dictation, err)
+	}
+	for name, bad := range map[string]string{
+		"DICTATION": "vosk", "DICTATION_CONCURRENCY": "0", "DICTATION_MAX_SECONDS": "3",
+		"STT_TIMEOUT": "soon", "DICTATION_QUEUE_WAIT": "-1s",
+	} {
+		values["DICTATION"] = "stub"
+		values[name] = bad
+		if _, err := APIFromEnvironment(lookup); !errors.Is(err, ErrInvalidAPIConfiguration) {
+			t.Fatalf("%s=%q error = %v", name, bad, err)
+		}
+		delete(values, name)
+	}
+}

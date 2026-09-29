@@ -40,6 +40,83 @@ type API struct {
 	// holds back the first reply, the scenario's no-model opening.
 	CallerWarmup       bool
 	CallerOpeningDelay time.Duration
+	// Dictation (ADR-037) is the operator 112 voice-input settings; the
+	// zero engine value is normalised to DictationOff.
+	Dictation Dictation
+}
+
+// Dictation engines (ADR-037, DICTATION). DictationStub is a fixed-text
+// engine for e2e and offline development, like CALLER_REPLIER=stub.
+const (
+	DictationOff     = "off"
+	DictationWhisper = "whisper"
+	DictationStub    = "stub"
+)
+
+const (
+	defaultDictationLanguage    = "ru"
+	defaultDictationModel       = "ggml-small"
+	defaultDictationTimeout     = 15 * time.Second
+	defaultDictationQueueWait   = 5 * time.Second
+	defaultDictationConcurrency = 2
+	defaultDictationMaxSeconds  = 30
+)
+
+// Dictation configures POST /items/{id}/dictation. STTURL is required
+// only for DictationWhisper — a whisper-server base URL (compose's own
+// http://stt:8080). Model is only a label carried into the response.
+type Dictation struct {
+	Engine      string
+	STTURL      string
+	Language    string
+	Model       string
+	Timeout     time.Duration
+	QueueWait   time.Duration
+	Concurrency int
+	MaxSeconds  int
+}
+
+func dictationFromEnvironment(lookup func(string) string) (Dictation, bool) {
+	engine := strings.TrimSpace(lookup("DICTATION"))
+	if engine == "" {
+		engine = DictationOff
+	}
+	language := strings.TrimSpace(lookup("STT_LANGUAGE"))
+	if language == "" {
+		language = defaultDictationLanguage
+	}
+	model := strings.TrimSpace(lookup("STT_MODEL"))
+	if model == "" {
+		model = defaultDictationModel
+	}
+	timeout, err1 := parseDurationOrDefault(lookup("STT_TIMEOUT"), defaultDictationTimeout)
+	queueWait, err2 := parseDurationOrDefault(lookup("DICTATION_QUEUE_WAIT"), defaultDictationQueueWait)
+	concurrency, err3 := parseIntOrDefault(lookup("DICTATION_CONCURRENCY"), defaultDictationConcurrency)
+	maxSeconds, err4 := parseIntOrDefault(lookup("DICTATION_MAX_SECONDS"), defaultDictationMaxSeconds)
+	if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
+		return Dictation{}, false
+	}
+	return Dictation{
+		Engine: engine, STTURL: strings.TrimSpace(lookup("STT_URL")), Language: language, Model: model,
+		Timeout: timeout, QueueWait: queueWait, Concurrency: concurrency, MaxSeconds: maxSeconds,
+	}, true
+}
+
+func (d Dictation) validate() bool {
+	switch d.Engine {
+	case DictationOff:
+		return true
+	case DictationStub, DictationWhisper:
+	default:
+		return false
+	}
+	if d.Engine == DictationWhisper && d.STTURL == "" {
+		return false
+	}
+	return d.Timeout > 0 && d.Timeout <= 2*time.Minute &&
+		d.QueueWait >= 0 && d.QueueWait <= 30*time.Second &&
+		d.Concurrency >= 1 && d.Concurrency <= 8 &&
+		d.MaxSeconds >= 5 && d.MaxSeconds <= 60
 }
 
 func APIFromEnvironment(lookup func(string) string) (API, error) {
@@ -50,6 +127,7 @@ func APIFromEnvironment(lookup func(string) string) (API, error) {
 		assessmentJudge = AssessmentJudgeLLM
 	}
 	callerWarmup, callerOpeningDelay, callerOK := callerTimingFromEnvironment(lookup)
+	dictation, dictationOK := dictationFromEnvironment(lookup)
 	config := API{
 		DatabaseURL:     strings.TrimSpace(lookup("DATABASE_URL")),
 		PublicAddr:      strings.TrimSpace(lookup("API_LISTEN_ADDR")),
@@ -58,8 +136,9 @@ func APIFromEnvironment(lookup func(string) string) (API, error) {
 		CookieSecure:    cookieSecure,
 		AssessmentJudge: assessmentJudge,
 		CallerWarmup:    callerWarmup, CallerOpeningDelay: callerOpeningDelay,
+		Dictation: dictation,
 	}
-	if ttlErr != nil || secureErr != nil || !callerOK {
+	if ttlErr != nil || secureErr != nil || !callerOK || !dictationOK {
 		return API{}, ErrInvalidAPIConfiguration
 	}
 	if err := config.Validate(); err != nil {
@@ -74,6 +153,9 @@ func (c API) Validate() error {
 		return ErrInvalidAPIConfiguration
 	}
 	if c.AssessmentJudge != AssessmentJudgeOff && c.AssessmentJudge != AssessmentJudgeLLM {
+		return ErrInvalidAPIConfiguration
+	}
+	if c.Dictation.Engine != "" && !c.Dictation.validate() {
 		return ErrInvalidAPIConfiguration
 	}
 	return nil
