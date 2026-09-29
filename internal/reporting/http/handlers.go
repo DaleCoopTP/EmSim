@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
 
 	"emsim/internal/auth"
 	authhttp "emsim/internal/auth/http"
@@ -26,6 +27,7 @@ type reportingService interface {
 	ResultsFor(context.Context, uuid.UUID, content.ExerciseType) ([]reporting.ItemResult, error)
 	ProgressFor(context.Context, uuid.UUID, content.ExerciseType) (reporting.Progress, error)
 	RequestPDF(context.Context, uuid.UUID, uuid.UUID) (reporting.ReportFile, error)
+	Usage(context.Context, time.Time, time.Time) (reporting.Usage, error)
 	ListPDFs(context.Context, uuid.UUID) ([]reporting.ReportFile, error)
 	ReportFile(context.Context, uuid.UUID) (reporting.ReportFile, error)
 }
@@ -60,6 +62,11 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/lessons/{lessonId}/report.pdf", reports(h.requestPDF))
 	mux.Handle("GET /api/v1/lessons/{lessonId}/report-files", reports(h.listPDFs))
 	mux.Handle("GET /api/v1/reports/{reportId}/download", reports(h.downloadPDF))
+	admin := func(next http.HandlerFunc) http.Handler {
+		return authhttp.SessionMiddleware(h.auth, h.cookieSecure)(authhttp.RequireRole(auth.GroupAdmin)(next))
+	}
+	mux.Handle("GET /api/v1/admin/usage", admin(h.usage))
+	mux.Handle("GET /api/v1/admin/usage.csv", admin(h.usageCSV))
 	mux.Handle("GET /api/v1/my/results", self(h.results))
 	mux.Handle("GET /api/v1/my/progress", self(h.progress))
 }
@@ -236,4 +243,71 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	httpapi.WriteError(w, r, httpapi.CodeInternalError, "report operation failed", nil)
+}
+
+// usagePeriod reads from/to as dates (YYYY-MM-DD) or RFC 3339 instants; to
+// is inclusive as a day. Missing values mean the last 30 days.
+func usagePeriod(r *http.Request, now time.Time) (time.Time, time.Time, bool) {
+	parse := func(raw string) (time.Time, bool) {
+		if t, err := time.Parse("2006-01-02", raw); err == nil {
+			return t, true
+		}
+		t, err := time.Parse(time.RFC3339, raw)
+		return t, err == nil
+	}
+	to, from := now, now.AddDate(0, 0, -29)
+	if raw := r.URL.Query().Get("to"); raw != "" {
+		t, ok := parse(raw)
+		if !ok {
+			return from, to, false
+		}
+		to, from = t, t.AddDate(0, 0, -29)
+	}
+	if raw := r.URL.Query().Get("from"); raw != "" {
+		t, ok := parse(raw)
+		if !ok {
+			return from, to, false
+		}
+		from = t
+	}
+	return from, to, true
+}
+
+func (h *Handlers) loadUsage(w http.ResponseWriter, r *http.Request) (reporting.Usage, bool) {
+	from, to, ok := usagePeriod(r, time.Now().UTC())
+	if !ok {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "invalid period", nil)
+		return reporting.Usage{}, false
+	}
+	usage, err := h.reporting.Usage(r.Context(), from, to)
+	if errors.Is(err, reporting.ErrUsagePeriod) {
+		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "invalid period", nil)
+		return usage, false
+	}
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "usage report failed", nil)
+		return usage, false
+	}
+	return usage, true
+}
+
+func (h *Handlers) usage(w http.ResponseWriter, r *http.Request) {
+	if usage, ok := h.loadUsage(w, r); ok {
+		writeJSON(w, http.StatusOK, usage)
+	}
+}
+
+func (h *Handlers) usageCSV(w http.ResponseWriter, r *http.Request) {
+	usage, ok := h.loadUsage(w, r)
+	if !ok {
+		return
+	}
+	body, err := reporting.UsageCSV(usage)
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "usage export failed", nil)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="usage.csv"`)
+	_, _ = w.Write(body)
 }

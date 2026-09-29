@@ -5,6 +5,7 @@ import (
 	"emsim/internal/content"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"emsim/internal/platform/tasks"
@@ -87,4 +88,18 @@ func (s *Service) ListPDFs(ctx context.Context, lessonID uuid.UUID) ([]ReportFil
 }
 func (s *Service) ReportFile(ctx context.Context, id uuid.UUID) (ReportFile, error) {
 	return s.store.ReportFileByID(ctx, id)
+}
+
+// Usage is the administrator's anonymous usage statistics (ADR-038). The
+// period is given in days and snapped to whole UTC days.
+func (s *Service) Usage(ctx context.Context, from, to time.Time) (Usage, error) {
+	from, to, err := NormalizeUsagePeriod(from, to)
+	if err != nil {
+		return Usage{}, err
+	}
+	us, ok := s.store.(UsageStore)
+	if !ok {
+		return Usage{}, errors.New("reporting: store has no usage statistics")
+	}
+	return us.Usage(ctx, from, to)
 }

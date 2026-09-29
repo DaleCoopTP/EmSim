@@ -251,6 +251,33 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Validation' }
 
+  /admin/usage:
+    get:
+      tags: [admin]
+      summary: Статистика использования по дням (ADR-038)
+      description: Анонимные счётчики за период целых суток UTC — входы, активные пользователи, занятия, закрытые карточки, оценки, ответы ИИ-заявителя и вызовы судьи. Без имён и содержимого; предпросмотры редактора не учитываются. Роль — admin.
+      parameters:
+      - { name: from, in: query, schema: { type: string, format: date }, description: 'Первый день периода (UTC); по умолчанию за 29 суток до to' }
+      - { name: to, in: query, schema: { type: string, format: date }, description: 'Последний день периода включительно (UTC); по умолчанию сегодня. Период — не более 366 дней' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/UsageReport' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+  /admin/usage.csv:
+    get:
+      tags: [admin]
+      summary: Статистика использования в CSV (ADR-038)
+      description: Ряд по дням и итоговая строка `total`; разделитель `;`, UTF-8 с BOM.
+      parameters:
+      - { name: from, in: query, schema: { type: string, format: date }, description: 'Первый день периода (UTC); по умолчанию за 29 суток до to' }
+      - { name: to, in: query, schema: { type: string, format: date }, description: 'Последний день периода включительно (UTC); по умолчанию сегодня. Период — не более 366 дней' }
+      responses:
+        '200': { description: CSV, content: { text/csv: { schema: { type: string } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
   # ------------------------------------------------------------ content
   /services:
     get:
@@ -3103,6 +3130,34 @@ components:
         count: { type: integer }
         first_at: { type: string, format: date-time }
         last_at: { type: string, format: date-time }
+    UsageDay:
+      type: object
+      required: [day, logins, active_users, lessons_started, lessons_stopped, cards_closed, auto_assessments, expert_assessments, caller_replies, judge_calls]
+      properties:
+        day: { type: string, description: 'YYYY-MM-DD (UTC) или total для итога' }
+        logins: { type: integer }
+        active_users: { type: integer, description: 'Различные пользователи с записью в аудите; в итоге — различные за весь период' }
+        lessons_started: { type: integer }
+        lessons_stopped: { type: integer }
+        cards_closed: { type: integer }
+        auto_assessments: { type: integer }
+        expert_assessments: { type: integer }
+        caller_replies: { type: integer, description: 'Завершённые задачи caller.reply, пока они не очищены из очереди' }
+        judge_calls: { type: integer, description: 'Автооценки, в которых работал судья-модель' }
+    UsageReport:
+      type: object
+      required: [from, to, days, totals, by_role, by_exercise]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time, description: 'Начало суток после последнего дня (исключительно)' }
+        days: { type: array, items: { $ref: '#/components/schemas/UsageDay' } }
+        totals: { $ref: '#/components/schemas/UsageDay' }
+        by_role:
+          type: array
+          items: { type: object, required: [role, logins, active_users], properties: { role: { type: string }, logins: { type: integer }, active_users: { type: integer } } }
+        by_exercise:
+          type: array
+          items: { type: object, required: [exercise_type, lessons_started, lessons_stopped, cards_closed], properties: { exercise_type: { $ref: '#/components/schemas/ExerciseType' }, lessons_started: { type: integer }, lessons_stopped: { type: integer }, cards_closed: { type: integer } } }
     FailuresReport:
       type: object
       required: [from, to, tasks, restarts, rejected_logins, audited_errors, server_errors]

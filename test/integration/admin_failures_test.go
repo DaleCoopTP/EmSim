@@ -53,7 +53,7 @@ func TestAdminFailuresReport(t *testing.T) {
 	f.tryLogin(t, "nobody-here", "wrong-password-xx")
 	for _, sql := range []string{
 		`INSERT INTO tasks (id, kind, scope_type, dedup_key, payload, status, attempts, max_attempts, lease_token, terminal_worker, last_error_code, terminal_at)
-		 VALUES (gen_random_uuid(), 'assessment.evaluate', 'item', 'fail:a', '{"note":"do-not-leak"}', 'dead_letter', 3, 3, 1, 'w', 'judge_unavailable', now()),
+		 VALUES (gen_random_uuid(), 'assessment.evaluate', 'item', 'fail:a', '{"note":"do-not-leak"}', 'dead_letter', 3, 3, 3, 'w', 'judge_unavailable', now()),
 		        (gen_random_uuid(), 'assessment.evaluate', 'item', 'fail:b', '{}', 'failed', 1, 3, 1, 'w', 'judge_unavailable', now()),
 		        (gen_random_uuid(), 'backup.run', 'system', 'fail:c', '{}', 'failed', 1, 3, 1, 'w', 'backup_failed', now()),
 		        (gen_random_uuid(), 'backup.run', 'system', 'fail:old', '{}', 'failed', 1, 3, 1, 'w', 'ancient', now() - interval '30 days')`,
