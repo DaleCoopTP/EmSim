@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useLogout } from "../../api/auth";
 import type { Me } from "../../api/useMe";
@@ -9,6 +9,7 @@ import {
   GearIcon, GlassesIcon, GlobeIcon, HeadsetIcon, HelicopterIcon, HelpIcon, InfoIcon, MenuIcon, PushpinIcon, ScreenIcon, SearchIcon, StopwatchIcon,
 } from "../../components/Arm112Icons";
 import type { IntakeItem } from "./Operator112Workplace";
+import { Arm112Tour } from "./Arm112Tour";
 import "../../arm112-main.css";
 
 const unavailable = "Недоступно в учебном АРМ";
@@ -29,6 +30,13 @@ export function Arm112Main({ me, run, items, search, onSearch, onOpen, notices, 
   onOpen: (id: string, accept?: boolean) => void;
   notices?: ReactNode;
 }) {
+  const [tourOpen, setTourOpen] = useState(false);
+  const mainRef = useRef<HTMLElement>(null);
+  const tourButtonRef = useRef<HTMLButtonElement>(null);
+  const closeTour = useCallback(() => {
+    setTourOpen(false);
+    window.requestAnimationFrame(() => tourButtonRef.current?.focus());
+  }, []);
   const needle = search.trim().toLocaleLowerCase("ru-RU");
   const visible = needle === "" ? items : items.filter((candidate) =>
     [candidate.card_number, armCardNumber(candidate.card_number), candidate.incident_type, candidate.address_short]
@@ -36,7 +44,7 @@ export function Arm112Main({ me, run, items, search, onSearch, onOpen, notices, 
   const operatorNo = armOperatorNumber(me.user.id);
   const workstationNo = String(run.workstation_no).padStart(3, "0");
 
-  return <section className="arm112-main" aria-label="Главный экран АРМ-112">
+  return <section ref={mainRef} className="arm112-main" aria-label="Главный экран АРМ-112">
     <header className="arm112-main-top">
       <div className="arm112-main-search">
         <label className="arm112-main-search-line">
@@ -48,7 +56,9 @@ export function Arm112Main({ me, run, items, search, onSearch, onOpen, notices, 
           <button type="button" className="arm112-main-reset" onClick={() => onSearch("")}>сбросить</button>
         </div>
       </div>
-      <OperatorBlock me={me} operatorNo={operatorNo} workstationNo={workstationNo} />
+      <OperatorBlock me={me} operatorNo={operatorNo} workstationNo={workstationNo}
+        is112={run.exercise_type === "operator112_intake"} tourButtonRef={tourButtonRef}
+        onStartTour={() => setTourOpen(true)} />
     </header>
 
     {notices}
@@ -58,13 +68,13 @@ export function Arm112Main({ me, run, items, search, onSearch, onOpen, notices, 
         <h2 id="arm112-main-list-title">Список происшествий <ChevronUpIcon size={16} /></h2>
         <div className="arm112-main-switches">
           <span className="arm112-main-switch is-info"><InfoIcon size={16} /> уведомления</span>
-          <span className="arm112-main-switch is-framed"><span className="arm112-main-toggle is-on" aria-hidden="true" /> автообновление</span>
+          <span className="arm112-main-switch is-framed" data-tour-target="auto-update"><span className="arm112-main-toggle is-on" aria-hidden="true" /> автообновление</span>
           <span className="arm112-main-switch"><span className="arm112-main-toggle" aria-hidden="true" /> обращения в очереди</span>
           <select aria-label="Что показать" disabled title={unavailable}><option>выберите что показать</option></select>
         </div>
       </header>
       <div className="arm112-main-grid-wrap">
-        <table className="arm112-main-grid">
+        <table className="arm112-main-grid" data-tour-target="grid">
           <colgroup>
             <col className="c-chevron" /><col className="c-links" /><col className="c-icon" /><col className="c-icon" /><col className="c-icon" />
             <col className="c-num" /><col className="c-num" /><col className="c-number" /><col className="c-date" /><col className="c-time" />
@@ -93,10 +103,18 @@ export function Arm112Main({ me, run, items, search, onSearch, onOpen, notices, 
     </section>
 
     <IncomingCallBanner items={items} onAccept={(id) => onOpen(id, true)} />
+    {tourOpen && <Arm112Tour rootRef={mainRef} onClose={closeTour} />}
   </section>;
 }
 
-function OperatorBlock({ me, operatorNo, workstationNo }: { me: Me; operatorNo: string; workstationNo: string }) {
+function OperatorBlock({ me, operatorNo, workstationNo, is112, tourButtonRef, onStartTour }: {
+  me: Me;
+  operatorNo: string;
+  workstationNo: string;
+  is112: boolean;
+  tourButtonRef: React.RefObject<HTMLButtonElement>;
+  onStartTour: () => void;
+}) {
   const logout = useLogout();
   const navigate = useNavigate();
   const [now, setNow] = useState(() => new Date());
@@ -129,7 +147,7 @@ function OperatorBlock({ me, operatorNo, workstationNo }: { me: Me; operatorNo: 
         <strong>{date}</strong>
         <span>оп. {operatorNo}, {armShortName(me.user.full_name)} <span className="arm112-main-arm">АРМ {workstationNo}</span>
           <button type="button" aria-label="Настроить" title={unavailable} disabled><GearIcon size={14} /></button>
-          <button type="button" aria-label="Справка" title={unavailable} disabled><HelpIcon size={14} /></button>
+          <button type="button" aria-label="Справка" title={unavailable} disabled data-tour-target="help"><HelpIcon size={14} /></button>
           <button type="button" aria-label="Выйти" title="Выйти" disabled={logout.isPending}
             onClick={() => logout.mutate(undefined, { onSettled: () => navigate("/login", { replace: true }) })}><ExitIcon size={14} /></button>
         </span>
@@ -141,7 +159,9 @@ function OperatorBlock({ me, operatorNo, workstationNo }: { me: Me; operatorNo: 
         {two(now.getHours())}:{two(now.getMinutes())}<sup>:{two(now.getSeconds())}</sup>
       </time>
     </div>
-    <button type="button" className="arm112-main-create" disabled title="В тренажёре карточка создаётся входящим вызовом"><span>создать новую карточку</span></button>
+    {is112
+      ? <button ref={tourButtonRef} type="button" className="arm112-main-create" onClick={onStartTour}><span>ознакомительный режим</span></button>
+      : <button type="button" className="arm112-main-create" disabled title="В тренажёре карточка создаётся входящим вызовом"><span>создать новую карточку</span></button>}
     <nav className="arm112-main-tabs" aria-label="Разделы АРМ">
       {tabs.map((tab) => tab.to
         ? <NavLink key={tab.label} to={tab.to} end>{tab.icon}<span>{tab.label}</span></NavLink>

@@ -1,7 +1,7 @@
 /*
  * ARM-112 main screen for the operator 112 (instruction p. 12, "Главный
  * экран"): light search panel and the dark operator block with the clock and
- * the orange "создать новую карточку" button on top, the slate list below
+ * the orange familiarization button on top, the slate list below
  * with dark grid rows. The shared app header is hidden on this screen: the
  * operator block carries the clock, the operator and "выйти" itself.
  */
@@ -58,9 +58,10 @@
 .arm112-main-phone .arm112-icon { color: var(--m-green); }
 .arm112-main-clock { display: flex; align-items: flex-start; font-size: 50px; font-weight: 700; line-height: 1; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
 .arm112-main-clock sup { margin: -6px 0 0 3px; font-size: 20px; font-weight: 500; }
-.arm112-main .arm112-main-create { grid-column: 2; grid-row: 1 / 3; margin: 0; padding: 12px; color: #fff; background: var(--m-orange); cursor: not-allowed; }
+.arm112-main .arm112-main-create { grid-column: 2; grid-row: 1 / 3; margin: 0; padding: 12px; color: #fff; background: var(--m-orange); cursor: pointer; }
+.arm112-main .arm112-main-create:disabled { cursor: not-allowed; }
 .arm112-main .arm112-main-create span { display: flex; align-items: center; height: 100%; padding: 6px 10px; border: 2px solid #fff; font-size: 17px; font-weight: 700; line-height: 1.08; text-align: left; }
-.arm112-main .arm112-main-create:hover:not(:disabled) { background: var(--m-orange); }
+.arm112-main .arm112-main-create:hover:not(:disabled) { background: #f27c53; }
 
 .arm112-main-tabs { grid-column: 1; display: flex; }
 .arm112-main-tabs > a, .arm112-main-tabs > span { display: flex; flex: 1 1 0; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 0; padding: 5px 1px 4px; overflow: hidden; color: #fff; background: var(--m-dark-2); border-right: 1px solid #262c30; font-size: 9px; letter-spacing: -.01em; font-weight: 700; text-decoration: none; white-space: nowrap; }
