@@ -164,6 +164,7 @@ export function Operator112ProfileCase({ me, item, onClose, acceptOnOpen }: { me
     try { storage?.setItem(chatStorageKey, next ? "open" : "closed"); } catch { /* per-viewer convenience only */ }
     return next;
   });
+  const openChatForTour = useCallback(() => setChatOpen(true), []);
   const state = item.intake_state;
   const catalog = state.catalog;
   const terminal = item.state === "closed" || item.state === "interrupted";
@@ -307,10 +308,10 @@ export function Operator112ProfileCase({ me, item, onClose, acceptOnOpen }: { me
           <span>{state.call_status === "ringing" ? "входящий вызов" : state.call_status === "connected" ? "разговор" : state.call_status === "held" ? "на удержании" : "разговор завершён"}</span>
           <div>
             {item.state === "opened" && state.call_status === "ringing" && callWindowHidden && <button type="button" disabled={!!pending} onClick={() => send("answer_incoming", {})}>ответить</button>}
-            {state.call_status === "connected" && !terminal && <button type="button" disabled={!!pending} onClick={() => send("hold_incoming", {})}>удержать</button>}
-            {state.call_status === "held" && !terminal && <button type="button" disabled={!!pending} onClick={() => send("resume_incoming", {})}>вернуться к разговору</button>}
-            {(state.call_status === "connected" || state.call_status === "held") && !terminal && <button type="button" disabled={!!pending} onClick={() => send("end_incoming", {})}>завершить разговор</button>}
-            {state.caller_mode === "free_text" && bodyReady && <button type="button" aria-pressed={chatOpen} onClick={toggleChat}>{chatOpen ? "скрыть чат" : "чат с заявителем"}</button>}
+            {state.call_status === "connected" && !terminal && <button type="button" data-tour-target="card-call-hold" disabled={!!pending} onClick={() => send("hold_incoming", {})}>удержать</button>}
+            {state.call_status === "held" && !terminal && <button type="button" data-tour-target="card-call-resume" disabled={!!pending} onClick={() => send("resume_incoming", {})}>вернуться к разговору</button>}
+            {(state.call_status === "connected" || state.call_status === "held") && !terminal && <button type="button" data-tour-target="card-call-end" disabled={!!pending} onClick={() => send("end_incoming", {})}>завершить разговор</button>}
+            {state.caller_mode === "free_text" && bodyReady && <button type="button" data-tour-target="card-chat-toggle" aria-pressed={chatOpen} onClick={toggleChat}>{chatOpen ? "скрыть чат" : "чат с заявителем"}</button>}
           </div>
         </div> : <div className="arm112-line-state"><span>не подключен</span></div>}
       </div>
@@ -519,7 +520,9 @@ export function Operator112ProfileCase({ me, item, onClose, acceptOnOpen }: { me
 
     {isCall && state.caller_mode === "free_text" && bodyReady && <CallerChat item={item} open={chatOpen} onToggle={toggleChat} pending={!!pending} rejected={chatRejection}
       onSend={(text, input) => send("send_caller_message", input ? { text, input } : { text })} />}
-    {cardTourOpen && editable && <Arm112CardTour rootRef={cardRef} onClose={closeCardTour} />}
+    {cardTourOpen && editable && <Arm112CardTour rootRef={cardRef} onClose={closeCardTour}
+      callStatus={state.call_status} hasChat={isCall && state.caller_mode === "free_text"}
+      dictationAvailable={!!item.dictation?.available} onChatStep={openChatForTour} />}
   </section>;
 }
 

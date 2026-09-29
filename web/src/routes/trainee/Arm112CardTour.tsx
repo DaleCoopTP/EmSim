@@ -1,7 +1,7 @@
-import type { RefObject } from "react";
+import { useMemo, type RefObject } from "react";
 import { SpotlightTour, type TourStep } from "./Arm112Tour";
 
-const steps: readonly TourStep[] = [
+const cardSteps: readonly TourStep[] = [
   [
     { target: "card-aon", text: "АОН — номер, с которого поступил вызов. Он появляется автоматически." },
     { target: "card-provided-phone", text: "Запишите телефон, который назвал заявитель. Кнопка «АОН» скопирует входящий номер." },
@@ -44,6 +44,38 @@ const steps: readonly TourStep[] = [
   ],
 ];
 
-export function Arm112CardTour({ rootRef, onClose }: { rootRef: RefObject<HTMLElement>; onClose: () => void }) {
-  return <SpotlightTour rootRef={rootRef} onClose={onClose} steps={steps} closePosition="left" label="Заполнение карточки 112" />;
+export function Arm112CardTour({ rootRef, onClose, callStatus, hasChat, dictationAvailable, onChatStep }: {
+  rootRef: RefObject<HTMLElement>; onClose: () => void;
+  callStatus: "connected" | "held" | "ended" | "ringing" | "not_applicable";
+  hasChat: boolean; dictationAvailable: boolean; onChatStep: () => void;
+}) {
+  const steps = useMemo(() => {
+    if (callStatus !== "connected" && callStatus !== "held") return cardSteps;
+    const controls: TourStep = [
+      callStatus === "held"
+        ? { target: "card-call-resume", text: "Вернитесь к разговору, чтобы снова общаться с заявителем и отправлять сообщения." }
+        : { target: "card-call-hold", text: "Поставьте разговор на удержание. Пока вызов удерживается, отправлять сообщения нельзя." },
+      { target: "card-call-end", text: "Завершает разговор. Переписка сохранится, но новые сообщения отправить уже нельзя." },
+      ...(hasChat ? [{ target: "card-chat-toggle", text: "Открывает или скрывает чат с заявителем. Закрытый чат можно снова открыть кнопкой внизу справа." }] : []),
+    ];
+    if (!hasChat) return [...cardSteps, controls];
+    return [...cardSteps, controls,
+      [
+        { target: "card-chat-header", text: "Здесь видны номер заявителя и состояние разговора. Крестик сворачивает чат, сохраняя переписку." },
+        { target: "card-chat-log", text: "Здесь появляются ваши сообщения и ответы заявителя. Пока он отвечает, показывается ожидание." },
+        { target: "card-chat-input", text: "Введите текст с клавиатуры или проверьте здесь результат диктовки. Enter — отправка, Shift+Enter — новая строка." },
+      ],
+      [
+        { target: dictationAvailable ? "card-chat-mic" : "card-chat-actions", text: dictationAvailable
+          ? "Нажмите для записи, ещё раз — для остановки. Распознанный текст появится в поле."
+          : "Когда диктовка доступна, здесь появляется микрофон. Надиктованный текст можно исправить перед отправкой." },
+        { target: "card-chat-counter", text: "Счётчик показывает длину сообщения. Предел — 500 символов." },
+        { target: "card-chat-send", text: "Отправляет готовое сообщение заявителю. Пока ожидается ответ, новое сообщение отправить нельзя." },
+      ],
+    ];
+  }, [callStatus, hasChat, dictationAvailable]);
+
+  return <SpotlightTour rootRef={rootRef} onClose={onClose} steps={steps}
+    onStepChange={hasChat ? (step) => { if (step >= cardSteps.length + 1) onChatStep(); } : undefined}
+    closePosition="left" label="Заполнение карточки 112" />;
 }
