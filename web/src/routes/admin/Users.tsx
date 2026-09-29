@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react";
-import { useCreateUser, useUpdateUser, useUsers, type User, type UserCreate, type UserPatch } from "../../api/admin";
+import { useCreateUser, useRevokeUserSessions, useUpdateUser, useUserSessions, useUsers, type User, type UserCreate, type UserPatch } from "../../api/admin";
 import { useServices } from "../../api/content";
 import { errorMessage } from "../../api/errors";
 import type { components } from "../../api/schema";
+import { formatDateTime } from "../../format";
 
 type Role = components["schemas"]["Role"];
 
@@ -13,6 +14,8 @@ export function UsersRoute() {
   const [page, setPage] = useState(1);
   const users = useUsers(page, pageSize);
   const [editing, setEditing] = useState<User | "new" | null>(null);
+  const [sessionsFor, setSessionsFor] = useState<User | null>(null);
+  const update = useUpdateUser();
 
   const total = users.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / pageSize));
@@ -29,6 +32,9 @@ export function UsersRoute() {
       {editing === "new" && <CreateUserForm onDone={() => setEditing(null)} />}
       {editing && editing !== "new" && <EditUserForm key={editing.id} user={editing} onDone={() => setEditing(null)} />}
 
+      {sessionsFor && <SessionsPanel key={sessionsFor.id} user={sessionsFor} onDone={() => setSessionsFor(null)} />}
+      {update.isError && <p role="alert" className="error">{errorMessage(update.error)}</p>}
+
       {users.isPending && <p>Загрузка…</p>}
       {users.isError && <p className="error">{errorMessage(users.error)}</p>}
       {users.data && (
@@ -42,6 +48,7 @@ export function UsersRoute() {
                 <th>Служба</th>
                 <th>Уровень</th>
                 <th>Активен</th>
+                <th>Вход</th>
                 <th></th>
               </tr>
             </thead>
@@ -55,8 +62,20 @@ export function UsersRoute() {
                   <td>{u.level}</td>
                   <td>{u.active ? "да" : "нет"}</td>
                   <td>
+                    {u.locked_until && <span className="user-locked">Заблокирован до {formatDateTime(u.locked_until)}</span>}
+                    {!u.locked_until && u.credentials_change_required && <span>Ждёт смены пароля</span>}
+                  </td>
+                  <td>
                     <button type="button" onClick={() => setEditing(u)}>
                       Изменить
+                    </button>{" "}
+                    {u.locked_until && (
+                      <button type="button" disabled={update.isPending} onClick={() => update.mutate({ id: u.id, patch: { unlock: true } })}>
+                        Разблокировать
+                      </button>
+                    )}{" "}
+                    <button type="button" onClick={() => setSessionsFor(u)}>
+                      Сеансы
                     </button>
                   </td>
                 </tr>
@@ -75,6 +94,49 @@ export function UsersRoute() {
         </>
       )}
     </section>
+  );
+}
+
+// ADR-038: the user's live sessions, and "end them all". Timings and
+// workstation only — the session's token is never sent to the client.
+function SessionsPanel({ user, onDone }: { user: User; onDone: () => void }) {
+  const sessions = useUserSessions(user.id);
+  const revoke = useRevokeUserSessions();
+  return (
+    <div className="status-panel user-sessions">
+      <div className="status-panel-heading">
+        <h2>Сеансы: {user.login}</h2>
+        <span>
+          <button type="button" disabled={revoke.isPending || (sessions.data?.length ?? 0) === 0} onClick={() => revoke.mutate(user.id)}>
+            Завершить все сеансы
+          </button>{" "}
+          <button type="button" onClick={onDone}>
+            Закрыть
+          </button>
+        </span>
+      </div>
+      {sessions.isPending && <p>Загрузка…</p>}
+      {sessions.isError && <p className="error">{errorMessage(sessions.error)}</p>}
+      {revoke.isError && <p className="error">{errorMessage(revoke.error)}</p>}
+      {sessions.data && sessions.data.length === 0 && <p>Действующих сеансов нет.</p>}
+      {sessions.data && sessions.data.length > 0 && (
+        <table>
+          <thead>
+            <tr><th>Начат</th><th>Последняя активность</th><th>Истекает</th><th>РМ</th></tr>
+          </thead>
+          <tbody>
+            {sessions.data.map((s) => (
+              <tr key={`${s.created_at}-${s.expires_at}`}>
+                <td>{formatDateTime(s.created_at)}</td>
+                <td>{formatDateTime(s.last_seen_at)}</td>
+                <td>{formatDateTime(s.expires_at)}</td>
+                <td>{s.workstation_number === null ? "—" : `${s.workstation_number}${s.workstation_label ? ` (${s.workstation_label})` : ""}`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 

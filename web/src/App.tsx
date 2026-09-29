@@ -20,6 +20,7 @@ import { LessonAssessmentsRoute } from "./routes/instructor/LessonAssessments";
 import { ItemReviewRoute } from "./routes/instructor/ItemReview";
 import { LessonReportRoute } from "./routes/instructor/LessonReport";
 import { LoginRoute } from "./routes/Login";
+import { ChangePasswordRoute } from "./routes/ChangePassword";
 import { WorkplaceRoute } from "./routes/trainee/Workplace";
 import { HistoryRoute } from "./routes/trainee/History";
 
@@ -39,6 +40,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginRoute />} />
           <Route element={<RequireAuth />}>
+            <Route path="/change-password" element={<ChangePasswordRoute />} />
             <Route element={<Layout />}>
               <Route path="/" element={<HomeRoute />} />
             </Route>

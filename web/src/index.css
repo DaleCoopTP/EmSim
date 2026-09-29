@@ -1097,3 +1097,4 @@ a.arm-primary-action:hover { color: #fff; background: var(--arm-accent-dark); }
 .admin-reports .tabs { display: flex; gap: 4px; margin-bottom: 14px; }
 .admin-reports .tabs button { padding: 6px 16px; border: 1px solid #9aa7ae; background: #fff; }
 .admin-reports .tabs button[aria-selected="true"] { background: var(--arm-panel); color: #fff; border-color: var(--arm-panel); }
+.user-locked { color: var(--arm-danger); font-weight: 500; }

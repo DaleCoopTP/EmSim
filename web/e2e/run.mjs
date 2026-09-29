@@ -64,6 +64,12 @@ const environment = {
   // with a fixed text so the microphone flow is exercised end to end.
   DICTATION: "stub",
   BACKUP_HOST_DIR: backupDir,
+  // ADR-038: the stock policy would force every instructor the specs
+  // create through the admin API to change the password at first login.
+  // Only a newly created admin is forced (the login-policy spec uses that),
+  // and three wrong passwords lock an account.
+  PASSWORD_FORCE_CHANGE: "admin",
+  LOGIN_LOCKOUT_ATTEMPTS: "3",
 };
 const compose = ["compose", "-p", project, "-f", "compose.yaml", "-f", "compose.no-llm.yaml"];
 

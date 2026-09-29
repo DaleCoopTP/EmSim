@@ -199,3 +199,22 @@ export function useFailuresReport(period: ReportPeriod) {
     queryFn: () => api.get<FailuresReport>(`/admin/failures${failuresQuery(period)}`),
   });
 }
+
+// ADR-038: a user's live sessions and "end them all" (admin only).
+export type UserSession = components["schemas"]["UserSession"];
+
+export function useUserSessions(userId: string | null) {
+  return useQuery({
+    queryKey: ["admin", "sessions", userId] as const,
+    queryFn: () => api.get<UserSession[]>(`/admin/users/${encodeURIComponent(userId ?? "")}/sessions`),
+    enabled: userId !== null,
+  });
+}
+
+export function useRevokeUserSessions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => api.delete<void>(`/admin/users/${encodeURIComponent(userId)}/sessions`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin", "sessions"] }),
+  });
+}

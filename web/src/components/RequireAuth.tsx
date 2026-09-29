@@ -22,6 +22,11 @@ export function RequireAuth({ roles }: { roles?: Role[] }) {
   if (!me) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
+  // ADR-038: an administrator-set password must be replaced before any
+  // other screen; the server refuses everything else until then anyway.
+  if (me.user.credentials_change_required && location.pathname !== "/change-password") {
+    return <Navigate to="/change-password" replace />;
+  }
   if (roles && !roles.includes(me.user.role)) {
     return <Navigate to="/" replace />;
   }

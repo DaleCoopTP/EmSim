@@ -14,6 +14,10 @@ export function errorMessage(error: unknown): string {
       return "Неверный логин или пароль, либо учётная запись отключена.";
     case "rate_limited":
       return "Слишком много попыток входа. Подождите минуту.";
+    case "account_locked":
+      return "Учётная запись заблокирована после нескольких неверных паролей. Подождите или обратитесь к администратору.";
+    case "password_change_required":
+      return "Сначала смените пароль.";
     case "forbidden":
       return "Недостаточно прав.";
     case "conflict":
@@ -43,6 +47,9 @@ export function errorMessage(error: unknown): string {
         if (reason === "unknown") return "Рабочее место с таким номером не найдено.";
         if (reason === "inactive") return "Это рабочее место отключено.";
       }
+      if (field === "current_password") return "Текущий пароль указан неверно.";
+      if (field === "password" && reason === "same_as_current") return "Новый пароль должен отличаться от текущего.";
+      if (field === "password" && reason === "too_short") return "Пароль слишком короткий.";
       return field ? `Проверьте поле «${fieldLabel(field)}».` : "Проверьте введённые данные.";
     default:
       return `Ошибка сервера (${error.code}). Запрос ${error.requestId}.`;

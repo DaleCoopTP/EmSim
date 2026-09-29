@@ -55,4 +55,5 @@ export const api = {
   postBlob: <T>(path: string, body: Blob) => request<T>(path, { method: "POST", body, headers: { "Content-Type": body.type } }),
   put: <T>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
+  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };
