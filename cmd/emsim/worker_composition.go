@@ -137,6 +137,15 @@ func registerKinds(registry *tasks.Registry) error {
 	}); err != nil {
 		return err
 	}
+	// ADR-038: the integrity check reads every blob back, so it shares the
+	// "report" slot with backups and PDFs and runs at low priority. One
+	// attempt: the next daily run (or the admin's button) tries again.
+	if err := registry.Register(tasks.Spec{
+		Name: kindIntegrityCheck, Pool: "report", MaxAttempts: 1,
+		Lease: 30 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 5,
+	}); err != nil {
+		return err
+	}
 	// ADR-029: best-effort prompt-cache warm-up, same "caller" pool but a
 	// lower priority, so a real reply waiting for a free worker is always
 	// claimed first. One attempt: a failed warm-up only means the next
@@ -659,6 +668,9 @@ func composePools(
 	if err := handlers.Register(kindBackupRun, backupHandler(pool, store, backupConfig(processConfig))); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
+	if err := handlers.Register(kindIntegrityCheck, integrityHandler(pool, store, processConfig)); err != nil {
+		return nil, errors.New("handler configuration is invalid")
+	}
 	if err := handlers.Register(training.KindAssessmentEvaluate, assessmentService); err != nil {
 		return nil, errors.New("handler configuration is invalid")
 	}
@@ -878,7 +890,7 @@ func heartbeatID(workerID string) string {
 // maintenanceSchedules lists the daily tasks the maintenance scheduler
 // enqueues (ADR-033).
 func maintenanceSchedules(processConfig config.Worker) []tasks.Schedule {
-	schedules := []tasks.Schedule{{Kind: kindAuditPrune, At: processConfig.AuditPruneAt}}
+	schedules := []tasks.Schedule{{Kind: kindAuditPrune, At: processConfig.AuditPruneAt}, {Kind: kindIntegrityCheck, At: integrityCheckAt}}
 	// No BACKUP_DIR (development, tests): no daily backup is scheduled.
 	if processConfig.BackupDir != "" {
 		schedules = append(schedules, tasks.Schedule{Kind: kindBackupRun, At: processConfig.BackupAt})

@@ -242,6 +242,7 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub, window
 	statusHandlers := status.NewHandlers(pool, mustTaskEnqueuer(pool), retryGuards, kindBackupRun, os.Getenv("BLOB_ROOT"), pgstore.ExpectedSchemaVersion, sessionActor).
 		WithLogins(authStore.LoginsByID).
 		WithBuild(buildVersion).
+		WithIntegrity(kindIntegrityCheck).
 		WithConfig(cfg.Public(os.Getenv("BLOB_ROOT"))).
 		WithLoad(status.LoadSources{
 			Window:  window,

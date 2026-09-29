@@ -33,6 +33,9 @@ const (
 const (
 	ComponentLLM    = "llm"
 	ComponentBackup = "backup"
+	// ComponentIntegrity holds the last integrity check's report (ADR-038):
+	// ok, or unavailable when a mismatch or a failed check was found.
+	ComponentIntegrity = "integrity"
 	// ComponentSTT is written by the api itself (it alone knows STT_URL).
 	ComponentSTT = "stt"
 	// A worker's own heartbeat is "worker.<id>".

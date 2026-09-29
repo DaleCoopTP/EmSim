@@ -147,6 +147,16 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /admin/integrity:
+    post:
+      tags: [admin]
+      summary: Проверить целостность данных сейчас — фоновая задача integrity.check (ADR-038)
+      description: Worker перечитывает файлы блобов, пересчитывает digest запечатанных свидетельств и версий сценариев, проверяет новейшую копию бэкапа по манифесту и версию схемы. Только чтение, ничего не чинит. Результат — `AdminStatus.integrity`. Раз в сутки задача ставится сама. 409 с details.reason=integrity_in_progress, пока другая проверка в очереди или выполняется.
+      responses:
+        '202': { $ref: '#/components/responses/Accepted' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /admin/status:
     get:
       tags: [admin]
@@ -2975,7 +2985,7 @@ components:
 
     AdminStatus:
       type: object
-      required: [build, server_time, db_schema_version, expected_schema_version, tasks, models, disk_free_bytes, last_backup_at, load, maintenance, backup, workers, failed_tasks]
+      required: [build, server_time, db_schema_version, expected_schema_version, tasks, models, disk_free_bytes, last_backup_at, load, maintenance, backup, integrity, workers, failed_tasks]
       properties:
         build: { type: string, description: 'Версия сборки api (git describe; dev — локальная сборка). ADR-038' }
         server_time: { type: string, format: date-time }
@@ -2994,6 +3004,26 @@ components:
         maintenance: { $ref: '#/components/schemas/Maintenance' }
         last_backup_at: { type: [string, 'null'], format: date-time }
         backup: { $ref: '#/components/schemas/AdminBackupStatus' }
+        integrity:
+          description: Итог последней проверки целостности; null, пока она не запускалась (ADR-038)
+          oneOf:
+          - type: 'null'
+          - type: object
+            required: [checked_at, ok, sections]
+            properties:
+              checked_at: { type: string, format: date-time }
+              ok: { type: boolean, description: 'true, если каждая проверка выполнилась и расхождений нет' }
+              sections:
+                type: array
+                items:
+                  type: object
+                  required: [name, checked, problems, examples]
+                  properties:
+                    name: { type: string, enum: [schema, blobs, evidence, scenario_versions, backup] }
+                    checked: { type: integer }
+                    problems: { type: integer }
+                    examples: { type: array, items: { type: string }, description: 'Идентификаторы (или имя копии) расхождений, не больше 20; без содержимого' }
+                    error: { type: string, description: 'check_failed — проверка не смогла выполниться' }
         workers:
           type: array
           items:

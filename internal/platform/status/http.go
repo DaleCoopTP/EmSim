@@ -38,6 +38,7 @@ type Handlers struct {
 	queue          Queue
 	retryGuards    map[tasks.Kind]tasks.RetryGuard
 	backupKind     tasks.Kind
+	integrityKind  tasks.Kind
 	blobRoot       string
 	expectedSchema int64
 	actor          Actor
@@ -53,6 +54,13 @@ func NewHandlers(pool *pgxpool.Pool, queue Queue, retryGuards map[tasks.Kind]tas
 	return &Handlers{pool: pool, store: NewStore(pool), queue: queue, retryGuards: retryGuards, backupKind: backupKind, blobRoot: blobRoot, expectedSchema: expectedSchema, actor: actor}
 }
 
+// WithIntegrity names the queue kind of the integrity check, enabling
+// POST /admin/integrity (ADR-038).
+func (h *Handlers) WithIntegrity(kind tasks.Kind) *Handlers {
+	h.integrityKind = kind
+	return h
+}
+
 // WithBuild sets the api's own build version, shown on the status screen
 // next to each worker's (ADR-038).
 func (h *Handlers) WithBuild(version string) *Handlers {
@@ -63,6 +71,7 @@ func (h *Handlers) WithBuild(version string) *Handlers {
 func (h *Handlers) Register(mux *http.ServeMux, protect func(http.HandlerFunc) http.Handler) {
 	mux.Handle("GET /api/v1/admin/status", protect(h.getStatus))
 	mux.Handle("POST /api/v1/admin/backup", protect(h.startBackup))
+	mux.Handle("POST /api/v1/admin/integrity", protect(h.startIntegrity))
 	mux.Handle("POST /api/v1/admin/tasks/{taskId}/retry", protect(h.retryTask))
 	mux.Handle("PUT /api/v1/admin/maintenance", protect(h.setMaintenance))
 	mux.Handle("GET /api/v1/admin/config", protect(h.getConfig))
@@ -104,6 +113,14 @@ type backupJSON struct {
 	Runs         []taskJSON       `json:"runs"`
 }
 
+// integrityJSON is the last integrity check's report as the worker stored
+// it (ids and counts only); nil until the first run.
+type integrityJSON struct {
+	CheckedAt time.Time        `json:"checked_at"`
+	OK        bool             `json:"ok"`
+	Sections  []map[string]any `json:"sections"`
+}
+
 type workerJSON struct {
 	ID        string    `json:"id"`
 	Role      string    `json:"role,omitempty"`
@@ -123,6 +140,7 @@ type statusJSON struct {
 	Load                  loadJSON                  `json:"load"`
 	Maintenance           maintenanceJSON           `json:"maintenance"`
 	Backup                backupJSON                `json:"backup"`
+	Integrity             *integrityJSON            `json:"integrity"`
 	Workers               []workerJSON              `json:"workers"`
 	FailedTasks           []taskJSON                `json:"failed_tasks"`
 }
@@ -167,6 +185,17 @@ func (h *Handlers) getStatus(w http.ResponseWriter, r *http.Request) {
 					body.Backup.Copies = detail.Copies
 				}
 			}
+		case hb.Component == ComponentIntegrity:
+			report := &integrityJSON{CheckedAt: hb.CheckedAt, OK: hb.Status == StatusOK, Sections: []map[string]any{}}
+			if raw, err := json.Marshal(hb.Detail["sections"]); err == nil {
+				_ = json.Unmarshal(raw, &report.Sections)
+			}
+			if at, ok := hb.Detail["at"].(string); ok {
+				if t, err := time.Parse(time.RFC3339Nano, at); err == nil {
+					report.CheckedAt = t
+				}
+			}
+			body.Integrity = report
 		case strings.HasPrefix(hb.Component, ComponentWorkerPrefix):
 			role, _ := hb.Detail["role"].(string)
 			version, _ := hb.Detail["version"].(string)
@@ -196,11 +225,28 @@ func (h *Handlers) startBackup(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.CodeConflict, "backups are not configured on the worker", map[string]any{"reason": "backup_not_configured"})
 		return
 	}
-	if active, err := h.store.ActiveTaskExists(ctx, string(h.backupKind)); err != nil {
-		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to start backup", nil)
+	h.enqueueManual(w, r, h.backupKind, "admin.backup.start", "backup_in_progress", "a backup is already queued or running")
+}
+
+// startIntegrity queues one integrity check now (ADR-038), refused while
+// another is queued or running.
+func (h *Handlers) startIntegrity(w http.ResponseWriter, r *http.Request) {
+	if h.integrityKind == "" {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "integrity check is not available", nil)
+		return
+	}
+	h.enqueueManual(w, r, h.integrityKind, "admin.integrity.start", "integrity_in_progress", "an integrity check is already queued or running")
+}
+
+// enqueueManual queues one manual run of a system task and audits it in
+// the same transaction.
+func (h *Handlers) enqueueManual(w http.ResponseWriter, r *http.Request, kind tasks.Kind, auditAction, busyReason, busyMessage string) {
+	ctx := r.Context()
+	if active, err := h.store.ActiveTaskExists(ctx, string(kind)); err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to start task", nil)
 		return
 	} else if active {
-		httpapi.WriteError(w, r, httpapi.CodeConflict, "a backup is already queued or running", map[string]any{"reason": "backup_in_progress"})
+		httpapi.WriteError(w, r, httpapi.CodeConflict, busyMessage, map[string]any{"reason": busyReason})
 		return
 	}
 	actorID, role, ok := h.actor(ctx)
@@ -210,28 +256,28 @@ func (h *Handlers) startBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to start backup", nil)
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to start task", nil)
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	taskID := uuid.New()
 	id, _, err := h.queue.EnqueueTx(ctx, tx, tasks.EnqueueRequest{
-		TaskID: taskID, Kind: h.backupKind, ScopeType: "system",
-		DedupKey: string(h.backupKind) + ":manual:" + taskID.String(), NextAttemptAt: time.Now().UTC(),
+		TaskID: taskID, Kind: kind, ScopeType: "system",
+		DedupKey: string(kind) + ":manual:" + taskID.String(), NextAttemptAt: time.Now().UTC(),
 	})
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to start backup", nil)
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to start task", nil)
 		return
 	}
 	if err := audit.Record(ctx, tx, audit.Entry{
-		ActorID: &actorID, ActorRole: role, Action: "admin.backup.start", ResourceType: "task", ResourceID: &id,
+		ActorID: &actorID, ActorRole: role, Action: auditAction, ResourceType: "task", ResourceID: &id,
 		Outcome: audit.OutcomeOK, RequestID: httpapi.RequestIDFromContext(ctx),
 	}); err != nil {
-		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to start backup", nil)
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to start task", nil)
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
-		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to start backup", nil)
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to start task", nil)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"task_id": id})
