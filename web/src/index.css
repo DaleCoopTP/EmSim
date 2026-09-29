@@ -1084,3 +1084,16 @@ a.arm-primary-action:hover { color: #fff; background: var(--arm-accent-dark); }
 .maintenance-banner { padding: 8px 16px; background: #fff3cd; border-bottom: 2px solid #d9a400; color: #4d3b00; }
 .status-panel.maintenance-on { border-left: 4px solid #d9a400; background: #fff8e1; }
 .status-panel label { display: flex; flex-direction: column; gap: 3px; max-width: 480px; }
+
+.usage-totals { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 16px; margin: 0; }
+.usage-totals div { padding: 6px 0; border-top: 1px solid var(--arm-line); }
+.usage-totals dt { color: #4a5a63; font-size: 12px; }
+.usage-totals dd { margin: 2px 0 0; font-size: 22px; font-weight: 500; }
+.usage-chart { width: 100%; height: auto; display: block; }
+.usage-bar { fill: var(--arm-link); }
+.usage-baseline { stroke: var(--arm-line); stroke-width: 1; }
+.usage-axis { fill: #4a5a63; font-size: 11px; }
+.usage-chart g:hover .usage-bar { fill: #0d4f7a; }
+.admin-reports .tabs { display: flex; gap: 4px; margin-bottom: 14px; }
+.admin-reports .tabs button { padding: 6px 16px; border: 1px solid #9aa7ae; background: #fff; }
+.admin-reports .tabs button[aria-selected="true"] { background: var(--arm-panel); color: #fff; border-color: var(--arm-panel); }

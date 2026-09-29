@@ -154,3 +154,40 @@ export function useSetMaintenance() {
     },
   });
 }
+
+// ADR-038: usage statistics and the failures report share one period,
+// given as UTC days (usage) or instants (failures). Both have a CSV that
+// is a plain download.
+export type UsageReport = components["schemas"]["UsageReport"];
+export type UsageDay = components["schemas"]["UsageDay"];
+export type FailuresReport = components["schemas"]["FailuresReport"];
+
+export interface ReportPeriod {
+  from: string; // YYYY-MM-DD, UTC day
+  to: string; // YYYY-MM-DD, UTC day, inclusive
+}
+
+const usageQuery = (p: ReportPeriod) => `?from=${p.from}&to=${p.to}`;
+// The failures report takes instants: the period runs to the end of `to`.
+const failuresQuery = (p: ReportPeriod) => {
+  const end = new Date(`${p.to}T00:00:00Z`);
+  end.setUTCDate(end.getUTCDate() + 1);
+  return `?from=${p.from}T00:00:00Z&to=${end.toISOString().replace(".000Z", "Z")}`;
+};
+
+export const usageCsvUrl = (p: ReportPeriod) => `/api/v1/admin/usage.csv${usageQuery(p)}`;
+export const failuresCsvUrl = (p: ReportPeriod) => `/api/v1/admin/failures.csv${failuresQuery(p)}`;
+
+export function useUsageReport(period: ReportPeriod) {
+  return useQuery({
+    queryKey: ["admin", "usage", period] as const,
+    queryFn: () => api.get<UsageReport>(`/admin/usage${usageQuery(period)}`),
+  });
+}
+
+export function useFailuresReport(period: ReportPeriod) {
+  return useQuery({
+    queryKey: ["admin", "failures", period] as const,
+    queryFn: () => api.get<FailuresReport>(`/admin/failures${failuresQuery(period)}`),
+  });
+}

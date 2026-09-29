@@ -37,6 +37,7 @@ export function Layout() {
             <NavLink to="/admin/workstations">Рабочие места</NavLink>
             <NavLink to="/admin/status">Состояние</NavLink>
             <NavLink to="/admin/audit">Журнал</NavLink>
+            <NavLink to="/admin/reports">Отчёты</NavLink>
             <NavLink to="/admin/config">Конфигурация</NavLink>
           </nav>
         )}

@@ -7,6 +7,7 @@ import { WorkstationsRoute } from "./routes/admin/Workstations";
 import { StatusRoute } from "./routes/admin/Status";
 import { AuditRoute } from "./routes/admin/Audit";
 import { ConfigRoute } from "./routes/admin/Config";
+import { ReportsRoute } from "./routes/admin/Reports";
 import { HomeRoute } from "./routes/Home";
 import { ScenarioCatalogueRoute } from "./routes/instructor/ScenarioCatalogue";
 import { ScenarioDetailRoute } from "./routes/instructor/ScenarioDetail";
@@ -49,6 +50,7 @@ export default function App() {
               <Route path="/admin/status" element={<StatusRoute />} />
               <Route path="/admin/audit" element={<AuditRoute />} />
               <Route path="/admin/config" element={<ConfigRoute />} />
+              <Route path="/admin/reports" element={<ReportsRoute />} />
             </Route>
           </Route>
           <Route element={<RequireAuth roles={["instructor"]} />}>
