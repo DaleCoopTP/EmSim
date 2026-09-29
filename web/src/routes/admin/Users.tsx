@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from "react";
-import { useCreateUser, useRevokeUserSessions, useUpdateUser, useUserSessions, useUsers, type User, type UserCreate, type UserPatch } from "../../api/admin";
+import { useState, type ChangeEvent, type FormEvent } from "react";
+import { importIssues, useCreateUser, useImportUsers, useRevokeUserSessions, useUpdateUser, useUserSessions, useUsers, type User, type UserCreate, type UserPatch } from "../../api/admin";
 import { useServices } from "../../api/content";
 import { errorMessage } from "../../api/errors";
 import type { components } from "../../api/schema";
@@ -15,6 +15,7 @@ export function UsersRoute() {
   const users = useUsers(page, pageSize);
   const [editing, setEditing] = useState<User | "new" | null>(null);
   const [sessionsFor, setSessionsFor] = useState<User | null>(null);
+  const [importing, setImporting] = useState(false);
   const update = useUpdateUser();
 
   const total = users.data?.total ?? 0;
@@ -26,8 +27,13 @@ export function UsersRoute() {
       <p>
         <button type="button" onClick={() => setEditing("new")}>
           Создать пользователя
+        </button>{" "}
+        <button type="button" onClick={() => setImporting(true)}>
+          Загрузить из CSV
         </button>
       </p>
+
+      {importing && <ImportPanel onDone={() => setImporting(false)} />}
 
       {editing === "new" && <CreateUserForm onDone={() => setEditing(null)} />}
       {editing && editing !== "new" && <EditUserForm key={editing.id} user={editing} onDone={() => setEditing(null)} />}
@@ -135,6 +141,149 @@ function SessionsPanel({ user, onDone }: { user: User; onDone: () => void }) {
             ))}
           </tbody>
         </table>
+      )}
+    </div>
+  );
+}
+
+const issueFieldLabels: Record<string, string> = {
+  file: "файл",
+  login: "логин",
+  full_name: "ФИО",
+  role: "роль",
+  service_code: "служба",
+};
+
+const issueReasonLabels: Record<string, string> = {
+  empty: "файл пуст",
+  too_many_rows: "больше 300 строк",
+  malformed_csv: "не удалось разобрать CSV",
+  missing_column: "нет такой колонки в заголовке",
+  invalid: "недопустимое значение",
+  taken: "логин уже занят",
+  unknown: "неизвестная служба",
+  not_allowed: "для этой роли не задаётся",
+  blank: "пусто",
+  required: "обязательно",
+  too_long: "слишком длинное",
+};
+
+function issueText(field: string, reason: string): string {
+  const label = issueFieldLabels[field] ?? field;
+  const text = reason.startsWith("duplicate_of_row_") ? `повторяет строку ${reason.slice("duplicate_of_row_".length)}` : (issueReasonLabels[reason] ?? reason);
+  return `${label}: ${text}`;
+}
+
+// ADR-038: bulk creation from a table. The file is checked first ("Проверить"
+// creates nobody); "Создать" makes everyone or nobody and returns the
+// server-made passwords, shown here once and offered as a printable sheet —
+// nothing on the server keeps them. The sheet is built in the browser from
+// this one answer.
+function ImportPanel({ onDone }: { onDone: () => void }) {
+  const run = useImportUsers();
+  const [csv, setCsv] = useState("");
+  const [fileName, setFileName] = useState("");
+  const result = run.data;
+  const issues = run.isError ? importIssues(run.error) : [];
+  const created = result && !result.dry_run ? result : null;
+
+  const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setCsv(await file.text());
+    run.reset();
+  };
+
+  const downloadSheet = () => {
+    if (!created) return;
+    const lines = ["логин;пароль;ФИО;роль", ...created.users.map((u) => [u.login, u.password ?? "", u.full_name, u.role].join(";"))];
+    const blob = new Blob(["\ufeff" + lines.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "new-users.csv";
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  return (
+    <div className="status-panel user-import">
+      <div className="status-panel-heading">
+        <h2>Загрузка пользователей из CSV</h2>
+        <button type="button" onClick={onDone}>
+          Закрыть
+        </button>
+      </div>
+      {!created && (
+        <>
+          <p>
+            Первая строка — заголовок: <code>login</code>, <code>full_name</code>, <code>role</code> и, если нужна, <code>service_code</code>. Разделитель — запятая или точка с запятой. Пароли создаёт сервер и показывает один раз.
+          </p>
+          <p>
+            <input type="file" accept=".csv,text/csv,text/plain" aria-label="Файл CSV" onChange={onFile} />
+            {fileName && <span> {fileName}</span>}
+          </p>
+          <p>
+            <button type="button" disabled={csv === "" || run.isPending} onClick={() => run.mutate({ csv, dryRun: true })}>
+              Проверить
+            </button>{" "}
+            <button type="button" disabled={csv === "" || run.isPending || !(result?.dry_run)} onClick={() => run.mutate({ csv, dryRun: false })}>
+              Создать пользователей
+            </button>
+          </p>
+          {run.isError && issues.length === 0 && <p role="alert" className="error">{errorMessage(run.error)}</p>}
+          {issues.length > 0 && (
+            <div role="alert" className="error">
+              <p>Файл не принят, никто не создан:</p>
+              <ul>
+                {issues.map((issue, i) => (
+                  <li key={i}>{issue.row > 0 ? `строка ${issue.row} — ` : ""}{issueText(issue.field, issue.reason)}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {result?.dry_run && (
+            <>
+              <p className="notice">Файл в порядке: будет создано пользователей — {result.count}. Пароли появятся после «Создать пользователей».</p>
+              <table>
+                <thead>
+                  <tr><th>Строка</th><th>Логин</th><th>ФИО</th><th>Роль</th><th>Служба</th></tr>
+                </thead>
+                <tbody>
+                  {result.users.map((u) => (
+                    <tr key={u.row}>
+                      <td>{u.row}</td><td>{u.login}</td><td>{u.full_name}</td><td>{u.role}</td><td>{u.service_code ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </>
+      )}
+      {created && (
+        <>
+          <p className="notice">
+            Создано пользователей: {created.count}. <strong>Пароли показаны один раз</strong> — сохраните лист сейчас, потом их узнать нельзя.
+          </p>
+          <p>
+            <button type="button" onClick={downloadSheet}>
+              Скачать лист «логин — пароль»
+            </button>
+          </p>
+          <table>
+            <thead>
+              <tr><th>Логин</th><th>Пароль</th><th>ФИО</th><th>Роль</th></tr>
+            </thead>
+            <tbody>
+              {created.users.map((u) => (
+                <tr key={u.row}>
+                  <td>{u.login}</td><td><code>{u.password}</code></td><td>{u.full_name}</td><td>{u.role}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
     </div>
   );

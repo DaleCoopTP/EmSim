@@ -218,3 +218,41 @@ export function useRevokeUserSessions() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin", "sessions"] }),
   });
 }
+
+// ADR-038: bulk user creation from a CSV table. A dry run only checks the
+// file; the real run returns each generated password once.
+export interface ImportedUser {
+  row: number;
+  login: string;
+  full_name: string;
+  role: string;
+  service_code: string | null;
+  password?: string;
+}
+export interface ImportResult {
+  dry_run: boolean;
+  count: number;
+  users: ImportedUser[];
+}
+export interface ImportIssue {
+  row: number;
+  field: string;
+  reason: string;
+}
+
+export function useImportUsers() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ csv, dryRun }: { csv: string; dryRun: boolean }) =>
+      api.postText<ImportResult>(`/admin/users/import?dry_run=${dryRun}`, csv, "text/csv"),
+    onSuccess: (result) => {
+      if (!result.dry_run) void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+    },
+  });
+}
+
+// importIssues reads the row-by-row report out of a 422 answer.
+export function importIssues(error: unknown): ImportIssue[] {
+  const details = (error as { details?: { errors?: unknown } } | null)?.details;
+  return Array.isArray(details?.errors) ? (details.errors as ImportIssue[]) : [];
+}
