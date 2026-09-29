@@ -147,7 +147,10 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → crew
 	expect(await page.evaluate(() => (window as unknown as { __e2eTrackEnabled?: boolean[] }).__e2eTrackEnabled ?? [])).toContain(false);
 	await page.getByRole("button", { name: "Включить микрофон" }).click();
 	expect(await page.evaluate(() => (window as unknown as { __e2eTrackEnabled?: boolean[] }).__e2eTrackEnabled ?? [])).toContain(true);
-	await expect(page.getByRole("button", { name: "Завершить", exact: true })).toBeDisabled();
+	// ДДС-3 (ADR-032): for a service with terminal statuses an outgoing
+	// call's written report is optional, so ending is allowed right away.
+	await expect(page.getByLabel("Кто принял (необязательно)")).toBeVisible();
+	await expect(page.getByRole("button", { name: "Завершить", exact: true })).toBeEnabled();
 	await page.getByLabel("Кто принял").fill("Руководитель бригады");
 	await page.getByLabel("Суть сообщения").fill("Дерево перекрыло дорожку, участок ограждён.");
 	await page.getByRole("button", { name: "Завершить" }).click();
@@ -217,7 +220,10 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → crew
 	await page.getByRole("button", { name: "Войти" }).click();
 	await expect(page.getByRole("heading", { name: "Занятия" })).toBeVisible();
 	await page.goto(`${baseURL}/instructor/items/${row.item_id}/review`);
-	await expect(page.getByRole("heading", { name: "Статусы реагирования" })).toBeVisible();
+	// The DDS review is a set of collapsible sections; the saved statuses
+	// live under «Карточка и эталон».
+	await page.locator("summary").filter({ hasText: "Карточка и эталон" }).click();
+	await expect(page.getByRole("heading", { name: "Статусы, проставленные обучаемым" })).toBeVisible();
 	await expect(page.getByRole("listitem").filter({ hasText: "Проведение работ — Распил дерева, вызвана автовышка." })).toBeVisible();
 	await expect(page.getByText("Статус карточки: Завершена")).toBeVisible();
 });
