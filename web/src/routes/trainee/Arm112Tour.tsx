@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import "./Arm112Tour.css";
 
 type Callout = { target: string; text: string };
-type TourStep = readonly Callout[];
+export type TourStep = readonly Callout[];
 
 const introSteps: readonly TourStep[] = [
   [{ target: "help", text: "Опция “Сообщить о проблеме” позволяет направить сообщение в СТП" }],
@@ -48,6 +48,7 @@ const cardSteps: readonly TourStep[] = [
     { target: "preview-activity", text: "Звонки оператора Службы 112" },
   ],
 ];
+const fullMainSteps: readonly TourStep[] = [...introSteps, ...cardSteps];
 
 type Spotlight = { top: number; right: number; bottom: number; left: number; text: string };
 type Layout = { width: number; height: number; spots: Spotlight[] };
@@ -78,14 +79,20 @@ function tipPositions(layout: Layout): Tip[] {
 export function Arm112Tour({ rootRef, onClose, hasCard, onPreviewStep }: {
   rootRef: RefObject<HTMLElement>; onClose: () => void; hasCard: boolean; onPreviewStep: (open: boolean) => void;
 }) {
-  const tourSteps = hasCard ? [...introSteps, ...cardSteps] : introSteps;
+  return <SpotlightTour rootRef={rootRef} onClose={onClose} steps={hasCard ? fullMainSteps : introSteps}
+    onStepChange={(next) => onPreviewStep(hasCard && next >= introSteps.length + 5)} />;
+}
+
+export function SpotlightTour({ rootRef, onClose, steps, onStepChange, closePosition = "right", label = "Ознакомительный режим" }: {
+  rootRef: RefObject<HTMLElement>; onClose: () => void; steps: readonly TourStep[];
+  onStepChange?: (step: number) => void; closePosition?: "left" | "right"; label?: string;
+}) {
   const [step, setStep] = useState(0);
   const [layout, setLayout] = useState<Layout | null>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
   const ready = layout !== null;
   const goToStep = (next: number) => {
-    // The underlying page is inert in tour mode; reveal the preview automatically.
-    onPreviewStep(hasCard && next >= introSteps.length + 5);
+    onStepChange?.(next);
     setStep(next);
   };
 
@@ -97,7 +104,7 @@ export function Arm112Tour({ rootRef, onClose, hasCard, onPreviewStep }: {
   }, []);
 
   useLayoutEffect(() => {
-    const callouts = tourSteps[step];
+    const callouts = steps[step];
     if (!callouts) { onClose(); return; }
     const targets = callouts.map((callout) => rootRef.current?.querySelector<HTMLElement>(`[data-tour-target="${callout.target}"]`));
     if (targets.some((target) => !target)) {
@@ -105,6 +112,12 @@ export function Arm112Tour({ rootRef, onClose, hasCard, onPreviewStep }: {
       return;
     }
     const elements = targets as HTMLElement[];
+    const bounds = elements.map((element) => element.getBoundingClientRect());
+    const groupTop = Math.min(...bounds.map((rect) => rect.top));
+    const groupBottom = Math.max(...bounds.map((rect) => rect.bottom));
+    if (groupBottom - groupTop < window.innerHeight - 160 && (groupTop < 64 || groupBottom > window.innerHeight - 96)) {
+      elements[Math.floor(elements.length / 2)].scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+    }
     const update = () => {
       const width = window.innerWidth;
       const height = window.innerHeight;
@@ -130,7 +143,7 @@ export function Arm112Tour({ rootRef, onClose, hasCard, onPreviewStep }: {
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
-  }, [rootRef, step, onClose, hasCard]);
+  }, [rootRef, step, onClose, steps]);
 
   useEffect(() => {
     if (ready) nextRef.current?.focus();
@@ -145,18 +158,18 @@ export function Arm112Tour({ rootRef, onClose, hasCard, onPreviewStep }: {
       }
       if (event.key === "ArrowRight") {
         event.preventDefault();
-        if (step === tourSteps.length - 1) onClose();
+        if (step === steps.length - 1) onClose();
         else goToStep(step + 1);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose, step, hasCard, onPreviewStep]);
+  }, [onClose, step, steps, onStepChange]);
 
   if (!layout) return null;
   const tips = tipPositions(layout);
   return createPortal(
-    <div className="arm112-tour" role="dialog" aria-modal="true" aria-label="Ознакомительный режим">
+    <div className="arm112-tour" role="dialog" aria-modal="true" aria-label={label}>
       <svg className="arm112-tour-shade" width={layout.width} height={layout.height} aria-hidden="true">
         <defs><mask id="arm112-tour-holes" maskUnits="userSpaceOnUse">
           <rect width={layout.width} height={layout.height} fill="white" />
@@ -176,12 +189,13 @@ export function Arm112Tour({ rootRef, onClose, hasCard, onPreviewStep }: {
       {layout.spots.map((spot, index) => <div key={index} className="arm112-tour-tip" style={{
         top: tips[index].top, left: tips[index].left, width: tips[index].width,
       }}><p>{spot.text}</p></div>)}
-      <button type="button" className="arm112-tour-close" aria-label="Закрыть ознакомительный режим" onClick={onClose}>×</button>
+      <button type="button" className={`arm112-tour-close${closePosition === "left" ? " is-left" : ""}`}
+        aria-label="Закрыть ознакомительный режим" onClick={onClose}>×</button>
       <nav className="arm112-tour-navigation" aria-label="Шаги ознакомительного режима">
         <button type="button" aria-label="Предыдущее объяснение" disabled={step === 0} onClick={() => goToStep(step - 1)}>←</button>
-        <span aria-live="polite">{step + 1} / {tourSteps.length}</span>
-        <button ref={nextRef} type="button" aria-label={step === tourSteps.length - 1 ? "Завершить ознакомительный режим" : "Следующее объяснение"}
-          onClick={() => step === tourSteps.length - 1 ? onClose() : goToStep(step + 1)}>→</button>
+        <span aria-live="polite">{step + 1} / {steps.length}</span>
+        <button ref={nextRef} type="button" aria-label={step === steps.length - 1 ? "Завершить ознакомительный режим" : "Следующее объяснение"}
+          onClick={() => step === steps.length - 1 ? onClose() : goToStep(step + 1)}>→</button>
       </nav>
     </div>,
     document.body,

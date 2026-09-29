@@ -58,6 +58,7 @@
 }
 
 .arm112-tour-close:hover { background: #455761; }
+.arm112-tour-close.is-left { right: auto; left: 16px; }
 
 .arm112-tour-navigation {
   position: fixed;
