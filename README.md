@@ -12,6 +12,7 @@
 ```bash
 cp .env.example .env   # при желании поменять логин/пароль администратора
 make model             # один раз: веса локальной модели в ./models (раздел «Модель»)
+make stt-model         # один раз: модель распознавания речи для диктовки (раздел «Диктовка»)
 docker compose up --build
 ```
 
@@ -32,7 +33,8 @@ API, `:8081` — `/healthz`/`/readyz`/`/metrics`) и один `worker --role=all
 перезапускает только сервис `seed`, без остального стека — например, после
 добавления файла в `seed/scenarios/`). Сервис `llm` — локальная модель
 для ИИ-заявителя и судьи описания 112 (раздел «Модель» ниже); `worker` ждёт,
-пока она загрузится. STT/Caddy добавятся вместе с их клиентами.
+пока она загрузится. Сервис `stt` — распознавание речи для диктовки оператора 112
+(раздел «Диктовка» ниже); Caddy — в профиле класса.
 
 ### Модель (ADR-029)
 
@@ -312,6 +314,33 @@ REMOTE_LLM_URL=https://llm.example/v1 REMOTE_LLM_MODEL=<модель> LLM_API_KE
 - Разные ключи для заявителя и судьи задаются через `CALLER_LLM_API_KEY` и `JUDGE_LLM_API_KEY`, судье можно дать другую модель — `REMOTE_JUDGE_MODEL`.
 - `LLM_DIALECT=openai` (по умолчанию в этом профиле) отправляет только стандартные поля. Для удалённого `llama-server` или Ollama задайте `LLM_DIALECT=llama`.
 - Реплики диалога с заявителем и описания заявителя при этом уходят за пределы учебного центра. Включайте режим только там, где это согласовано.
+
+### Диктовка оператора 112 (срез 112-8a, ADR-037)
+
+В чате с ИИ-заявителем (`full_case` со свободным текстом) рядом с «Отправить»
+появляется кнопка микрофона: нажать — говорить — нажать ещё раз. Фраза
+(до `DICTATION_MAX_SECONDS`, 30 с) уходит на сервер, распознаётся
+`whisper.cpp` и **попадает в поле ввода**; оператор правит текст и отправляет
+его обычным сообщением. Аудио и распознанный текст нигде не хранятся;
+у отправленной реплики остаётся только метка «надиктовано», её видно в разборе.
+
+```bash
+make stt-model       # ggml-small.bin (~465 МБ) в ./models, с проверкой sha256
+docker compose up --build
+```
+
+- Сервис `stt` — `whisper-server` (образ закреплён по тегу и digest, модель read-only из `./models`, сеть `inference`). Модель меняется через `STT_MODEL_FILE`, например `STT_MODEL_FILE=ggml-large-v3-turbo-q5_0.bin make stt-model` (~550 МБ, точнее, но тяжелее для CPU).
+- `DICTATION=whisper` (по умолчанию в `compose.yaml`) | `stub` (фиксированная фраза, для e2e) | `off` (без кнопки; по умолчанию в `compose.no-llm.yaml`). `STT_URL`, `STT_LANGUAGE` (ru), `STT_TIMEOUT` (15 с), `DICTATION_CONCURRENCY` (2 распознавания одновременно), `DICTATION_QUEUE_WAIT` (5 с; иначе `429 dictation_busy`). Пока `stt` не поднялся или упал, диктовка отвечает `503`, печать работает.
+- Микрофону нужен **HTTPS или localhost**: в классе — профиль `compose.class.yaml` (раздел «Класс»), корневой сертификат `make class-ca` должен быть установлен на рабочих местах.
+- **Apple Silicon.** Образ whisper.cpp собран только для `linux/amd64`; под эмуляцией Docker на Mac он зависает при загрузке модели. Для разработки запустите `whisper-server` нативно (Metal), собрав `whisper.cpp` из исходников (`cmake -B build -DWHISPER_BUILD_SERVER=ON && cmake --build build --target whisper-server`), и укажите его стеку без контейнера `stt`:
+
+  ```bash
+  build/bin/whisper-server -m models/ggml-small.bin -l ru --host 127.0.0.1 --port 8090
+  DICTATION=whisper STT_URL=http://host.docker.internal:8090 \
+    docker compose -f compose.yaml -f compose.no-llm.yaml up --build
+  ```
+
+- Одновременная нагрузка `llama-server` и `whisper-server` на CPU класса ещё не измерена: замер задержки диктовки и ответа заявителя входит в W0 (112-9).
 
 ### Рабочее место ДДС: статусы реагирования (ADR-030)
 

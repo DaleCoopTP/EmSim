@@ -1,4 +1,4 @@
-.PHONY: demo class-up class-ca format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build seed model web-install web-build web-check verify-web
+.PHONY: demo class-up class-ca stt-model format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build seed model web-install web-build web-check verify-web
 
 GO_FILES := $(shell git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do test -f "$$file" && printf '%s\n' "$$file"; done)
 
@@ -33,6 +33,7 @@ compose-config:
 	docker compose config --quiet
 	docker compose -f compose.yaml -f compose.no-llm.yaml config --quiet
 	EMSIM_HOST=emsim.local docker compose -f compose.yaml -f compose.class.yaml config --quiet
+	DICTATION=stub docker compose -f compose.yaml -f compose.no-llm.yaml config --quiet
 	REMOTE_LLM_URL=https://llm.example/v1 REMOTE_LLM_MODEL=model docker compose -f compose.yaml -f compose.remote-llm.yaml config --quiet
 
 # Demo stand (ADR-033): workstations, an instructor and demo trainees
@@ -69,6 +70,11 @@ seed:
 # sources (--from-ollama, --url).
 model:
 	scripts/fetch-model.sh
+
+# Fetches the stt service's whisper.cpp weights into ./models with sha256
+# verification (ADR-037). STT_MODEL_FILE picks another model.
+stt-model:
+	scripts/fetch-stt-model.sh
 
 # The Go build/test/verify targets above never need Node — web/dist ships
 # a checked-in .gitkeep placeholder (web/embed.go), so "go build ./..."

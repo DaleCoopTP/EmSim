@@ -16,9 +16,15 @@ services:
   llm:
     profiles: ["bundled-model-disabled"]
 
+  # ADR-037: no speech model either. Dictation is off unless asked for;
+  # e2e sets DICTATION=stub to exercise the microphone without an engine.
+  stt:
+    profiles: ["bundled-model-disabled"]
+
   api:
     environment:
       ASSESSMENT_JUDGE: ${ASSESSMENT_JUDGE:-off}
+      DICTATION: ${DICTATION:-off}
 
   worker:
     environment:

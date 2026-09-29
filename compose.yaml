@@ -4,8 +4,8 @@ name: emsim
 # process running every pool (short/llm/stt/caller) plus maintenance
 # (reaper + sampler) via --role=all — unlike orchestration-core's compose,
 # which ran a separate container per Kind/role, this port has one worker
-# process by design (ADR-001). stt/caddy are still added once those
-# inference clients exist.
+# process by design (ADR-001). The "stt" service (ADR-037) serves operator
+# 112 dictation to the api; Caddy is compose.class.yaml's.
 #
 # ADR-029: the local model ships as the "llm" service (llama-server with a
 # GGUF from ./models, fetched once by `make model`), and the worker's AI
@@ -131,6 +131,26 @@ services:
       # Keep both equal to the worker's own values below.
       CALLER_WARMUP: ${CALLER_WARMUP:-true}
       CALLER_OPENING_DELAY: ${CALLER_OPENING_DELAY:-0s}
+      # 112-8a/ADR-037: operator 112 dictation. The api itself calls the
+      # stt service (whisper.cpp) for one phrase at a time; "off" hides the
+      # microphone, "stub" answers a fixed phrase (e2e). Unlike the model
+      # services the api does not wait for stt: until it is up, dictation
+      # answers 503 and typing keeps working.
+      DICTATION: ${DICTATION:-whisper}
+      STT_URL: ${STT_URL:-http://stt:8080}
+      STT_MODEL: ${STT_MODEL_FILE:-ggml-small.bin}
+      STT_LANGUAGE: ${STT_LANGUAGE:-ru}
+      STT_TIMEOUT: ${STT_TIMEOUT:-15s}
+      DICTATION_CONCURRENCY: ${DICTATION_CONCURRENCY:-2}
+      DICTATION_QUEUE_WAIT: ${DICTATION_QUEUE_WAIT:-5s}
+      DICTATION_MAX_SECONDS: ${DICTATION_MAX_SECONDS:-30}
+    # host.docker.internal: development on Apple Silicon runs
+    # whisper-server natively on the host (README, "Диктовка").
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - inference
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
       - "127.0.0.1:${API_ADMIN_PORT:-8081}:8081"
@@ -285,6 +305,41 @@ services:
       # Loading several GB of weights from disk takes a while on first
       # start; failures during this window do not count.
       start_period: 300s
+      start_interval: 2s
+
+  # ADR-037: speech recognition for operator 112 dictation. whisper-server
+  # keeps the ggml model loaded and answers POST /inference with one WAV
+  # phrase at a time (the api caps concurrency at DICTATION_CONCURRENCY).
+  # The image is pinned by tag and digest and is published for linux/amd64
+  # only — on an Apple Silicon Mac Docker runs it under emulation, which is
+  # slow (README, "Диктовка"). The model file is read-only from ./models
+  # (`make stt-model`); it lives in the same "inference" network as llm.
+  stt:
+    image: ghcr.io/ggml-org/whisper.cpp:main-e6234cd435eb1299ac405916f4083a62ac044b81@sha256:7616824e6f847cdf25e982570ebf407f11f3d9b200fe83423e83f9ae4351d4f5
+    platform: linux/amd64
+    entrypoint: ["/app/build/bin/whisper-server"]
+    command:
+      - --model
+      - /models/${STT_MODEL_FILE:-ggml-small.bin}
+      - --language
+      - ${STT_LANGUAGE:-ru}
+      - --threads
+      - ${STT_THREADS:-4}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    volumes:
+      - ./models:/models:ro
+    networks:
+      - inference
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
       start_interval: 2s
 
 networks:
