@@ -13,15 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Bulk user creation (ADR-038): an administrator loads a class as a table.
-// The whole file is created or nothing is; the server invents every
-// password, shows it once in the response and keeps only its hash.
-
-// MaxImportRows bounds one file: each row costs one argon2id hash.
 const MaxImportRows = 300
 
-// ImportRow is one line of the file; Row is its 1-based number among the
-// data rows (the header is not counted), for the error report.
 type ImportRow struct {
 	Row         int
 	Login       string
@@ -30,8 +23,6 @@ type ImportRow struct {
 	ServiceCode *string
 }
 
-// ImportedUser is one created (or, in a dry run, creatable) user. Password
-// is set only when users were really created.
 type ImportedUser struct {
 	Row         int
 	Login       string
@@ -41,27 +32,20 @@ type ImportedUser struct {
 	Password    string
 }
 
-// ImportIssue names one problem with one row.
 type ImportIssue struct {
 	Row    int
 	Field  string
 	Reason string
 }
 
-// ImportError is the whole report of a file that cannot be loaded: every
-// problem found, not only the first, so the file can be fixed in one pass.
 type ImportError struct{ Issues []ImportIssue }
 
 func (e *ImportError) Error() string { return "user import has problems" }
 
-// maxImportIssues bounds the report.
 const maxImportIssues = 50
 
-// passwordAlphabet leaves out the characters that are easy to misread on a
-// printed sheet (0/O, 1/l/I).
 const passwordAlphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
-// generatePassword draws length characters uniformly from the alphabet.
 func generatePassword(length int) (string, error) {
 	out := make([]byte, length)
 	max := big.NewInt(int64(len(passwordAlphabet)))
@@ -75,9 +59,6 @@ func generatePassword(length int) (string, error) {
 	return string(out), nil
 }
 
-// ImportUsers checks every row and, unless dryRun, creates them all in one
-// transaction with one audit row. The passwords are returned once and
-// never stored or logged.
 func (s *Service) ImportUsers(ctx context.Context, rows []ImportRow, dryRun bool, actor Principal, requestID string) ([]ImportedUser, error) {
 	if len(rows) == 0 {
 		return nil, &ImportError{Issues: []ImportIssue{{Row: 0, Field: "file", Reason: "empty"}}}
@@ -135,8 +116,6 @@ func (s *Service) ImportUsers(ctx context.Context, rows []ImportRow, dryRun bool
 		}
 	}
 
-	// Logins that already exist are found in the database, not by racing
-	// the insert, so one report covers the whole file.
 	takenErr := s.store.WithTx(ctx, func(tx pgx.Tx) error {
 		for _, r := range rows {
 			if ValidateLogin(r.Login) != nil {

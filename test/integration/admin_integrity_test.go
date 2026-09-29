@@ -28,11 +28,6 @@ type integrityStatus struct {
 	} `json:"integrity"`
 }
 
-// TestAdminIntegrityCheck (ADR-038): a clean installation reports ok; a
-// tampered blob file and an altered scenario body are each found by id
-// (and only by id) after the admin's "check now"; the run is audited as an
-// error; the endpoint is for the admin only and refuses a second run while
-// one is queued.
 func TestAdminIntegrityCheck(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -46,8 +41,6 @@ func TestAdminIntegrityCheck(t *testing.T) {
 	if output, err := seed.CombinedOutput(); err != nil {
 		t.Fatalf("import seed: %v\n%s", err, output)
 	}
-	// One more blob whose file we will tamper with, registered like the
-	// media store does (content-addressed path).
 	good := []byte("integrity-fixture-blob")
 	sum := sha256.Sum256(good)
 	hexSum := hex.EncodeToString(sum[:])
@@ -70,10 +63,6 @@ func TestAdminIntegrityCheck(t *testing.T) {
 		t.Fatalf("instructor POST integrity = %d, want 403", response.StatusCode)
 	}
 
-	// run queues a check and returns the report of a run that started after
-	// the request was accepted. The daily schedule may have a run of its own
-	// in flight (409 integrity_in_progress); that one may predate the
-	// caller's changes, so wait for it to end and queue another.
 	run := func() integrityStatus {
 		t.Helper()
 		deadline := time.Now().Add(60 * time.Second)
@@ -129,10 +118,6 @@ func TestAdminIntegrityCheck(t *testing.T) {
 	if err := os.WriteFile(path, []byte("tampered"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	// The database itself refuses to change an approved version's content
-	// (an immutability trigger), so the fixture switches the trigger off
-	// for one statement — the situation the check exists for is damage
-	// that bypassed the application.
 	var versionID string
 	tx, err := f.pool.Begin(ctx)
 	if err != nil {

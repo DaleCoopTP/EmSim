@@ -27,13 +27,6 @@ const Adapter = "aicaller/v1"
 // it must never claim a fact the trainee has not actually heard.
 const FallbackText = "Алло, вас плохо слышно… Повторите, пожалуйста."
 
-// ChatCompleter is aicaller's own narrow port onto an OpenAI-compatible
-// chat-completions call (ADR-003/ADR-025): platform/llm.Client
-// implements it. Declaring it here, rather than depending on
-// *llm.Client directly, keeps this package's domain logic (state,
-// classify, prompt) testable without an HTTP server, per this project's
-// hexagonal convention (CLAUDE.md) — only Request/Result, plain data
-// types, cross the boundary.
 type ChatCompleter interface {
 	Complete(ctx context.Context, req llm.Request) (llm.Result, error)
 }

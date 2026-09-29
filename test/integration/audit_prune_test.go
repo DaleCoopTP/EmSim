@@ -120,9 +120,6 @@ func TestAuditPruneScheduledThroughWorkerProcess(t *testing.T) {
 	}
 }
 
-// TestAuditPruneWaitsForARecentBackup (ADR-038): with a backup directory
-// configured and no copy in it, audit.prune deletes nothing and fails with
-// its own error code, so the administrator sees why on the status screen.
 func TestAuditPruneWaitsForARecentBackup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -144,7 +141,7 @@ func TestAuditPruneWaitsForARecentBackup(t *testing.T) {
 	t.Setenv("AUDIT_PRUNE_AT", "00:00")
 	t.Setenv("AUDIT_RETENTION_DAYS", "183")
 	t.Setenv("BACKUP_DIR", t.TempDir())
-	t.Setenv("BACKUP_AT", "23:59") // no daily backup runs during this test
+	t.Setenv("BACKUP_AT", "23:59")
 	worker := startWorkerProcess(t, binary, databaseURL, "all", "prune-nobackup")
 	t.Cleanup(func() { worker.stop(t, false) })
 

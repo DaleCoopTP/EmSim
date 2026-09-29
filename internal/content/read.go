@@ -23,14 +23,6 @@ func (s *Service) ListServices(ctx context.Context) ([]ServiceRecord, error) {
 	return records, nil
 }
 
-// ServiceExists reports whether code names a known service — content's
-// side of internal/auth's ServiceCatalog port (slice-2-plan.md's C5).
-// Service satisfies auth.ServiceCatalog structurally by having this
-// method; content never imports auth (CLAUDE.md: consumer-owned ports).
-// An active-or-not service both counts: a service being deactivated does
-// not retroactively make an already-assigned trainee's service_code
-// invalid, and CreateUser/UpdateUser's own role rules are what actually
-// restrict which role may carry one.
 func (s *Service) ServiceExists(ctx context.Context, code string) (bool, error) {
 	var exists bool
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {

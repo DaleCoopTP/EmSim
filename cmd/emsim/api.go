@@ -372,8 +372,6 @@ func runAPIProber(ctx context.Context, pool *pgxpool.Pool, cfg config.API) {
 	_ = prober.Run(ctx)
 }
 
-// loginPolicy turns the api's .env settings into the auth module's login
-// policy (ADR-038).
 func loginPolicy(cfg config.API) auth.Policy {
 	roles := make([]auth.Role, 0, len(cfg.PasswordForceChange))
 	for _, name := range cfg.PasswordForceChange {

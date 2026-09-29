@@ -1,11 +1,3 @@
-// Package http is the content module's HTTP adapter (CLAUDE.md:
-// "HTTP... are adapters") — the instructor catalogue routes
-// slice-planning.md §3's C4 adds: GET /services (admin+instructor),
-// GET /scenarios, GET /scenarios/{id}, GET /scenarios/{id}/versions,
-// GET /scenarios/{id}/preview (instructor). It reuses
-// internal/auth/http's SessionMiddleware/RequireRole rather than
-// reimplementing session handling — every module's HTTP layer sits
-// behind the same auth boundary, not a module-specific one.
 package http
 
 import (

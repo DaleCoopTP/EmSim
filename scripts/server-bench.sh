@@ -1,19 +1,4 @@
 #!/usr/bin/env bash
-# The W0 measurement run (slice-112-5b-plan.md stage 2) on a server where
-# scripts/server-bootstrap.sh has brought the stack up. For each llm
-# setting in CONFIGS it restarts llama-server, waits for it, and runs
-# bench-llm; then it times whisper on a sample phrase, alone and under LLM
-# load. Reports go to bench-results/<vcpu>vcpu-<timestamp>/.
-#
-#   scripts/server-bench.sh                          # default plan
-#   CONFIGS="6:4 8:8" LEVELS=1,4,8 scripts/server-bench.sh
-#
-# CONFIGS: space-separated THREADS:PARALLEL pairs for llama-server
-# (LLM_THREADS / LLM_PARALLEL; the context grows with PARALLEL so each
-# dialogue keeps 4096 tokens). The sample WAV for whisper is
-# tmp/stt-sample.wav (16 kHz mono; make it on a Mac with
-#   say -v Milena -o tmp/stt-sample.wav --data-format=LEI16@16000 "…"
-# before server-sync.sh); without it the STT step is skipped.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -52,11 +37,9 @@ for cfg in $CONFIGS; do
 	LLM_THREADS="$threads" LLM_PARALLEL="$parallel" LLM_CTX_SIZE="$ctx" $DOCKER compose up -d llm
 	wait_llm
 	$DOCKER compose run --rm worker bench-llm \
-		--concurrency "$LEVELS" --duration "$DURATION" --judge "$JUDGE" \
 		2>&1 | tee "$OUT/llm-t${threads}-p${parallel}.txt"
 done
 
-# Back to the compose defaults so the stack is left as bootstrapped.
 log "llm: restoring compose defaults"
 $DOCKER compose up -d llm
 wait_llm

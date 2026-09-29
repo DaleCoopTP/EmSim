@@ -1,17 +1,3 @@
-// Package http is the training module's HTTP adapter (RFC-001 §5's
-// lessons/trainee route groups, slice-planning.md §4's slice 3). It
-// reuses internal/auth/http's SessionMiddleware/RequireRole rather than
-// reimplementing session handling, matching internal/content/http's own
-// convention (every module's HTTP layer sits behind the same auth
-// boundary).
-//
-// GET /items/{itemId} is the one route both an instructor (with
-// reference) and a trainee (without it) may call — auth.GroupItemRead
-// (added alongside this file) is the group RequireRole checks; the
-// handler itself still tells the two views apart and enforces ownership
-// through the application service, which is where CLAUDE.md places that
-// check ("middleware проверяет роль по маршруту, обработчик —
-// принадлежность").
 package http
 
 import (

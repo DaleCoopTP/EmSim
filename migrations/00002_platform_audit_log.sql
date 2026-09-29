@@ -1,9 +1,3 @@
--- Platform audit log: one row per domain effect, written in the same
--- transaction as that effect (design-docs/contracts/schema.sql, RFC-001
--- §9: "Audit: каждый эффект — строка в audit_log в той же транзакции").
--- Owned by internal/platform/audit; every product module writes through
--- it instead of its own table (CLAUDE.md: "A module writes only its own
--- tables" — audit_log belongs to platform, not to auth/content/...).
 
 -- +goose Up
 CREATE TABLE audit_log (

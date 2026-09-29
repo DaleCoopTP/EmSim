@@ -10,13 +10,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Store is assessment's own persistence port — trainee_assessment_state,
-// assessment_inputs, assessments and training_examples, the four tables
-// this module owns (CLAUDE.md: "a module writes only its own tables").
-// Unlike ItemReader/EvidenceReader/ScenarioReader/TaskStore (ports.go),
-// this is not a narrow single-purpose interface: like
-// internal/training.Store, it is assessment's one adapter boundary, and
-// its only implementation is internal/assessment/postgres.Store.
 type Store interface {
 	WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 	AuditRecord(ctx context.Context, tx pgx.Tx, entry audit.Entry) error

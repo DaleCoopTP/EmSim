@@ -14,9 +14,6 @@ func policyService(store *fakeStore) *Service {
 	})
 }
 
-// TestLoginLocksAfterRunOfWrongPasswords (ADR-038): the third wrong
-// password locks the account; while locked even the right password is
-// refused with ErrAccountLocked; an administrator's unlock lets it in.
 func TestLoginLocksAfterRunOfWrongPasswords(t *testing.T) {
 	store := newFakeStore()
 	user, password := testAdmin("policy-admin", "correct-horse-battery")
@@ -48,8 +45,6 @@ func TestLoginLocksAfterRunOfWrongPasswords(t *testing.T) {
 	}
 }
 
-// TestSuccessfulLoginEndsTheRun: two wrong passwords, a good login, then two
-// more wrong ones must not lock (the run restarted).
 func TestSuccessfulLoginEndsTheRun(t *testing.T) {
 	store := newFakeStore()
 	user, password := testAdmin("run-admin", "correct-horse-battery")
@@ -74,9 +69,6 @@ func TestSuccessfulLoginEndsTheRun(t *testing.T) {
 	}
 }
 
-// TestPolicyForcesPasswordChangeForNamedRoles: an administrator-created or
-// reset password is temporary for the configured roles only, and the
-// user's own change lifts the flag and ends their other sessions.
 func TestPolicyForcesPasswordChangeForNamedRoles(t *testing.T) {
 	store := newFakeStore()
 	actor := testAdminActor(store)
@@ -125,7 +117,6 @@ func TestPolicyForcesPasswordChangeForNamedRoles(t *testing.T) {
 		t.Fatal("the other session survived a password change")
 	}
 
-	// An administrator's reset makes the new password temporary again.
 	if _, err := service.UpdateUser(ctx, instructor.ID, Patch{Password: strPtr("admin-reset-pass-1")}, actor, "r"); err != nil {
 		t.Fatal(err)
 	}
@@ -137,11 +128,6 @@ func TestPolicyForcesPasswordChangeForNamedRoles(t *testing.T) {
 
 func strPtr(s string) *string { return &s }
 
-// TestImportUsersIsAllOrNothingWithGeneratedPasswords (ADR-038): a file with
-// a bad row creates nobody and reports every problem; a dry run creates
-// nobody and shows no passwords; a good file creates everyone with distinct
-// server-made passwords that log in, one audit row, and the policy's
-// forced-change flag for the named roles.
 func TestImportUsersIsAllOrNothingWithGeneratedPasswords(t *testing.T) {
 	store := newFakeStore()
 	actor := testAdminActor(store)

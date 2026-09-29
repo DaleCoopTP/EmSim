@@ -1,10 +1,3 @@
-// Package content is the content product module (CLAUDE.md §"Architecture
-// boundaries": прeпared scenarios and их эталоны — RFC-001 §4.2). This
-// file holds the module's pure vocabulary shared by every other file
-// here: ExerciseType, Reaction, and the errors Validate and Decode return.
-// Like internal/auth/domain.go, it has no HTTP or PostgreSQL dependency;
-// the store (internal/content/postgres) and HTTP handlers
-// (internal/content/http) are added in slice 2's later steps (C3/C4).
 package content
 
 import (

@@ -23,18 +23,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// kindIntegrityCheck (ADR-038) verifies that stored data still matches
-// what was recorded about it: blob files against their hashes, sealed
-// evidence and approved scenario bodies against their digests, the newest
-// backup copy against its manifest, and the schema version. It only
-// reads; a mismatch is reported (audit, status screen), never repaired.
 const kindIntegrityCheck tasks.Kind = "integrity.check"
 
-// integrityCheckAt is the local time the daily check is enqueued: after
-// the nightly backup (03:00) and audit cleanup (04:00).
 const integrityCheckAt = 5 * time.Hour
 
-// integrityChecks composes the checks over this process's own storage.
 func integrityChecks(pool *pgxpool.Pool, processConfig config.Worker) []integrity.Check {
 	checks := []integrity.Check{integrity.SchemaCheck(func(ctx context.Context) (int64, error) {
 		return pgstore.CurrentVersion(ctx, pool)
@@ -52,9 +44,6 @@ func integrityChecks(pool *pgxpool.Pool, processConfig config.Worker) []integrit
 	return checks
 }
 
-// bodyDigest is how evidence and scenario versions were sealed: sha256 of
-// the canonical form of the jsonb body (training.canonicalDigest and
-// content.BodyDigest use the same content.Digest).
 func bodyDigest(body []byte) ([32]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
@@ -65,8 +54,6 @@ func bodyDigest(body []byte) ([32]byte, error) {
 	return content.Digest(tree), nil
 }
 
-// blobsCheck reads every registered blob file back: it must exist, have
-// the recorded size and hash to the recorded sha256.
 func blobsCheck(pool *pgxpool.Pool, root string) integrity.Check {
 	return integrity.Check{Name: "blobs", Run: func(ctx context.Context) (integrity.Result, error) {
 		var result integrity.Result
@@ -125,9 +112,6 @@ func blobMatches(store *media.FileStore, sha [32]byte, size int64) bool {
 	return bytes.Equal(h.Sum(nil), sha[:])
 }
 
-// integrityHandler is kindIntegrityCheck's worker side. The run reads
-// outside any transaction; its audit row and the task's terminal state
-// then commit together. Only ids and counts leave the check.
 func integrityHandler(pool *pgxpool.Pool, store *tasks.Store, processConfig config.Worker) tasks.Handler {
 	return tasks.HandlerFunc(func(ctx context.Context, lease tasks.Lease) error {
 		report := integrity.Run(ctx, time.Now(), integrityChecks(pool, processConfig))

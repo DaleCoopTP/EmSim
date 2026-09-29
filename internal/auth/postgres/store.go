@@ -1,21 +1,3 @@
-// Package postgres is the pgx-backed adapter for the auth module's ports
-// (CLAUDE.md: "HTTP, PostgreSQL, files, STT, and LLM are adapters" — the
-// narrow Store interface Service actually needs is declared in
-// internal/auth/service.go, its consumer; this package holds the concrete
-// implementation and every method any consumer needs, structurally
-// satisfying that interface without either package naming the other's
-// interface type). Errors this package cannot map to a specific domain
-// sentinel (auth.ErrLoginTaken, say) come back as auth.ErrNotFound or
-// auth.ErrStorage — both declared in internal/auth, not here, precisely so
-// service.go can check for them without importing its own adapter.
-//
-// Every method except WithTx takes an explicit pgx.Tx instead of opening
-// its own transaction (CLAUDE.md: "Use pgx.Tx for atomic domain and queue
-// operations. The caller owns commit and rollback.") — WithTx is the one
-// place that owns commit/rollback, so a caller that needs a domain change,
-// its audit_log row, and (from later slices) a related tasks.EnqueueTx
-// atomic in one commit gets there by running all of them inside one
-// WithTx closure, passing the same tx to each Store/audit call.
 package postgres
 
 import (
@@ -140,9 +122,6 @@ func (s *Store) ListUsers(ctx context.Context, tx pgx.Tx, page, pageSize int) ([
 // unique-constraint violation into the domain error here, so service.go
 // never has to inspect a *pgconn.PgError itself.
 func (s *Store) InsertUser(ctx context.Context, tx pgx.Tx, u auth.User) (auth.User, error) {
-	// must_change_password (migration 00023) is written only when set, so
-	// this insert also works against a schema migrated to an older version
-	// (the content migration tests do that).
 	columns, values := "id, login, password_hash, full_name, role, service_code, level, active", "$1, $2, $3, $4, $5, $6, $7, $8"
 	args := []any{u.ID, u.Login, u.PasswordHash, u.FullName, string(u.Role), u.ServiceCode, string(u.Level), u.Active}
 	if u.MustChangePassword {
@@ -407,10 +386,6 @@ func (s *Store) DeleteSession(ctx context.Context, tx pgx.Tx, id []byte) error {
 	return nil
 }
 
-// DeleteUserSessions removes every session for userID — called when a
-// password changes or the account is deactivated (CLAUDE.md-driven
-// service.go behavior, C6), so a stolen or now-wrong-permission session
-// stops working immediately rather than at its natural expiry.
 func (s *Store) DeleteUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID); err != nil {
 		return auth.ErrStorage
@@ -418,8 +393,6 @@ func (s *Store) DeleteUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.U
 	return nil
 }
 
-// DeleteOtherUserSessions removes every session of userID except keep —
-// the one a password change was made from (ADR-038).
 func (s *Store) DeleteOtherUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID, keep []byte) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND id <> $2`, userID, keep); err != nil {
 		return auth.ErrStorage
@@ -427,8 +400,6 @@ func (s *Store) DeleteOtherUserSessions(ctx context.Context, tx pgx.Tx, userID u
 	return nil
 }
 
-// ListUserSessions returns userID's live sessions, newest first, with the
-// workstation they were opened at. Never the session id.
 func (s *Store) ListUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]auth.SessionInfo, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT s.created_at, s.last_seen_at, s.expires_at, w.number, COALESCE(w.label, '')
@@ -453,13 +424,6 @@ func (s *Store) ListUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUI
 	return out, nil
 }
 
-// ------------------------------------------------------------ login policy
-
-// RecordFailedLogin counts one more wrong password for userID and, when
-// the run reaches threshold, starts a lock of lockFor and resets the run.
-// It is one statement, so concurrent attempts cannot skip the threshold;
-// the lock's end comes from PostgreSQL's clock. It reports whether this
-// attempt locked the account.
 func (s *Store) RecordFailedLogin(ctx context.Context, tx pgx.Tx, userID uuid.UUID, threshold int, lockFor time.Duration) (bool, error) {
 	var locked bool
 	err := tx.QueryRow(ctx, `
@@ -478,7 +442,6 @@ func (s *Store) RecordFailedLogin(ctx context.Context, tx pgx.Tx, userID uuid.UU
 	return locked, nil
 }
 
-// ClearFailedLogins ends a run of wrong passwords after a good login.
 func (s *Store) ClearFailedLogins(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `UPDATE users SET failed_logins = 0 WHERE id = $1 AND failed_logins <> 0`, userID); err != nil {
 		return auth.ErrStorage

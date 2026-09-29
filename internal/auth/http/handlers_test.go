@@ -542,10 +542,6 @@ func assertErrorEnvelope(t *testing.T, response *httptest.ResponseRecorder, want
 	}
 }
 
-// TestMustChangePasswordSessionReachesOnlyPasswordEndpoints (ADR-038): a
-// session whose password must be changed can read /me and change the
-// password, and gets 403 password_change_required anywhere else behind the
-// session middleware.
 func TestMustChangePasswordSessionReachesOnlyPasswordEndpoints(t *testing.T) {
 	me := sampleMe()
 	svc := &fakeService{

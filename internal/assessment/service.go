@@ -17,17 +17,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Service coordinates assessment's use cases and transactions
-// (CLAUDE.md's hexagonal split: domain rules in rubric.go/score.go/
-// revision.go/dds stay independent of HTTP/PostgreSQL; this is the one
-// place that opens a transaction and calls Store/ItemReader/
-// EvidenceReader/ScenarioReader/TaskStore together). It implements
-// tasks.Handler (Handle -> RecordAuto) and tasks.Finalizer
-// (FinalizeExpired) directly, so cmd/emsim registers *Service itself
-// against the worker's handler registry and Recovery — no adapter type
-// needed, the same structural-satisfaction convention
-// internal/training/ports.go documents for its own consumer-owned
-// interfaces.
 type Service struct {
 	store      Store
 	items      ItemReader

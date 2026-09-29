@@ -226,9 +226,6 @@ function BackupPanel(props: { status: AdminStatus; onStart: () => void; starting
   );
 }
 
-// ADR-038: the last integrity check. It only reads and reports; a mismatch
-// lists ids to look at, never content. The check runs daily by itself; the
-// button asks for one now and the result appears on the next refresh.
 function IntegrityPanel(props: { status: AdminStatus; onStart: () => void; starting: boolean; started: boolean; error: string | null }) {
   const report = props.status.integrity;
   return (

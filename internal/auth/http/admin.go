@@ -251,8 +251,6 @@ type sessionJSON struct {
 	WorkstationLabel  *string `json:"workstation_label"`
 }
 
-// listSessions is GET /admin/users/{id}/sessions (ADR-038): when each live
-// session began, was last used and expires, and at which workstation.
 func (h *AdminHandlers) listSessions(w http.ResponseWriter, r *http.Request) {
 	userID, err := uuid.Parse(r.PathValue("userId"))
 	if err != nil {
@@ -278,8 +276,6 @@ func (h *AdminHandlers) listSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, items)
 }
 
-// revokeSessions is DELETE /admin/users/{id}/sessions: ends every session
-// of the user.
 func (h *AdminHandlers) revokeSessions(w http.ResponseWriter, r *http.Request) {
 	userID, err := uuid.Parse(r.PathValue("userId"))
 	if err != nil {
@@ -363,8 +359,6 @@ func queryIntOrDefault(query url.Values, key string, fallback int) int {
 	return value
 }
 
-// maxImportBytes bounds the uploaded table (MaxImportRows short lines fit
-// many times over).
 const maxImportBytes = 256 << 10
 
 type importedUserJSON struct {
@@ -373,9 +367,7 @@ type importedUserJSON struct {
 	FullName    string  `json:"full_name"`
 	Role        string  `json:"role"`
 	ServiceCode *string `json:"service_code"`
-	// Password is present only when the users were really created, and only
-	// in this one response.
-	Password string `json:"password,omitempty"`
+	Password    string  `json:"password,omitempty"`
 }
 
 type importIssueJSON struct {
@@ -384,9 +376,6 @@ type importIssueJSON struct {
 	Reason string `json:"reason"`
 }
 
-// importUsers is POST /admin/users/import?dry_run= (ADR-038): a CSV table
-// (header login, full_name, role and optional service_code; comma or
-// semicolon) becomes users, all or none, with passwords the server chose.
 func (h *AdminHandlers) importUsers(w http.ResponseWriter, r *http.Request) {
 	dryRun := r.URL.Query().Get("dry_run") == "true"
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxImportBytes))
@@ -425,10 +414,6 @@ func writeImportIssues(w http.ResponseWriter, r *http.Request, issues []importIs
 	httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "the user table has problems", map[string]any{"field": "file", "errors": issues})
 }
 
-// parseUserImportCSV reads the table: an optional UTF-8 BOM, a header row
-// naming the columns in any order, then one user per row. A semicolon
-// separator (what a Russian-locale spreadsheet exports) is detected from
-// the header.
 func parseUserImportCSV(raw []byte) ([]auth.ImportRow, []importIssueJSON) {
 	text := strings.TrimPrefix(string(raw), "\ufeff")
 	if strings.TrimSpace(text) == "" {

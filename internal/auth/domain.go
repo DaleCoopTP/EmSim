@@ -1,12 +1,3 @@
-// Package auth is the auth product module (CLAUDE.md §"Architecture
-// boundaries": users, sessions, roles, workstations; owns users,
-// sessions, workstations — RFC-001 §4.2). This file holds the pure
-// domain: value types and validation rules with no HTTP or PostgreSQL
-// dependency (CLAUDE.md: "domain rules are independent of HTTP, SQL,
-// files, STT, and LLM"). password.go, authz.go and ratelimit.go are
-// domain too; the pgx-backed store and the HTTP handlers are separate
-// packages (internal/auth/postgres, internal/auth/http) added in later
-// commits of slice 1.
 package auth
 
 import (
@@ -65,18 +56,15 @@ func (l Level) Valid() bool {
 // admin/instructor" — enforced by validateServiceCode below, not by the
 // Go type system, since the rule depends on Role).
 type User struct {
-	ID           uuid.UUID
-	Login        string
-	PasswordHash string
-	FullName     string
-	Role         Role
-	ServiceCode  *string
-	Level        Level
-	Active       bool
-	CreatedAt    time.Time
-	// Login policy state (ADR-038). FailedLogins counts wrong passwords in
-	// a row; LockedUntil, when in the future, refuses every login;
-	// MustChangePassword confines the session to changing the password.
+	ID                 uuid.UUID
+	Login              string
+	PasswordHash       string
+	FullName           string
+	Role               Role
+	ServiceCode        *string
+	Level              Level
+	Active             bool
+	CreatedAt          time.Time
 	FailedLogins       int
 	LockedUntil        *time.Time
 	MustChangePassword bool
@@ -116,15 +104,11 @@ type Session struct {
 // can answer GET /me's session_expires_at without a second session
 // lookup.
 type Principal struct {
-	UserID           uuid.UUID
-	Role             Role
-	WorkstationID    *uuid.UUID
-	SessionExpiresAt time.Time
-	// SessionID is the session's stored id (sha256 of the cookie token),
-	// so "change password" can keep this session and end the others.
-	SessionID []byte
-	// MustChangePassword confines the session to the password-change
-	// endpoints (ADR-038).
+	UserID             uuid.UUID
+	Role               Role
+	WorkstationID      *uuid.UUID
+	SessionExpiresAt   time.Time
+	SessionID          []byte
 	MustChangePassword bool
 }
 
@@ -136,13 +120,6 @@ type Me struct {
 	SessionExpiresAt time.Time
 }
 
-// SessionLookup is what the store's SessionByID returns: the session row
-// joined with its user and (if any) workstation, so Authenticate/Me get
-// everything they need in one round trip. It lives in this package (not
-// internal/auth/postgres) because Service — the consumer — declares its
-// own Store port here and cannot import its adapter without inverting the
-// dependency (CLAUDE.md: domain/application code stays independent of the
-// SQL adapter).
 type SessionLookup struct {
 	Session     Session
 	User        User
@@ -175,8 +152,7 @@ type Patch struct {
 	Role        *Role
 	ServiceCode *string
 	Active      *bool
-	// Unlock clears a login lock and the failed-login run (ADR-038).
-	Unlock bool
+	Unlock      bool
 }
 
 // UserUpdate is the storage-layer partial update for one user — lower-
@@ -191,23 +167,18 @@ type Patch struct {
 // empty-string convention (a stored NULL and a stored "" are genuinely
 // different values, unlike at the Patch/API boundary).
 type UserUpdate struct {
-	PasswordHash    *string
-	PasswordHashSet bool
-	FullName        *string
-	Role            *Role
-	ServiceCode     *string
-	ServiceCodeSet  bool
-	Level           *Level
-	Active          *bool
-	// MustChangePassword sets the flag (ADR-038); ClearLockout zeroes the
-	// failed-login run and the lock.
+	PasswordHash       *string
+	PasswordHashSet    bool
+	FullName           *string
+	Role               *Role
+	ServiceCode        *string
+	ServiceCodeSet     bool
+	Level              *Level
+	Active             *bool
 	MustChangePassword *bool
 	ClearLockout       bool
 }
 
-// SessionInfo is one live session as an administrator sees it: when it
-// started, was last used and expires, and at which workstation. Never the
-// session id or token.
 type SessionInfo struct {
 	CreatedAt         time.Time
 	LastSeenAt        time.Time
@@ -229,10 +200,7 @@ var (
 	ErrLastAdmin           = errors.New("cannot deactivate or demote the last active admin")
 	// ErrRateLimited is LoginLimiter's "no more attempts this window" —
 	// RFC-001 §9's "5 попыток/мин".
-	ErrRateLimited = errors.New("too many login attempts")
-	// ErrAccountLocked is a login refused because a run of wrong passwords
-	// locked the account (ADR-038); the lock ends by itself or when an
-	// administrator unlocks it.
+	ErrRateLimited   = errors.New("too many login attempts")
 	ErrAccountLocked = errors.New("account is locked")
 	// ErrSessionInvalid covers a missing cookie, a malformed token, and a
 	// session the store could not find (which includes an expired one —

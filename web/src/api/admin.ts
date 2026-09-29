@@ -163,20 +163,16 @@ export function useSetMaintenance() {
   });
 }
 
-// ADR-038: usage statistics and the failures report share one period,
-// given as UTC days (usage) or instants (failures). Both have a CSV that
-// is a plain download.
 export type UsageReport = components["schemas"]["UsageReport"];
 export type UsageDay = components["schemas"]["UsageDay"];
 export type FailuresReport = components["schemas"]["FailuresReport"];
 
 export interface ReportPeriod {
-  from: string; // YYYY-MM-DD, UTC day
-  to: string; // YYYY-MM-DD, UTC day, inclusive
+  from: string;
+  to: string;
 }
 
 const usageQuery = (p: ReportPeriod) => `?from=${p.from}&to=${p.to}`;
-// The failures report takes instants: the period runs to the end of `to`.
 const failuresQuery = (p: ReportPeriod) => {
   const end = new Date(`${p.to}T00:00:00Z`);
   end.setUTCDate(end.getUTCDate() + 1);
@@ -200,7 +196,6 @@ export function useFailuresReport(period: ReportPeriod) {
   });
 }
 
-// ADR-038: a user's live sessions and "end them all" (admin only).
 export type UserSession = components["schemas"]["UserSession"];
 
 export function useUserSessions(userId: string | null) {
@@ -219,8 +214,6 @@ export function useRevokeUserSessions() {
   });
 }
 
-// ADR-038: bulk user creation from a CSV table. A dry run only checks the
-// file; the real run returns each generated password once.
 export interface ImportedUser {
   row: number;
   login: string;
@@ -251,7 +244,6 @@ export function useImportUsers() {
   });
 }
 
-// importIssues reads the row-by-row report out of a 422 answer.
 export function importIssues(error: unknown): ImportIssue[] {
   const details = (error as { details?: { errors?: unknown } } | null)?.details;
   return Array.isArray(details?.errors) ? (details.errors as ImportIssue[]) : [];

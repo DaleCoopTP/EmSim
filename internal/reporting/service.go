@@ -90,8 +90,6 @@ func (s *Service) ReportFile(ctx context.Context, id uuid.UUID) (ReportFile, err
 	return s.store.ReportFileByID(ctx, id)
 }
 
-// Usage is the administrator's anonymous usage statistics (ADR-038). The
-// period is given in days and snapped to whole UTC days.
 func (s *Service) Usage(ctx context.Context, from, to time.Time) (Usage, error) {
 	from, to, err := NormalizeUsagePeriod(from, to)
 	if err != nil {

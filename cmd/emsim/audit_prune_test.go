@@ -25,8 +25,6 @@ func writeCopy(t *testing.T, dir, name string, created time.Time) {
 	}
 }
 
-// TestRecentBackupExists (ADR-038): audit.prune may delete only while a
-// complete copy no older than a day exists.
 func TestRecentBackupExists(t *testing.T) {
 	now := time.Date(2026, 9, 29, 4, 0, 0, 0, time.UTC)
 	dir := t.TempDir()

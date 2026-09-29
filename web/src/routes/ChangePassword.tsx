@@ -4,10 +4,6 @@ import { useChangePassword, useLogout } from "../api/auth";
 import { errorMessage } from "../api/errors";
 import { useMe } from "../api/useMe";
 
-// ADR-038: shown instead of the workspace while the account's password is
-// one an administrator set (credentials_change_required). Nothing else is
-// reachable until it is replaced — the server answers 403
-// password_change_required to every other request — but "Выйти" always is.
 export function ChangePasswordRoute() {
   const { data: me } = useMe();
   const change = useChangePassword();

@@ -137,9 +137,6 @@ func registerKinds(registry *tasks.Registry) error {
 	}); err != nil {
 		return err
 	}
-	// ADR-038: the integrity check reads every blob back, so it shares the
-	// "report" slot with backups and PDFs and runs at low priority. One
-	// attempt: the next daily run (or the admin's button) tries again.
 	if err := registry.Register(tasks.Spec{
 		Name: kindIntegrityCheck, Pool: "report", MaxAttempts: 1,
 		Lease: 30 * time.Minute, RetryBase: 200 * time.Millisecond, Priority: 5,
@@ -178,12 +175,8 @@ func noopHandler(pool *pgxpool.Pool, store *tasks.Store) tasks.Handler {
 	})
 }
 
-// auditPruneBackupMaxAge is how old the newest backup copy may be for
-// audit.prune to delete anything (ADR-038).
 const auditPruneBackupMaxAge = 24 * time.Hour
 
-// recentBackupExists reports whether dir holds a complete copy made within
-// auditPruneBackupMaxAge of now.
 func recentBackupExists(dir string, now time.Time) bool {
 	copies, err := backup.List(dir)
 	if err != nil || len(copies) == 0 {
@@ -192,16 +185,6 @@ func recentBackupExists(dir string, now time.Time) bool {
 	return now.Sub(copies[0].CreatedAt) <= auditPruneBackupMaxAge
 }
 
-// auditPruneHandler is kindAuditPrune's worker side (ADR-033). The
-// batched delete commits as it goes (audit.Prune); the prune's own audit
-// row and the task's terminal state commit together afterwards. A retry
-// after a failure only finds what is left, so partial progress is safe.
-//
-// ADR-038: with a backup directory configured, rows are deleted only when
-// a complete copy younger than auditPruneBackupMaxAge exists, so nothing is
-// removed while the installation has no recent copy that still holds it. A
-// missing copy fails the task retryably; the status screen shows it and the
-// administrator's retry runs it again once a copy exists.
 func auditPruneHandler(pool *pgxpool.Pool, store *tasks.Store, retentionDays int, backupDir string) tasks.Handler {
 	return tasks.HandlerFunc(func(ctx context.Context, lease tasks.Lease) error {
 		if backupDir != "" && !recentBackupExists(backupDir, time.Now()) {

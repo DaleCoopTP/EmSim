@@ -151,13 +151,6 @@ func NewService(store Store, users UserDirectory, workstations WorkstationDirect
 	}
 }
 
-// notify publishes one SSE invalidation from inside the caller's own
-// transaction (realtime.NotifyTx — a plain pg_notify call, not a table
-// write, so it needs no consumer-owned port; CLAUDE.md's module
-// boundary is about who writes which tables). userID/itemID of uuid.Nil
-// mean "not scoped to this" (e.g. Stop's own barrier touches no single
-// item); lessonID is always set — every training event belongs to
-// exactly one lesson.
 func (s *Service) notify(ctx context.Context, tx pgx.Tx, lessonID, userID, itemID uuid.UUID) error {
 	event := realtime.Event{LessonID: &lessonID}
 	if userID != uuid.Nil {
@@ -731,19 +724,6 @@ func (s *Service) Stop(ctx context.Context, actor auth.Principal, lessonID uuid.
 	return result, nil
 }
 
-// CloseStoppedLesson is KindLessonClose's domain half (RFC-001 §7.5): it
-// interrupts every still-open item of a stopped lesson (closed_at =
-// lessons.stopped_at, close_reason=interrupted), seals evidence for each
-// at its own frozen stop_cutoff_log_seq, finishes each run once all its
-// items are terminal, and finishes the lesson once all its runs are.
-// Idempotent by construction — every write is either a conditional
-// UPDATE (ApplyItemDecision's own closed_at/close_reason COALESCE) or
-// guarded by the item/run/lesson's own current state, so a retried
-// attempt (this task's own at-least-once delivery, or a worker crash
-// mid-way through a prior attempt) safely picks up wherever the last one
-// left off. The caller (cmd/emsim's lessonCloseHandler) owns the
-// transaction so it can commit tasks.Terminal atomically with this —
-// CLAUDE.md: "domain effect and tasks.done fixed as one transaction."
 func (s *Service) CloseStoppedLesson(ctx context.Context, tx pgx.Tx, lessonID uuid.UUID) error {
 	lesson, err := s.store.LessonByID(ctx, tx, lessonID, LockUpdate)
 	if err != nil {

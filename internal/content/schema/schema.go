@@ -1,8 +1,3 @@
-// Package schema is internal/content's JSON Schema adapter (CLAUDE.md:
-// infrastructure adapters are narrow and separate from domain rules).
-// It compiles scenario.schema.json and scenario-file.schema.json once
-// from the embedded copies in design-docs/contracts, entirely offline —
-// no $ref is ever resolved over the network.
 package schema
 
 import (

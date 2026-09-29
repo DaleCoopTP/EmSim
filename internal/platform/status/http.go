@@ -54,8 +54,6 @@ func NewHandlers(pool *pgxpool.Pool, queue Queue, retryGuards map[tasks.Kind]tas
 	return &Handlers{pool: pool, store: NewStore(pool), queue: queue, retryGuards: retryGuards, backupKind: backupKind, blobRoot: blobRoot, expectedSchema: expectedSchema, actor: actor}
 }
 
-// WithIntegrity names the queue kind of the integrity check, enabling
-// POST /admin/integrity (ADR-038).
 func (h *Handlers) WithIntegrity(kind tasks.Kind) *Handlers {
 	h.integrityKind = kind
 	return h
@@ -113,8 +111,6 @@ type backupJSON struct {
 	Runs         []taskJSON       `json:"runs"`
 }
 
-// integrityJSON is the last integrity check's report as the worker stored
-// it (ids and counts only); nil until the first run.
 type integrityJSON struct {
 	CheckedAt time.Time        `json:"checked_at"`
 	OK        bool             `json:"ok"`
@@ -228,8 +224,6 @@ func (h *Handlers) startBackup(w http.ResponseWriter, r *http.Request) {
 	h.enqueueManual(w, r, h.backupKind, "admin.backup.start", "backup_in_progress", "a backup is already queued or running")
 }
 
-// startIntegrity queues one integrity check now (ADR-038), refused while
-// another is queued or running.
 func (h *Handlers) startIntegrity(w http.ResponseWriter, r *http.Request) {
 	if h.integrityKind == "" {
 		httpapi.WriteError(w, r, httpapi.CodeNotFound, "integrity check is not available", nil)
@@ -238,8 +232,6 @@ func (h *Handlers) startIntegrity(w http.ResponseWriter, r *http.Request) {
 	h.enqueueManual(w, r, h.integrityKind, "admin.integrity.start", "integrity_in_progress", "an integrity check is already queued or running")
 }
 
-// enqueueManual queues one manual run of a system task and audits it in
-// the same transaction.
 func (h *Handlers) enqueueManual(w http.ResponseWriter, r *http.Request, kind tasks.Kind, auditAction, busyReason, busyMessage string) {
 	ctx := r.Context()
 	if active, err := h.store.ActiveTaskExists(ctx, string(kind)); err != nil {

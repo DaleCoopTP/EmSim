@@ -28,11 +28,6 @@ type usageResponse struct {
 	} `json:"by_role"`
 }
 
-// TestAdminUsageStatistics (ADR-038): the usage report is a per-day series
-// of anonymous counters over a whole-UTC-day period, counts logins and
-// distinct active users from the audit log and finished caller replies from
-// tasks, keeps out anything before the period, rejects an unbounded or
-// reversed period, and is for the admin only.
 func TestAdminUsageStatistics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -72,7 +67,6 @@ func TestAdminUsageStatistics(t *testing.T) {
 	if last.Day != today {
 		t.Fatalf("last day = %s, want %s", last.Day, today)
 	}
-	// admin (once, via f.admin above and this request's own session) plus the instructor twice.
 	if usage.Totals.Logins < 3 || last.Logins != usage.Totals.Logins {
 		t.Fatalf("logins: today %d, total %d", last.Logins, usage.Totals.Logins)
 	}

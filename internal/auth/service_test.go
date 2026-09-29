@@ -454,12 +454,6 @@ func TestServiceMeBuildsFullReadModel(t *testing.T) {
 }
 
 func TestServiceLoginNeverLogsPasswordOrHash(t *testing.T) {
-	// Not a logging test per se (Service has no logger) — this documents
-	// and checks the actual guarantee CLAUDE.md asks for: neither the
-	// error Login returns nor the audit entry it writes ever carries the
-	// plaintext password or the stored hash. audit.Entry.validate()
-	// already forbids a literal "password" key (internal/platform/audit),
-	// so this is about Login's own error/audit content, not that guard.
 	store := newFakeStore()
 	user, _ := testAdmin("dispatcher-secret", "correct-horse-battery")
 	store.addUser(user)

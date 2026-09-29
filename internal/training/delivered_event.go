@@ -8,16 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// DeliveredEvent is one delivered scenario event's trainee-facing view —
-// openapi.yaml's DeliveredEvent. It combines an item_events row (what
-// happened, and when) with the scenario version's own event definition
-// (delivery/from/text — the content a trainee is meant to see), which
-// only the application service can resolve (it alone holds both the
-// training.Store and the content.ScenarioReader port); a pure Exercise
-// never touches content directly (CLAUDE.md's module boundary), and
-// evidence.go's EvidenceEvent stays the narrower state-only projection
-// evidence.schema.json actually requires. expects is never carried here
-// — RFC-001 §7.2: "expects обучаемому не раскрывать".
 type DeliveredEvent struct {
 	Key         string
 	Delivery    string

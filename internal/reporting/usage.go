@@ -9,18 +9,12 @@ import (
 	"time"
 )
 
-// Usage statistics for the administrator (ADR-038): how much the system is
-// used, per UTC day. Anonymous by construction — counters only, no names,
-// no lesson or card content. Preview runs of the scenario editor are not
-// lessons and are excluded.
-
-// MaxUsagePeriodDays bounds one request so a day series stays small.
 const MaxUsagePeriodDays = 366
 
 var ErrUsagePeriod = errors.New("reporting: invalid usage period")
 
 type UsageDay struct {
-	Day               string `json:"day"` // YYYY-MM-DD, UTC
+	Day               string `json:"day"`
 	Logins            int    `json:"logins"`
 	ActiveUsers       int    `json:"active_users"`
 	LessonsStarted    int    `json:"lessons_started"`
@@ -45,9 +39,6 @@ type UsageByExercise struct {
 	CardsClosed    int    `json:"cards_closed"`
 }
 
-// Usage is the whole answer: the day series and the period totals.
-// Totals.ActiveUsers counts distinct users over the period, not the sum of
-// the days.
 type Usage struct {
 	From       time.Time         `json:"from"`
 	To         time.Time         `json:"to"`
@@ -61,9 +52,6 @@ type UsageStore interface {
 	Usage(ctx context.Context, from, to time.Time) (Usage, error)
 }
 
-// NormalizeUsagePeriod snaps the period to whole UTC days: from is the
-// start of its day, to the start of the day after the requested end
-// (exclusive), and the span is checked.
 func NormalizeUsagePeriod(from, to time.Time) (time.Time, time.Time, error) {
 	from = from.UTC().Truncate(24 * time.Hour)
 	to = to.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
@@ -73,7 +61,6 @@ func NormalizeUsagePeriod(from, to time.Time) (time.Time, time.Time, error) {
 	return from, to, nil
 }
 
-// UsageCSV writes the day series, then one totals row.
 func UsageCSV(u Usage) ([]byte, error) {
 	var buf bytes.Buffer
 	buf.Write([]byte{0xef, 0xbb, 0xbf})

@@ -11,10 +11,6 @@ import (
 	"emsim/internal/platform/httpapi"
 )
 
-// service is the subset of *auth.Service the handlers need — declared
-// here (their consumer) so a fake can drive handler tests without a real
-// Store (CLAUDE.md: "declare [interfaces] near the consuming application
-// service").
 type service interface {
 	authenticator
 	Login(ctx context.Context, req auth.LoginRequest, requestID string) (auth.LoginResult, error)
@@ -102,8 +98,6 @@ type changePasswordBody struct {
 	NewPassword     string `json:"new_password"`
 }
 
-// changePassword is POST /me/password (ADR-038): the user replaces their
-// own password; the other sessions end, this one stays.
 func (h *Handlers) changePassword(w http.ResponseWriter, r *http.Request) {
 	principal, ok := PrincipalFromContext(r.Context())
 	if !ok {
@@ -165,16 +159,13 @@ func writeLoginError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 type userJSON struct {
-	ID          string  `json:"id"`
-	Login       string  `json:"login"`
-	FullName    string  `json:"full_name"`
-	Role        string  `json:"role"`
-	ServiceCode *string `json:"service_code"`
-	Level       string  `json:"level"`
-	Active      bool    `json:"active"`
-	// ADR-038: login policy state. LockedUntil is set only while a lock is
-	// in force. The flag is named for what the client must do, not for the
-	// secret it concerns: response bodies never mention "password".
+	ID                 string  `json:"id"`
+	Login              string  `json:"login"`
+	FullName           string  `json:"full_name"`
+	Role               string  `json:"role"`
+	ServiceCode        *string `json:"service_code"`
+	Level              string  `json:"level"`
+	Active             bool    `json:"active"`
 	LockedUntil        *string `json:"locked_until"`
 	MustChangePassword bool    `json:"credentials_change_required"`
 }

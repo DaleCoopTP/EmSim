@@ -47,11 +47,7 @@ const (
 	CodeDictationUnavailable ErrorCode = "dictation_unavailable"
 	// CodeMaintenanceMode is ADR-038's: a lesson or preview start refused
 	// while the administrator has maintenance mode on.
-	CodeMaintenanceMode ErrorCode = "maintenance_mode"
-	// CodeAccountLocked and CodePasswordChangeRequired are ADR-038's login
-	// policy: a run of wrong passwords locked the account (423), and a
-	// session whose password must be changed may only reach the
-	// password-change endpoints (403).
+	CodeMaintenanceMode        ErrorCode = "maintenance_mode"
 	CodeAccountLocked          ErrorCode = "account_locked"
 	CodePasswordChangeRequired ErrorCode = "password_change_required"
 )
@@ -115,17 +111,6 @@ type errorEnvelope struct {
 	RequestID string `json:"request_id"`
 }
 
-// WriteError writes the closed error envelope (openapi.yaml Error schema)
-// with the status StatusFor(code) implies. message is safe, operator-
-// facing text: callers must not put user input or internal detail in it
-// (CLAUDE.md: "Return safe public errors; keep operational detail in
-// structured logs"). details is optional structured context (e.g.
-// {"field": "workstation_no"}) and must itself carry no secrets — it is
-// part of the response, not the log.
-//
-// WriteError is for the generic Error envelope only. The five command-
-// receipt codes documented on statusFor are written by the training
-// module as part of a Receipt body instead (slice 3).
 func WriteError(w http.ResponseWriter, r *http.Request, code ErrorCode, message string, details map[string]any) {
 	body := errorEnvelope{RequestID: RequestIDFromContext(r.Context())}
 	body.Error.Code = code

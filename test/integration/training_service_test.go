@@ -1026,11 +1026,6 @@ func (failingEvidenceExercise) Evidence(training.Item, []training.Action, []trai
 	return training.Evidence{}, errors.New("injected evidence failure")
 }
 
-// TestTrainingCloseRollsBackOnEvidenceFailure: if assembling evidence
-// fails, the whole close transaction must roll back — the action row,
-// the item's closed state and the run's finished state all commit
-// together or not at all (CLAUDE.md: "Preserve one database transaction
-// where a domain change, audit record ... must be atomic").
 func TestTrainingCloseRollsBackOnEvidenceFailure(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := openTestDatabase(t, ctx)

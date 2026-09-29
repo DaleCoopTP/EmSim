@@ -25,18 +25,6 @@ const sessionTokenBytes = 32
 // last_seen_at старше 5 мин — обновить").
 const staleAfter = 5 * time.Minute
 
-// Store is the narrow persistence port Service needs (CLAUDE.md: "declare
-// [interfaces] near the consuming application service") — satisfied
-// structurally by *internal/auth/postgres.Store, and by a fake in tests.
-// Every method but WithTx takes an explicit pgx.Tx; see
-// internal/auth/postgres/store.go's package doc for why.
-//
-// AuditRecord is here — a thin pass-through to audit.Record on the real
-// adapter — rather than Service calling audit.Record directly, precisely
-// so a fake Store can record an audit.Entry without a working pgx.Tx: the
-// platform audit package's Record hands its pgx.Tx straight to
-// tx.Exec, which a lightweight test fake cannot honor, and nearly every
-// Service use case (Login, Logout — even a rejected login) writes one.
 type Store interface {
 	WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 
@@ -109,7 +97,6 @@ func NewService(store Store, identityProvider IdentityProvider, ttl time.Duratio
 	return &Service{store: store, identityProvider: identityProvider, limiter: limiter, ttl: ttl, catalog: catalog, policy: DefaultPolicy(), now: time.Now}
 }
 
-// WithPolicy replaces the default login policy (ADR-038).
 func (s *Service) WithPolicy(p Policy) *Service {
 	s.policy = p
 	if p.LoginsPerMinute > 0 {
@@ -216,9 +203,6 @@ func (s *Service) Login(ctx context.Context, req LoginRequest, requestID string)
 	return result, nil
 }
 
-// lookupUser reads the account a login names, for the lock check and the
-// failed-attempt counter. A read failure is treated as "not found": the
-// credential check that follows still decides the outcome.
 func (s *Service) lookupUser(ctx context.Context, login string) (User, bool) {
 	var user User
 	found := false
@@ -232,9 +216,6 @@ func (s *Service) lookupUser(ctx context.Context, login string) (User, bool) {
 	return user, found
 }
 
-// registerFailedLogin counts a wrong password against the account and
-// audits the lock when this attempt starts one (ADR-038). Best effort,
-// like the rejected-login audit row: the client already has its 401.
 func (s *Service) registerFailedLogin(ctx context.Context, user User, requestID string) {
 	if s.policy.LockoutAttempts <= 0 {
 		return
@@ -318,10 +299,6 @@ func loginRejectionReason(err error) string {
 	}
 }
 
-// auditRejectedLogin best-effort records a rejected attempt; subject is the
-// account the login named, when it exists (so the log shows whose account is
-// being guessed). See Login's
-// doc comment for why its own failure is not surfaced.
 func (s *Service) auditRejectedLogin(ctx context.Context, subject *uuid.UUID, actorRole, requestID, reason string) {
 	_ = s.store.WithTx(ctx, func(tx pgx.Tx) error {
 		return s.store.AuditRecord(ctx, tx, audit.Entry{
@@ -449,10 +426,6 @@ func sessionIDFromToken(token string) ([]byte, error) {
 	return id[:], nil
 }
 
-// ChangePassword lets a user replace their own password (ADR-038): it
-// needs the current one, refuses a new one that is too short or the same,
-// lifts the "must change" flag and ends every other session of the user,
-// keeping the one the change was made from.
 func (s *Service) ChangePassword(ctx context.Context, principal Principal, current, next, requestID string) error {
 	if err := s.policy.checkPassword(next); err != nil {
 		return err
@@ -474,8 +447,6 @@ func (s *Service) ChangePassword(ctx context.Context, principal Principal, curre
 			return err
 		}
 		if ok, verr := VerifyPassword(user.PasswordHash, current); verr != nil || !ok {
-			// The rejection is audited and committed; the caller then gets
-			// the validation error.
 			wrongCurrent = true
 			return s.store.AuditRecord(ctx, tx, audit.Entry{
 				ActorID: &user.ID, ActorRole: string(user.Role), Action: "auth.password_change",

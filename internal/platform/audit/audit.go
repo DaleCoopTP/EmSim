@@ -1,11 +1,3 @@
-// Package audit is the platform/audit_log module (CLAUDE.md: "platform" is
-// one of the six product modules; it owns audit_log — no other module
-// writes that table). Every product module records its effects through
-// Record, inside the same pgx.Tx as the domain change it describes
-// (RFC-001 §9: "Audit: каждый эффект — строка в audit_log в той же
-// транзакции"; CLAUDE.md: "Preserve one database transaction where a
-// domain change, audit record, notification, and related background-task
-// enqueue must be atomic").
 package audit
 
 import (
@@ -110,11 +102,6 @@ func lowercase(s string) string {
 	return string(out)
 }
 
-// Record validates e and inserts it as one audit_log row using tx — the
-// caller's own transaction, which owns commit/rollback (CLAUDE.md: "Use
-// pgx.Tx for atomic domain and queue operations. The caller owns commit
-// and rollback."). It never opens its own transaction: an audit row with
-// no matching committed domain effect would misrepresent what happened.
 func Record(ctx context.Context, tx pgx.Tx, e Entry) error {
 	if tx == nil {
 		return ErrInvalidEntry

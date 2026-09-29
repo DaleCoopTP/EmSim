@@ -125,9 +125,6 @@ services:
       # Secure cookie would never be sent back by the browser over plain
       # HTTP, so the session would appear to silently not persist.
       COOKIE_SECURE: "false"
-      # ADR-038: login policy. Wrong passwords in a row lock the account;
-      # an administrator-set password of the listed roles must be changed
-      # at the next login ("none" for nobody).
       LOGIN_LOCKOUT_ATTEMPTS: ${LOGIN_LOCKOUT_ATTEMPTS:-10}
       LOGIN_LOCKOUT_DURATION: ${LOGIN_LOCKOUT_DURATION:-15m}
       PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-8}

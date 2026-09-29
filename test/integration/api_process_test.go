@@ -90,8 +90,6 @@ func startAPIProcessWithEnv(t *testing.T, binary, databaseURL, publicAddr, admin
 		// No model in integration tests: new 112 lessons freeze rubric-v2,
 		// the same explicit setting compose.no-llm.yaml uses (ADR-029).
 		"ASSESSMENT_JUDGE=off",
-		// ADR-038: tests log in with the passwords they just set, so no role
-		// is forced to change it; the login-policy tests override this.
 		"PASSWORD_FORCE_CHANGE=none",
 	)
 	cmd.Env = append(cmd.Env, extraEnv...)

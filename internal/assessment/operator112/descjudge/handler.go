@@ -1,18 +1,3 @@
-// Package descjudge implements assessment.SemanticJudge for
-// DESCRIPTION_CONTENT (operator112/rubric-v3, ADR-028): given a
-// trainee's own "Описание со слов заявителя" (the card's complaint
-// field) and a closed set of positively-phrased control questions, ask
-// one OpenAI-compatible model to answer each question yes/no/
-// needs_review, using only the description text — never the dialogue
-// transcript, the scenario's reference values, or any score/weight.
-//
-// The prompt, its instructions and the yes/no/needs_review contract are
-// carried over verbatim from the user's own archived prototype
-// (handoff/claude_evaluator_112_20260926.zip's description_evaluator.py,
-// 2026-09-26 local evaluation: 94.8% agreement among 387 answers
-// received across 22 scenarios/132 descriptions) — only the transport
-// changed, from Ollama's native /api/chat to this project's shared
-// OpenAI-compatible internal/platform/llm.Client (ADR-003/025).
 package descjudge
 
 import (

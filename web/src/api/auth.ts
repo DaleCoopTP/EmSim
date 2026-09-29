@@ -33,9 +33,6 @@ export function useLogout() {
   });
 }
 
-// ADR-038: the user replaces their own password. On success the other
-// sessions are gone on the server; "me" is refetched so the "must change"
-// flag disappears from the route guard.
 export function useChangePassword() {
   const queryClient = useQueryClient();
   return useMutation({

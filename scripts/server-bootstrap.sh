@@ -1,15 +1,4 @@
 #!/usr/bin/env bash
-# Brings the full compose stack up on a fresh Ubuntu 24.04 test server
-# (the W0 measurement, slice-112-5b-plan.md stage 2). Idempotent: rerun it
-# after a failure or a VM resize. Run from the copied tree on the server:
-#
-#   cd ~/EmSim && scripts/server-bootstrap.sh
-#
-# Steps: Docker from Ubuntu's own packages, a .env with random passwords
-# (kept only on the server, mode 600), both model weights fetched here
-# with sha256 checks, image build, stack start, demo accounts. api stays
-# bound to 127.0.0.1:8080 — open it through an SSH tunnel:
-#   ssh -L 8080:localhost:8080 user@server   →   http://localhost:8080
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

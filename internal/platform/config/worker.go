@@ -35,10 +35,6 @@ const (
 	AssessmentJudgeLLM = "llm"
 )
 
-// Judge generation defaults mirror the archived prototype's own tuned
-// values (handoff/claude_evaluator_112_20260926.zip's description_
-// evaluator.py: temperature=0, num_predict=1024) — deterministic
-// wording matters more than variety for a yes/no/needs_review judge.
 const (
 	defaultJudgeTimeout   = 120 * time.Second
 	defaultJudgeMaxTokens = 1024

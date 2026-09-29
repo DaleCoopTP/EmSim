@@ -129,7 +129,6 @@ export const configParamLabels: Record<string, string> = {
   BACKUP_AT: "Время ежедневной копии",
 };
 
-// ADR-038: the integrity check's sections, as the status screen names them.
 export const integritySectionLabels: Record<string, string> = {
   schema: "Версия схемы БД",
   blobs: "Файлы (записи звонков, озвучка)",

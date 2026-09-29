@@ -457,13 +457,6 @@ func (s *Store) ListVersions(ctx context.Context, tx pgx.Tx, scenarioID uuid.UUI
 	return versions, nil
 }
 
-// InsertScenarioVersion sets approved_by/approved_at itself from
-// clock_timestamp() when v.Status is "approved" (server time is
-// authoritative — CLAUDE.md), matching every version this slice ever
-// inserts (Service.ImportScenarios always imports straight to approved,
-// per slice-2-plan.md). A future draft insert (slice 11) with a
-// non-"approved" status naturally leaves both NULL, satisfying
-// migrations/00004's scenario_versions_approval_shape CHECK.
 func (s *Store) InsertScenarioVersion(ctx context.Context, tx pgx.Tx, v content.ScenarioVersionRecord) (content.ScenarioVersionRecord, error) {
 	// v.BodyJSON (content.ScenarioVersionRecord's doc comment) is written
 	// verbatim rather than re-marshaling v.Body: v.Body has no omitempty,

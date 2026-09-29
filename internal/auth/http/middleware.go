@@ -39,8 +39,6 @@ func SessionMiddleware(service authenticator, cookieSecure bool) func(http.Handl
 				httpapi.WriteError(w, r, httpapi.CodeUnauthorized, "authentication required", nil)
 				return
 			}
-			// ADR-038: a session whose password must be changed reaches only
-			// the endpoints that let it do so.
 			if principal.MustChangePassword && !allowedWhilePasswordChangeRequired(r.URL.Path) {
 				httpapi.WriteError(w, r, httpapi.CodePasswordChangeRequired, "the password must be changed first", nil)
 				return
@@ -57,9 +55,6 @@ func SessionMiddleware(service authenticator, cookieSecure bool) func(http.Handl
 	}
 }
 
-// allowedWhilePasswordChangeRequired lists what a must-change session may
-// still call: who am I, change the password, and log out (logout does not
-// pass through this middleware at all).
 func allowedWhilePasswordChangeRequired(path string) bool {
 	return path == "/api/v1/me" || path == "/api/v1/me/password"
 }

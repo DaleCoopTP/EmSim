@@ -11,9 +11,6 @@ import { taskKindLabels } from "../../adminLabels";
 import { errorMessage } from "../../api/errors";
 import { formatDateTime } from "../../format";
 
-// ADR-038: what the administrator can learn about use and failures. All
-// numbers are anonymous counters; nothing here names a person or shows
-// lesson content. One period drives both tabs.
 const utcDay = (offsetDays: number) => {
   const d = new Date();
   d.setUTCDate(d.getUTCDate() + offsetDays);
@@ -167,9 +164,6 @@ function UsageTab({ period }: { period: ReportPeriod }) {
   );
 }
 
-// One series in one hue: no legend box, the panel title and the selector
-// name it. Each bar has a hover title and the CSV/totals carry the exact
-// values, so the chart is never the only source.
 function DayBars({ days, metric }: { days: UsageDay[]; metric: Metric }) {
   const width = 900;
   const height = 180;

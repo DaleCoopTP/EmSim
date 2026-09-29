@@ -24,12 +24,6 @@ type errorEnvelope struct {
 	} `json:"error"`
 }
 
-// TestAdminLoginPolicy (ADR-038), through a real api: an instructor created
-// by the administrator must change the password before anything else and
-// the change ends their other session; a trainee is locked after three
-// wrong passwords, sees 423 even with the right one, is listed as locked
-// and gets back in when the administrator unlocks; the administrator lists
-// and ends a user's sessions; every step is audited.
 func TestAdminLoginPolicy(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -51,7 +45,6 @@ func TestAdminLoginPolicy(t *testing.T) {
 		return policyUser{}
 	}
 
-	// --- forced password change
 	f.createUser(t, admin, "pol-instr", "temporary-pass-1", "instructor")
 	if !find("pol-instr").CredentialsChangeRequired {
 		t.Fatal("an administrator-created instructor is not marked for a password change")
@@ -82,7 +75,6 @@ func TestAdminLoginPolicy(t *testing.T) {
 	}
 	f.login(t, "pol-instr", "a-much-better-pass")
 
-	// --- sessions the administrator can list and end
 	instructorID := find("pol-instr").ID
 	var sessions []map[string]any
 	if response := jsonRequest(t, ctx, admin, f.baseURL, http.MethodGet, "/api/v1/admin/users/"+instructorID+"/sessions", nil, &sessions); response.StatusCode != http.StatusOK || len(sessions) < 2 {
@@ -100,7 +92,6 @@ func TestAdminLoginPolicy(t *testing.T) {
 		t.Fatalf("session after revoke = %d, want 401", response.StatusCode)
 	}
 
-	// --- lockout
 	if response := jsonRequest(t, ctx, admin, f.baseURL, http.MethodPut, "/api/v1/admin/workstations", []map[string]any{{"number": 1, "label": "РМ-01"}}, nil); response.StatusCode != http.StatusOK {
 		t.Fatalf("workstations = %d", response.StatusCode)
 	}
@@ -134,11 +125,6 @@ func TestAdminLoginPolicy(t *testing.T) {
 	}
 }
 
-// TestAdminUserImport (ADR-038): a CSV table becomes users all-or-nothing
-// through the real api; a dry run creates nobody and shows no passwords; a
-// file with bad rows is refused with every problem listed by row; the
-// generated passwords work and are not in the audit log; only the admin may
-// import.
 func TestAdminUserImport(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

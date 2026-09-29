@@ -2,10 +2,6 @@ import { expect, test } from "@playwright/test";
 
 const bootstrapPassword = "local-only-admin-password";
 
-// ADR-038: bulk user creation from a CSV table. A file with a bad row is
-// refused with the row named and nobody is created; a good file is checked,
-// then created, and the generated passwords are shown once with a
-// downloadable sheet; the users appear in the list.
 test("admin user import: refused file, dry run, creation, password sheet", async ({ page }) => {
   const baseURL = process.env.E2E_BASE_URL;
   if (!baseURL) throw new Error("E2E_BASE_URL must be set by e2e/run.mjs");

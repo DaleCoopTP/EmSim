@@ -16,7 +16,6 @@ var ErrInvalidAPIConfiguration = errors.New("invalid API configuration")
 // to false so the browser still sends the cookie back.
 const defaultSessionTTL = 12 * time.Hour
 
-// Login policy defaults (ADR-038).
 const (
 	defaultLoginLockoutAttempts = 10
 	defaultLoginLockoutDuration = 15 * time.Minute
@@ -24,9 +23,6 @@ const (
 	defaultPasswordForceChange  = "admin,instructor"
 )
 
-// parseForceChangeRoles reads PASSWORD_FORCE_CHANGE: unset means the
-// default, "none" means no role, otherwise a comma-separated list of
-// roles. An unknown role name fails startup.
 func parseForceChangeRoles(raw string) ([]string, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -47,23 +43,16 @@ func parseForceChangeRoles(raw string) ([]string, bool) {
 }
 
 type API struct {
-	DatabaseURL  string
-	PublicAddr   string
-	AdminAddr    string
-	SessionTTL   time.Duration
-	CookieSecure bool
-	// Login policy (ADR-038, set in .env). LoginLockoutAttempts wrong
-	// passwords in a row lock the account for LoginLockoutDuration (0
-	// attempts turns the lock off); PasswordMinLength is never below 8;
-	// PasswordForceChange lists the roles whose admin-set password must be
-	// changed at the next login (PASSWORD_FORCE_CHANGE, "none" for nobody).
+	DatabaseURL          string
+	PublicAddr           string
+	AdminAddr            string
+	SessionTTL           time.Duration
+	CookieSecure         bool
 	LoginLockoutAttempts int
 	LoginLockoutDuration time.Duration
 	PasswordMinLength    int
 	PasswordForceChange  []string
-	// LoginsPerMinute (LOGIN_RATE_PER_MINUTE, default 5) is the per-login
-	// attempt limit; only test stacks change it.
-	LoginsPerMinute int
+	LoginsPerMinute      int
 	// LogLevel is LOG_LEVEL (ADR-038): debug, info (default), warn or error.
 	LogLevel string
 	// AssessmentJudge (ADR-028) is api's own half of ASSESSMENT_JUDGE —
@@ -219,11 +208,6 @@ func (c API) Validate() error {
 	return nil
 }
 
-// parseDurationOrDefault returns fallback for an unset/blank env var, the
-// parsed duration for a valid one, or an error for a set-but-unparseable
-// one — a mistyped SESSION_TTL should fail startup, not silently fall
-// back (CLAUDE.md-wide convention: "fail fast at startup on invalid
-// configuration").
 func parseDurationOrDefault(raw string, fallback time.Duration) (time.Duration, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

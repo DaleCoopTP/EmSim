@@ -188,11 +188,6 @@ type ScenarioFilter struct {
 	RequestingUserID uuid.UUID
 }
 
-// Store is the narrow persistence port Service needs (CLAUDE.md: "declare
-// [interfaces] near the consuming application service"), satisfied by
-// internal/content/postgres.Store and, in tests, by a fake. Every method
-// but WithTx takes an explicit pgx.Tx — the same convention
-// internal/auth's Store uses and for the same reason (service.go there).
 type Store interface {
 	WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 

@@ -70,8 +70,6 @@ func (f *adminFixture) tryLogin(t *testing.T, name, password string) (*http.Clie
 	return client, response.StatusCode
 }
 
-// tryLoginResponse is tryLogin for a trainee: it sends workstation_no and
-// returns the login's status (the client is discarded).
 func (f *adminFixture) tryLoginResponse(t *testing.T, name, password string, workstation int) (*http.Client, int) {
 	t.Helper()
 	jar, err := cookiejar.New(nil)

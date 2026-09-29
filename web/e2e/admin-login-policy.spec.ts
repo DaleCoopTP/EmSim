@@ -2,12 +2,6 @@ import { expect, test, type Page } from "@playwright/test";
 
 const bootstrapPassword = "local-only-admin-password";
 
-// ADR-038, with e2e's own policy (run.mjs: three wrong passwords lock an
-// account, a newly created admin must change the password): an admin
-// creates another admin; three wrong passwords lock that account (even the
-// right password is then refused); the first admin sees the lock and
-// unlocks it; the second admin signs in, is confined to the password-change
-// screen, changes the password and reaches the workspace.
 async function signIn(page: Page, baseURL: string, login: string, password: string) {
   await page.goto(`${baseURL}/login`);
   await page.getByLabel("Логин").fill(login);

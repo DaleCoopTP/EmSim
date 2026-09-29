@@ -9,11 +9,6 @@ import (
 
 var _ reporting.UsageStore = (*Store)(nil)
 
-// Usage counts per UTC day. Logins and active users come from the audit
-// log (a successful auth.login; "active" = distinct actors of any audited
-// effect), lessons/cards/assessments from the domain tables, model calls
-// from finished tasks and assessments that recorded a judge model. Preview
-// lessons are left out everywhere. Only counters leave this function.
 func (s *Store) Usage(ctx context.Context, from, to time.Time) (reporting.Usage, error) {
 	u := reporting.Usage{From: from, To: to, Days: []reporting.UsageDay{}, ByRole: []reporting.UsageByRole{}, ByExercise: []reporting.UsageByExercise{}}
 	rows, err := s.pool.Query(ctx, `

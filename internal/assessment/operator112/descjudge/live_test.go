@@ -1,17 +1,3 @@
-// Live sanity check against a real Ollama/llama-server instance — run
-// manually (decision 7, 2026-09-26), never part of the ordinary test
-// suite: go test -tags=llmlive ./internal/assessment/operator112/descjudge/...
-// with JUDGE_LLM_URL/JUDGE_LLM_MODEL set (defaults below match the
-// archived prototype's own local setup, handoff/
-// claude_evaluator_112_20260926.zip). This does not re-measure the
-// prototype's own 94.8%-agreement evaluation (evaluation_report_
-// 2026-09-26.md already did that on the native Ollama API) — it only
-// proves *this* Go implementation's prompt/schema/transport
-// (internal/platform/llm's OpenAI-compatible client, ADR-028's
-// ResponseFormat) round-trips correctly against the same model, using a
-// handful of cases drawn from the three seed scenarios ADR-028 actually
-// ships questions for.
-//
 //go:build llmlive
 
 package descjudge
@@ -116,14 +102,6 @@ func liveCases() []liveCase {
 	}
 }
 
-// TestLiveDescriptionJudgeAgainstRealModel is the manual sanity check
-// itself. It never fails the run on a disagreement — a single live
-// sample is not a substitute for the prototype's own 132-description
-// evaluation, and this project's own CLAUDE.md workflow explicitly
-// treats needs_review/model disagreement as expected, not a bug to
-// chase — but it does fail on a transport/schema/decode error, since
-// that would mean this Go implementation itself is broken, not that the
-// model merely disagreed.
 func TestLiveDescriptionJudgeAgainstRealModel(t *testing.T) {
 	h := Handler{Chat: llm.NewClient(liveJudgeURL())}
 	model := liveJudgeModel()

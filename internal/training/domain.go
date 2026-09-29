@@ -1,26 +1,3 @@
-// Package training implements the training module (RFC-001 §4.2,
-// slice-planning.md §4): lessons, assignments, runs, items, the
-// idempotent command protocol (ADR-004), and the immutable evidence
-// snapshot fixed at close (ADR-006, RFC-001 §6/§7.4). Following
-// CLAUDE.md's hexagonal boundary, this package and its dds subpackage
-// hold domain rules independent of HTTP and PostgreSQL; the application
-// service that coordinates transactions and persistence (slice 3's C4)
-// lives in a later file in this same package, and infrastructure
-// adapters live in postgres/ and http/ subpackages.
-//
-// ADR-015 isolates exercise-specific process rules (commands, statuses,
-// completion, evidence content) behind the Exercise interface declared
-// in exercise.go: internal/training/dds is the one implementation this
-// slice supports ("dds_processing"); a future operator112 process
-// plugs into the same interface without this package changing.
-//
-// Item/Action/Command/Decision reuse content.Reaction, content.Workflow
-// and content.CardPreview directly rather than redeclaring an equivalent
-// vocabulary: content already owns the shape a scenario's card and a
-// service's workflow are expressed in (ADR-015 §4.2's module table), and
-// training never writes to content's own tables, so this is a read of a
-// stable shared type, not the kind of cross-module data access CLAUDE.md
-// requires a port for.
 package training
 
 import (
@@ -331,14 +308,6 @@ type ControlReport struct {
 	CreatedAt time.Time
 }
 
-// Rejection is one of the fixed reasons a command is not applied. The
-// stale_seq/lesson_stopped/item_closed group is checked generically by
-// the application service before Exercise.Decide is ever called (they
-// apply to any exercise type, per ADR-015); Decide only ever returns
-// TransitionNotAllowed, CommentRequired or InvalidPayload. This is a
-// plain string type, not httpapi.ErrorCode, because domain rules do not
-// import the HTTP layer (CLAUDE.md); the application/HTTP layers map
-// these values onto Receipt.error_code and an HTTP status.
 type Rejection string
 
 const (

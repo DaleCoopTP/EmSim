@@ -81,11 +81,6 @@ const (
 	LockUpdate
 )
 
-// Store is training's own PostgreSQL port — lessons/assignments/runs/
-// items/actions/evidence (migrations/00006). Every method takes an
-// explicit pgx.Tx; the caller owns commit/rollback (CLAUDE.md: "Use
-// pgx.Tx for atomic domain and queue operations. The caller owns commit
-// and rollback").
 type Store interface {
 	WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 

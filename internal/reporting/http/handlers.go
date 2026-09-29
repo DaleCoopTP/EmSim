@@ -245,8 +245,6 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	httpapi.WriteError(w, r, httpapi.CodeInternalError, "report operation failed", nil)
 }
 
-// usagePeriod reads from/to as dates (YYYY-MM-DD) or RFC 3339 instants; to
-// is inclusive as a day. Missing values mean the last 30 days.
 func usagePeriod(r *http.Request, now time.Time) (time.Time, time.Time, bool) {
 	parse := func(raw string) (time.Time, bool) {
 		if t, err := time.Parse("2006-01-02", raw); err == nil {

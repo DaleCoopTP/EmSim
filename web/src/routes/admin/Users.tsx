@@ -103,8 +103,6 @@ export function UsersRoute() {
   );
 }
 
-// ADR-038: the user's live sessions, and "end them all". Timings and
-// workstation only — the session's token is never sent to the client.
 function SessionsPanel({ user, onDone }: { user: User; onDone: () => void }) {
   const sessions = useUserSessions(user.id);
   const revoke = useRevokeUserSessions();
@@ -174,11 +172,6 @@ function issueText(field: string, reason: string): string {
   return `${label}: ${text}`;
 }
 
-// ADR-038: bulk creation from a table. The file is checked first ("Проверить"
-// creates nobody); "Создать" makes everyone or nobody and returns the
-// server-made passwords, shown here once and offered as a printable sheet —
-// nothing on the server keeps them. The sheet is built in the browser from
-// this one answer.
 function ImportPanel({ onDone }: { onDone: () => void }) {
   const run = useImportUsers();
   const [csv, setCsv] = useState("");

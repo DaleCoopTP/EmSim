@@ -1,11 +1,3 @@
-// New test: internal/platform/audit's Record writes one audit_log row
-// inside the caller's transaction (RFC-001 §9, CLAUDE.md "Preserve one
-// database transaction where a domain change, audit record ... must be
-// atomic"). This exercises that against real PostgreSQL — a committed
-// Record persists, a rolled-back one leaves no trace — and the audit_log
-// CHECK constraints DecodeJSON's own validation is meant to prevent from
-// ever being reached.
-//
 //go:build integration
 
 package integration_test

@@ -1,12 +1,3 @@
-// Package http is auth's HTTP adapter (CLAUDE.md: "HTTP, PostgreSQL, ...
-// are adapters"): POST /auth/login, POST /auth/logout, GET /me, and the
-// session middleware every other module's protected routes will use.
-// Named http because it belongs next to auth's other layers
-// (internal/auth, internal/auth/postgres); a file that needs both this
-// package and net/http imports the latter under its usual name — this
-// package's own declaration never collides with that — and an external
-// composer (cmd/emsim/api.go) aliases the import, matching the existing
-// pgstore-for-platform/postgres convention.
 package http
 
 import (

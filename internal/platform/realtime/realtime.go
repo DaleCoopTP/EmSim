@@ -47,11 +47,6 @@ type wirePayload struct {
 	ItemID   *uuid.UUID `json:"item_id,omitempty"`
 }
 
-// NotifyTx publishes one Event from inside the caller's own domain
-// transaction (CLAUDE.md: "NOTIFY исполняется внутри транзакции
-// доменного изменения" — RFC-001 §7.7). It is a plain pg_notify call,
-// not a write to any table, so no module "owns" it and no port is
-// needed to call it from another module's service.
 func NotifyTx(ctx context.Context, tx pgx.Tx, event Event) error {
 	payload, err := json.Marshal(wirePayload{LessonID: event.LessonID, UserID: event.UserID, ItemID: event.ItemID})
 	if err != nil {

@@ -9,12 +9,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// CreateUser validates n, hashes its password, and inserts the new user,
-// auditing the effect in the same transaction (CLAUDE.md: "Preserve one
-// database transaction where a domain change, audit record ... must be
-// atomic"). A login that already exists surfaces as ErrLoginTaken —
-// internal/auth/postgres.Store.InsertUser translates the database's own
-// unique-constraint violation into it, so this never has to pre-check.
 func (s *Service) CreateUser(ctx context.Context, n NewUser, actor Principal, requestID string) (User, error) {
 	if err := ValidateNewUser(n); err != nil {
 		return User{}, err
@@ -98,9 +92,6 @@ func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, patch Patch, act
 		if err != nil {
 			return err
 		}
-		// ADR-038: a password set by the administrator is a temporary one
-		// for the roles the policy names, and setting it (like an explicit
-		// unlock) also ends any login lock.
 		if patch.Password != nil {
 			effective := current.Role
 			if patch.Role != nil {
@@ -348,8 +339,6 @@ func validateWorkstationReplace(workstations []Workstation) error {
 	return nil
 }
 
-// ListUserSessions returns a user's live sessions for the administrator
-// (ADR-038): timings and workstation only, never a token.
 func (s *Service) ListUserSessions(ctx context.Context, id uuid.UUID) ([]SessionInfo, error) {
 	var sessions []SessionInfo
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
@@ -363,8 +352,6 @@ func (s *Service) ListUserSessions(ctx context.Context, id uuid.UUID) ([]Session
 	return sessions, err
 }
 
-// RevokeUserSessions ends every session of a user (ADR-038) and audits it.
-// It returns how many were live.
 func (s *Service) RevokeUserSessions(ctx context.Context, id uuid.UUID, actor Principal, requestID string) (int, error) {
 	count := 0
 	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {

@@ -2,8 +2,6 @@ import { expect, test } from "@playwright/test";
 
 const bootstrapPassword = "local-only-admin-password";
 
-// ADR-038: the administrator's "Отчёты" screen — usage totals and the
-// per-day chart after a login, the failures tab, and both CSV downloads.
 test("admin reports: usage, failures, CSV", async ({ page }) => {
   const baseURL = process.env.E2E_BASE_URL;
   if (!baseURL) throw new Error("E2E_BASE_URL must be set by e2e/run.mjs");

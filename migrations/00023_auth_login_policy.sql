@@ -1,7 +1,3 @@
--- ADR-038: login policy. A run of wrong passwords locks the account for a
--- while (failed_logins counts the run, locked_until ends the lock), and an
--- administrator-set password can be marked "change on next login".
--- Existing accounts are neither locked nor forced to change anything.
 
 -- +goose Up
 ALTER TABLE users

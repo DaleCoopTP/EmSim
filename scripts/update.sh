@@ -1,22 +1,7 @@
 #!/usr/bin/env bash
-# Updates a running EmSim installation to the version in this directory
-# (ADR-038): the images are built or, from an offline bundle, loaded; a
-# backup copy of the current state is made FIRST and the update stops if it
-# cannot be made; then api and worker are stopped, migrations run and the
-# stack starts again. If the new version does not come up healthy, the copy
-# taken here is the way back: scripts/restore.sh <copy>.
-#
-#   scripts/update.sh                       # build the images from this tree
-#   scripts/update.sh emsim-release.tar     # from `make release-bundle`
-#   COMPOSE="docker compose -f compose.yaml -f compose.class.yaml" scripts/update.sh
-#
-# The class sees the service as unavailable while it runs. Turn on
-# maintenance mode in the admin's "Состояние" screen beforehand so no new
-# lesson starts and trainees finish what they are doing.
 set -euo pipefail
 
 bundle=${1:-}
-# Intentionally word-split: COMPOSE may carry -f overlays.
 # shellcheck disable=SC2206
 compose=(${COMPOSE:-docker compose})
 root=$(cd "$(dirname "$0")/.." && pwd)

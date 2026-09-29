@@ -64,15 +64,6 @@ func closePilotItemForAssessment(t *testing.T, ctx context.Context, pool *pgxpoo
 	return items[0].ID
 }
 
-// claimAndHandle claims one due assessment.evaluate task (if any) and
-// runs it through service.Handle — the same path a real "llm" pool
-// Runner would, minus the heartbeat goroutine. ok is false when nothing
-// was claimable. Uses the database's own clock, not the test process's
-// wall clock (CLAUDE.md: "Server/PostgreSQL time is authoritative") —
-// Docker Desktop's Linux VM clock can drift from the macOS host's under
-// load, and Claim's own eligibility check (next_attempt_at <= now) is
-// evaluated against whatever "now" the caller supplies, not against
-// PostgreSQL's own clock_timestamp().
 func claimAndHandle(t *testing.T, ctx context.Context, pool *pgxpool.Pool, taskStore *tasks.Store, service *assessment.Service, workerID string) (handleErr error, ok bool) {
 	t.Helper()
 	lease, claimed, err := taskStore.Claim(ctx, tasks.ClaimRequest{

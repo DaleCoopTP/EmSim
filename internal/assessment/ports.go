@@ -13,13 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ItemReader is assessment's read of training's own items (CLAUDE.md:
-// "небольшие интерфейсы-порты объявляются со стороны потребителя" —
-// assessment never writes items, only reads under whatever lock its own
-// transaction needs). The method signature matches *trainingpg.Store's
-// own ItemByID exactly, so that concrete type satisfies this
-// structurally — the same pattern internal/training/ports.go's own
-// ScenarioReader/ServiceReader already use for content.
 type ItemReader interface {
 	ItemByID(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock training.Lock) (training.Item, error)
 }
@@ -54,11 +47,6 @@ type ScenarioReader interface {
 	VersionByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (content.ScenarioVersionRecord, error)
 }
 
-// TaskStore is assessment's own use of platform's technical queue
-// (CLAUDE.md: "platform/tasks — a module writes only its own tables";
-// assessment only ever calls these, never writes a tasks row itself).
-// Every method matches *tasks.Store's own signature exactly, so that
-// concrete type satisfies this structurally.
 type TaskStore interface {
 	WaitingDue(ctx context.Context, kind tasks.Kind, now time.Time, limit int) ([]tasks.WaitingTask, error)
 	PromoteWaitingTx(ctx context.Context, tx pgx.Tx, taskID uuid.UUID, payload []byte, nextAttemptAt time.Time) error
