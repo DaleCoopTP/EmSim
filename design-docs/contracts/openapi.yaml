@@ -510,6 +510,38 @@ paths:
         '422':
           description: transition_not_allowed | comment_required | invalid_payload | call_required | call_in_progress | call_not_active | call_missed
           content: { application/json: { schema: { $ref: '#/components/schemas/Receipt' } } }
+  /items/{itemId}/dictation:
+    parameters: [ { $ref: '#/components/parameters/ItemId' } ]
+    post:
+      tags: [trainee]
+      summary: Распознать надиктованную фразу оператора 112 (ADR-037)
+      description: >-
+        Тело — WAV PCM16, 16 кГц, моно, не длиннее item.dictation.max_seconds. Сервер распознаёт фразу и возвращает
+        текст; аудио и текст нигде не сохраняются, состояние карточки, журнал и evidence не меняются. Доступно только
+        для full_case с caller_mode=free_text при call_status=connected в идущем занятии (иначе transition_not_allowed).
+        Оператор правит текст и отправляет его обычной командой send_caller_message (payload.input=voice).
+      requestBody:
+        required: true
+        content:
+          audio/wav: { schema: { type: string, format: binary } }
+      responses:
+        '200':
+          description: Распознанный текст (может быть пустым, если речи не найдено)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [text, model, duration_ms]
+                properties:
+                  text: { type: string }
+                  model: { type: string, description: Метка движка распознавания }
+                  duration_ms: { type: integer, description: Время распознавания на сервере }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { description: Слишком большой файл, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '415': { description: Не audio/wav, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: validation_failed (не WAV, не PCM16 16 кГц моно, слишком короткое или длинное) | transition_not_allowed, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429': { description: dictation_busy — все слоты распознавания заняты; повторить позже, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '503': { description: dictation_unavailable — движок выключен или не ответил, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /items/{itemId}/calls/{callId}/recording:
     parameters: [ { $ref: '#/components/parameters/ItemId' }, { name: callId, in: path, required: true, schema: { type: string, format: uuid } } ]
     put:
@@ -707,7 +739,7 @@ components:
           properties:
             code:
               type: string
-              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, call_required, call_in_progress, call_not_active, call_missed, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation, stale_draft, has_blocking_issues, unsupported_for_editor, not_enough_scenarios]
+              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, call_required, call_in_progress, call_not_active, call_missed, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation, stale_draft, has_blocking_issues, unsupported_for_editor, not_enough_scenarios, dictation_busy, dictation_unavailable]
             message: { type: string }
             details: { type: object, additionalProperties: true }
         request_id: { type: string }
@@ -1780,6 +1812,13 @@ components:
             dispatch: { $ref: '#/components/schemas/Intake112Dispatch' }
             notification: { $ref: '#/components/schemas/Intake112Notification' }
             recipient_services: { type: array, items: { type: string }, description: Разрешённые учебные адресаты; эталон не раскрывается. }
+            dictation:
+              type: object
+              required: [available, max_seconds]
+              description: 'ADR-037: есть только у full_case с caller_mode=free_text, пока движок распознавания включён; иначе поля нет и кнопки микрофона нет.'
+              properties:
+                available: { type: boolean }
+                max_seconds: { type: integer }
             intake_reference: { type: object, description: Только преподавателю в режиме 112. }
             terminal_statuses:
               type: array

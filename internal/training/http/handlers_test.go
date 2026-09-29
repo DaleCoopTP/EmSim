@@ -34,6 +34,10 @@ func (f *fakeAuth) Authenticate(_ context.Context, token string) (auth.Principal
 }
 
 type fakeTraining struct {
+	dictInfo        training.DictationInfo
+	dictResult      training.DictationResult
+	dictErr         error
+	dictated        []byte
 	lessons         []training.Lesson
 	lesson          training.Lesson
 	assignments     []training.Assignment
@@ -117,6 +121,14 @@ func (f *fakeTraining) LessonOptions(context.Context) (training.LessonOptionsRes
 func (f *fakeTraining) Now(context.Context) (time.Time, error) { return f.now, f.nowErr }
 func (f *fakeTraining) UploadRecording(context.Context, auth.Principal, uuid.UUID, uuid.UUID, training.Blob) error {
 	return f.readErr
+}
+func (f *fakeTraining) Dictate(_ context.Context, _ auth.Principal, _ uuid.UUID, wav []byte) (training.DictationResult, error) {
+	f.dictated = wav
+	return f.dictResult, f.dictErr
+}
+func (f *fakeTraining) DictationInfo() training.DictationInfo { return f.dictInfo }
+func (f *fakeTraining) DictationOffered(item training.Item) bool {
+	return f.dictInfo.Available && item.IntakeState != nil
 }
 func (f *fakeTraining) RecordingForInstructor(context.Context, auth.Principal, uuid.UUID, uuid.UUID) (training.Blob, error) {
 	return training.Blob{}, f.readErr

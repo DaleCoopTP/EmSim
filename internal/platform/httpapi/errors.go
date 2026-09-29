@@ -41,6 +41,10 @@ const (
 	// CodeNotEnoughScenarios is ДДС-6/ADR-035's random queue fill finding
 	// fewer suitable scenarios than requested.
 	CodeNotEnoughScenarios ErrorCode = "not_enough_scenarios"
+	// CodeDictationBusy/CodeDictationUnavailable are 112-8a/ADR-037's:
+	// every recognition slot stayed taken, or the engine is off/failed.
+	CodeDictationBusy        ErrorCode = "dictation_busy"
+	CodeDictationUnavailable ErrorCode = "dictation_unavailable"
 )
 
 // statusFor is the fixed HTTP status each code carries. Five of them —
@@ -75,6 +79,8 @@ var statusFor = map[ErrorCode]int{
 	CodeHasBlockingIssues:       http.StatusUnprocessableEntity,
 	CodeUnsupportedForEditor:    http.StatusUnprocessableEntity,
 	CodeNotEnoughScenarios:      http.StatusUnprocessableEntity,
+	CodeDictationBusy:           http.StatusTooManyRequests,
+	CodeDictationUnavailable:    http.StatusServiceUnavailable,
 }
 
 // StatusFor returns the HTTP status WriteError sends for code, or 500 for

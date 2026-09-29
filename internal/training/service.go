@@ -89,6 +89,9 @@ type Service struct {
 	// reply (the no-model opening) is held back. Zero value: no warm-ups,
 	// no delay — what every test composition gets unless it opts in.
 	callerTiming CallerTiming
+	// dictation (ADR-037) is operator 112's voice input; nil when the
+	// engine is off.
+	dictation *dictationRuntime
 }
 
 // CallerTiming is the api process's share of the AI caller's settings

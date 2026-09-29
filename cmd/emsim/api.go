@@ -201,7 +201,8 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.
 	// ADR-029: the api enqueues the AI caller's prompt-cache warm-ups and
 	// holds back the opening; the worker runs the warm-ups.
 	trainingService := newTrainingService(pool, mustTaskEnqueuer(pool), cfg.AssessmentJudge == config.AssessmentJudgeLLM).
-		WithCallerTiming(training.CallerTiming{Warmup: cfg.CallerWarmup, OpeningDelay: cfg.CallerOpeningDelay})
+		WithCallerTiming(training.CallerTiming{Warmup: cfg.CallerWarmup, OpeningDelay: cfg.CallerOpeningDelay}).
+		WithDictation(newTranscriber(cfg.Dictation), dictationSettings(cfg.Dictation))
 	contenthttp.NewHandlers(contentService, trainingService, authService, cfg.CookieSecure).Register(apiMux)
 	traininghttp.NewHandlers(trainingService, authService, cfg.CookieSecure, hub).Register(apiMux)
 	assessmentService := newAssessmentService(pool, mustTaskEnqueuer(pool), nil)

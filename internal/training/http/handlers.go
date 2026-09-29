@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"strconv"
@@ -62,6 +63,9 @@ type trainingService interface {
 	LessonOptions(ctx context.Context) (training.LessonOptionsResult, error)
 	Now(ctx context.Context) (time.Time, error)
 	UploadRecording(ctx context.Context, actor auth.Principal, itemID, callID uuid.UUID, blob training.Blob) error
+	Dictate(ctx context.Context, actor auth.Principal, itemID uuid.UUID, wav []byte) (training.DictationResult, error)
+	DictationInfo() training.DictationInfo
+	DictationOffered(item training.Item) bool
 	RecordingForInstructor(ctx context.Context, actor auth.Principal, itemID, callID uuid.UUID) (training.Blob, error)
 	VoicePhraseForTrainee(ctx context.Context, actor auth.Principal, itemID uuid.UUID, contactKey, phrase string) (training.Blob, error)
 }
@@ -127,6 +131,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/my/items", trainee(h.myItems))
 	mux.Handle("GET /api/v1/my/stream", trainee(h.streamMy))
 	mux.Handle("POST /api/v1/items/{itemId}/actions", itemActions(h.execute))
+	mux.Handle("POST /api/v1/items/{itemId}/dictation", itemActions(h.dictate))
 	mux.Handle("PUT /api/v1/items/{itemId}/calls/{callId}/recording", trainee(h.uploadRecording))
 	mux.Handle("GET /api/v1/items/{itemId}/calls/{callId}/recording", itemRead(h.downloadRecording))
 	mux.Handle("GET /api/v1/items/{itemId}/contacts/{contactKey}/phrases/{phrase}", trainee(h.voicePhrase))
@@ -135,6 +140,60 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 }
 
 const maxRecordingBytes int64 = 10 << 20
+
+// dictate is POST /items/{itemId}/dictation (112-8a/ADR-037): one WAV
+// phrase in, recognised text out. Nothing is stored; see
+// training.Service.Dictate.
+func (h *Handlers) dictate(w http.ResponseWriter, r *http.Request) {
+	principal, _ := authhttp.PrincipalFromContext(r.Context())
+	itemID, err := uuid.Parse(r.PathValue("itemId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "item not found", nil)
+		return
+	}
+	info := h.training.DictationInfo()
+	if !info.Available {
+		httpapi.WriteError(w, r, httpapi.CodeDictationUnavailable, "dictation is not available", nil)
+		return
+	}
+	if mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mediaType != "audio/wav" && mediaType != "audio/x-wav" {
+		httpapi.WriteError(w, r, httpapi.CodeUnsupportedMediaType, "audio/wav is required", nil)
+		return
+	}
+	limit := training.MaxDictationBytes(info.MaxSeconds)
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodePayloadTooLarge, "audio is too large", nil)
+		return
+	}
+	result, err := h.training.Dictate(r.Context(), principal, itemID, data)
+	if err != nil {
+		writeTrainingError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, dictationResultJSON{Text: result.Text, Model: result.Model, DurationMS: result.DurationMS})
+}
+
+type dictationResultJSON struct {
+	Text       string `json:"text"`
+	Model      string `json:"model"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+// dictationJSON is the item's dictation hint (ADR-037): present only on a
+// free_text chat while the engine is on.
+type dictationJSON struct {
+	Available  bool `json:"available"`
+	MaxSeconds int  `json:"max_seconds"`
+}
+
+func (h *Handlers) dictationHint(item training.Item) *dictationJSON {
+	if !h.training.DictationOffered(item) {
+		return nil
+	}
+	info := h.training.DictationInfo()
+	return &dictationJSON{Available: info.Available, MaxSeconds: info.MaxSeconds}
+}
 
 func (h *Handlers) uploadRecording(w http.ResponseWriter, r *http.Request) {
 	principal, _ := authhttp.PrincipalFromContext(r.Context())
@@ -646,7 +705,9 @@ func (h *Handlers) getItem(w http.ResponseWriter, r *http.Request) {
 			writeTrainingError(w, r, err)
 			return
 		}
-		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, nil, nil, nil, now, true))
+		view := toItemJSON(item, actions, events, nil, nil, nil, now, true)
+		view.Dictation = h.dictationHint(item)
+		writeJSON(w, r, http.StatusOK, view)
 	case auth.RoleInstructor:
 		item, actions, events, body, err := h.training.ItemForInstructor(r.Context(), principal, itemID)
 		if err != nil {
@@ -662,7 +723,9 @@ func (h *Handlers) getItem(w http.ResponseWriter, r *http.Request) {
 		} else {
 			ddsReference = &body.Reference
 		}
-		writeJSON(w, r, http.StatusOK, toItemJSON(item, actions, events, ddsReference, intakeReference, intakeDialogue, now, false))
+		view := toItemJSON(item, actions, events, ddsReference, intakeReference, intakeDialogue, now, false)
+		view.Dictation = h.dictationHint(item)
+		writeJSON(w, r, http.StatusOK, view)
 	default:
 		httpapi.WriteError(w, r, httpapi.CodeForbidden, "insufficient role", nil)
 	}
@@ -756,6 +819,12 @@ func writeTrainingError(w http.ResponseWriter, r *http.Request, err error) {
 		httpapi.WriteError(w, r, httpapi.CodeRecordingDeadlinePassed, "recording upload deadline passed", nil)
 	case errors.Is(err, training.ErrConflict):
 		httpapi.WriteError(w, r, httpapi.CodeConflict, "conflict", nil)
+	case errors.Is(err, training.ErrDictationBusy):
+		httpapi.WriteError(w, r, httpapi.CodeDictationBusy, "dictation is busy, try again", nil)
+	case errors.Is(err, training.ErrDictationUnavailable):
+		httpapi.WriteError(w, r, httpapi.CodeDictationUnavailable, "dictation is not available", nil)
+	case errors.Is(err, training.ErrDictationNotAllowed):
+		httpapi.WriteError(w, r, httpapi.CodeTransitionNotAllowed, "dictation is not allowed now", nil)
 	case errors.As(err, &ve):
 		httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "validation failed", map[string]any{"field": ve.Field, "reason": ve.Reason})
 	default:
@@ -1102,6 +1171,7 @@ type itemJSON struct {
 	Dispatch                *training.IntakeDispatch        `json:"dispatch,omitempty"`
 	Notification            *training.IntakeNotification    `json:"notification,omitempty"`
 	RecipientServices       []string                        `json:"recipient_services,omitempty"`
+	Dictation               *dictationJSON                  `json:"dictation,omitempty"`
 	IntakeReference         *content.Intake112Reference     `json:"intake_reference,omitempty"`
 	TerminalStatuses        *[]string                       `json:"terminal_statuses,omitempty"`
 	AllowedTransitions      []string                        `json:"allowed_transitions"`
