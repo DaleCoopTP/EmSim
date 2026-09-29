@@ -39,6 +39,12 @@ func SessionMiddleware(service authenticator, cookieSecure bool) func(http.Handl
 				httpapi.WriteError(w, r, httpapi.CodeUnauthorized, "authentication required", nil)
 				return
 			}
+			// ADR-038: a session whose password must be changed reaches only
+			// the endpoints that let it do so.
+			if principal.MustChangePassword && !allowedWhilePasswordChangeRequired(r.URL.Path) {
+				httpapi.WriteError(w, r, httpapi.CodePasswordChangeRequired, "the password must be changed first", nil)
+				return
+			}
 			// Authenticate may have extended the server-side sliding expiry.
 			// Mirror the authoritative expiry into the browser cookie; otherwise
 			// the browser would discard a still-valid renewed session at the
@@ -49,6 +55,13 @@ func SessionMiddleware(service authenticator, cookieSecure bool) func(http.Handl
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, principal)))
 		})
 	}
+}
+
+// allowedWhilePasswordChangeRequired lists what a must-change session may
+// still call: who am I, change the password, and log out (logout does not
+// pass through this middleware at all).
+func allowedWhilePasswordChangeRequired(path string) bool {
+	return path == "/api/v1/me" || path == "/api/v1/me/password"
 }
 
 // PrincipalFromContext returns the Principal SessionMiddleware stored, or

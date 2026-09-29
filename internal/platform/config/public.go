@@ -81,6 +81,10 @@ func (c API) Public(blobRoot string) []Param {
 		{GroupProcess, "BLOB_ROOT", blobRoot},
 		{GroupSecurity, "SESSION_TTL", c.SessionTTL.String()},
 		{GroupSecurity, "COOKIE_SECURE", yesNo(c.CookieSecure)},
+		{GroupSecurity, "LOGIN_LOCKOUT_ATTEMPTS", strconv.Itoa(c.LoginLockoutAttempts)},
+		{GroupSecurity, "LOGIN_LOCKOUT_DURATION", c.LoginLockoutDuration.String()},
+		{GroupSecurity, "PASSWORD_MIN_LENGTH", strconv.Itoa(c.PasswordMinLength)},
+		{GroupSecurity, "PASSWORD_FORCE_CHANGE", forceChangeLabel(c.PasswordForceChange)},
 		{GroupLogging, "LOG_LEVEL", c.LogLevel},
 		{GroupModels, "ASSESSMENT_JUDGE", c.AssessmentJudge},
 		{GroupModels, "CALLER_WARMUP", yesNo(c.CallerWarmup)},
@@ -150,4 +154,11 @@ func (c Worker) Public() []Param {
 		)
 	}
 	return params
+}
+
+func forceChangeLabel(roles []string) string {
+	if len(roles) == 0 {
+		return "none"
+	}
+	return strings.Join(roles, ",")
 }

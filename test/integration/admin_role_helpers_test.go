@@ -70,6 +70,19 @@ func (f *adminFixture) tryLogin(t *testing.T, name, password string) (*http.Clie
 	return client, response.StatusCode
 }
 
+// tryLoginResponse is tryLogin for a trainee: it sends workstation_no and
+// returns the login's status (the client is discarded).
+func (f *adminFixture) tryLoginResponse(t *testing.T, name, password string, workstation int) (*http.Client, int) {
+	t.Helper()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar, Timeout: 10 * time.Second}
+	response := jsonRequest(t, f.ctx, client, f.baseURL, http.MethodPost, "/api/v1/auth/login", map[string]any{"login": name, "password": password, "workstation_no": workstation}, nil)
+	return client, response.StatusCode
+}
+
 func (f *adminFixture) login(t *testing.T, name, password string) *http.Client {
 	t.Helper()
 	client, status := f.tryLogin(t, name, password)

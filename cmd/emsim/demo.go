@@ -82,7 +82,11 @@ func runDemoSetup(ctx context.Context, args []string, out io.Writer) error {
 	actor := auth.Principal{UserID: actorID, Role: auth.Role(actorRole)}
 	authStore := authpg.NewStore(pool)
 	contentService := content.NewService(contentpg.NewStore(pool), mustSchemaValidator())
-	authService := auth.NewService(authStore, auth.NewPasswordIdentityProvider(authStore), 0, nil, contentService)
+	// Demo accounts are for a class demonstration: their passwords are
+	// shared knowledge, so the login policy's "must change" flag is left off.
+	demoPolicy := auth.DefaultPolicy()
+	demoPolicy.ForceChangeRoles = nil
+	authService := auth.NewService(authStore, auth.NewPasswordIdentityProvider(authStore), 0, nil, contentService).WithPolicy(demoPolicy)
 
 	// Workstations: keep every active one, add the missing РМ-NN.
 	existing, err := authService.ListWorkstations(ctx)

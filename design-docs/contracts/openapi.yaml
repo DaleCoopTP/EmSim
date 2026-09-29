@@ -46,6 +46,7 @@ paths:
           description: Сессия создана; cookie emsim_session установлена (ADR-008)
           content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '423': { description: 'Учётная запись заблокирована после серии неверных паролей (ADR-038, code=account_locked). Блокировка снимается сама через LOGIN_LOCKOUT_DURATION или администратором.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '422':
           description: workstation_no отсутствует, неизвестен или соответствующее РМ неактивно — details.field=workstation_no, details.reason=required|unknown|inactive
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
@@ -67,6 +68,25 @@ paths:
           description: OK; emsim_session переустановлена с актуальным серверным expires_at для sliding-session
           content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+  /me/password:
+    post:
+      tags: [auth]
+      summary: Сменить свой пароль (ADR-038)
+      description: Нужен текущий пароль. Новый — не короче PASSWORD_MIN_LENGTH и не совпадает с текущим. Снимает признак credentials_change_required и завершает все остальные сеансы пользователя; текущий остаётся. Пока признак стоит, только этот маршрут, GET /me и выход доступны, остальное отвечает 403 password_change_required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string, maxLength: 256 }
+                new_password: { type: string, minLength: 8, maxLength: 256 }
+      responses:
+        '204': { description: Пароль сменён }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { description: 'Валидация: details.field=current_password reason=incorrect, или details.field=password reason=too_short|too_long|same_as_current', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   # ------------------------------------------------------------ admin
   /admin/users:
@@ -90,13 +110,28 @@ paths:
     patch:
       tags: [admin]
       summary: Изменить пользователя (ФИО, роль, служба, активность, пароль)
-      description: Частичное обновление — поле, отсутствующее в теле, не меняется. service_code:null очищает поле; обучаемый 112 может быть без службы, а назначение ДДС требует совпадающий профиль. Для admin/instructor код службы запрещён. Смена пароля или active:false отзывает все сессии пользователя.
+      description: Частичное обновление — поле, отсутствующее в теле, не меняется. service_code:null очищает поле; обучаемый 112 может быть без службы, а назначение ДДС требует совпадающий профиль. Для admin/instructor код службы запрещён. Смена пароля или active:false отзывает все сессии пользователя. Пароль, заданный администратором, для ролей из PASSWORD_FORCE_CHANGE помечается «сменить при первом входе» (ADR-038). unlock:true снимает блокировку входа.
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UserPatch' } } } }
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Правка сделала бы активного admin нулём (нельзя понизить или деактивировать последнего), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '422': { $ref: '#/components/responses/Validation' }
+  /admin/users/{userId}/sessions:
+    parameters: [ { $ref: '#/components/parameters/UserId' } ]
+    get:
+      tags: [admin]
+      summary: Действующие сеансы пользователя (ADR-038)
+      description: Когда начат, последний раз использован и истекает, и на каком РМ. Без токенов и идентификаторов сеансов.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/UserSession' } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [admin]
+      summary: Завершить все сеансы пользователя (ADR-038)
+      responses:
+        '204': { description: Сеансы завершены }
+        '404': { $ref: '#/components/responses/NotFound' }
   /admin/workstations:
     get:
       tags: [admin]
@@ -870,7 +905,7 @@ components:
           properties:
             code:
               type: string
-              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, call_required, call_in_progress, call_not_active, call_missed, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation, stale_draft, has_blocking_issues, unsupported_for_editor, not_enough_scenarios, dictation_busy, dictation_unavailable, maintenance_mode]
+              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, call_required, call_in_progress, call_not_active, call_missed, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation, stale_draft, has_blocking_issues, unsupported_for_editor, not_enough_scenarios, dictation_busy, dictation_unavailable, maintenance_mode, account_locked, password_change_required]
             message: { type: string }
             details: { type: object, additionalProperties: true }
         request_id: { type: string }
@@ -899,6 +934,8 @@ components:
         service_code: { type: string, nullable: true }
         level: { $ref: '#/components/schemas/Level', description: 'Текущий уровень обучаемого. Новый пользователь всегда easy; меняется только применением рекомендации преподавателем (срез 10), не через admin API.' }
         active: { type: boolean }
+        locked_until: { type: [string, 'null'], format: date-time, description: 'ADR-038: вход заблокирован до этого момента; null, если блокировки нет' }
+        credentials_change_required: { type: boolean, description: 'ADR-038: пароль задан администратором и должен быть сменён при первом входе (PASSWORD_FORCE_CHANGE). Имя намеренно без слова password: тело ответа никогда его не содержит.' }
     UserCreate:
       type: object
       required: [login, password, full_name, role]
@@ -916,6 +953,16 @@ components:
         role: { $ref: '#/components/schemas/Role' }
         service_code: { type: string, nullable: true }
         active: { type: boolean }
+        unlock: { type: boolean, enum: [true], description: 'ADR-038: снять блокировку входа и обнулить серию неверных паролей. Смена пароля администратором тоже снимает блокировку.' }
+    UserSession:
+      type: object
+      required: [created_at, last_seen_at, expires_at, workstation_number, workstation_label]
+      properties:
+        created_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        workstation_number: { type: [integer, 'null'] }
+        workstation_label: { type: [string, 'null'] }
     Workstation:
       type: object
       required: [number]

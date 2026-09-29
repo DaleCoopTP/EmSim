@@ -94,6 +94,8 @@ func TestStatusForEveryDocumentedCode(t *testing.T) {
 		CodeDictationBusy:           http.StatusTooManyRequests,
 		CodeDictationUnavailable:    http.StatusServiceUnavailable,
 		CodeMaintenanceMode:         http.StatusConflict,
+		CodeAccountLocked:           http.StatusLocked,
+		CodePasswordChangeRequired:  http.StatusForbidden,
 	}
 	for code, want := range cases {
 		if got := StatusFor(code); got != want {

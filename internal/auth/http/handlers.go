@@ -20,6 +20,7 @@ type service interface {
 	Login(ctx context.Context, req auth.LoginRequest, requestID string) (auth.LoginResult, error)
 	Logout(ctx context.Context, token, requestID string) error
 	Me(ctx context.Context, principal auth.Principal) (auth.Me, error)
+	ChangePassword(ctx context.Context, principal auth.Principal, current, next, requestID string) error
 }
 
 // Handlers owns the "auth" route group (RFC-001 §5: "все") — login,
@@ -39,6 +40,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	mux.HandleFunc("POST /api/v1/auth/logout", h.logout)
 	mux.Handle("GET /api/v1/me", SessionMiddleware(h.service, h.cookieSecure)(http.HandlerFunc(h.me)))
+	mux.Handle("POST /api/v1/me/password", SessionMiddleware(h.service, h.cookieSecure)(http.HandlerFunc(h.changePassword)))
 }
 
 type loginRequestBody struct {
@@ -95,6 +97,36 @@ func (h *Handlers) me(w http.ResponseWriter, r *http.Request) {
 	writeMe(w, r, http.StatusOK, me)
 }
 
+type changePasswordBody struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// changePassword is POST /me/password (ADR-038): the user replaces their
+// own password; the other sessions end, this one stays.
+func (h *Handlers) changePassword(w http.ResponseWriter, r *http.Request) {
+	principal, ok := PrincipalFromContext(r.Context())
+	if !ok {
+		httpapi.WriteError(w, r, httpapi.CodeUnauthorized, "authentication required", nil)
+		return
+	}
+	var body changePasswordBody
+	if err := httpapi.DecodeJSON(r, 0, &body); err != nil {
+		writeDecodeError(w, r, err)
+		return
+	}
+	if err := h.service.ChangePassword(r.Context(), principal, body.CurrentPassword, body.NewPassword, httpapi.RequestIDFromContext(r.Context())); err != nil {
+		var ve *auth.ValidationError
+		if errors.As(err, &ve) {
+			httpapi.WriteError(w, r, httpapi.CodeValidationFailed, "validation failed", map[string]any{"field": ve.Field, "reason": ve.Reason})
+			return
+		}
+		httpapi.WriteError(w, r, httpapi.CodeInternalError, "failed to change password", nil)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func writeDecodeError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, httpapi.ErrBodyTooLarge) {
 		httpapi.WriteError(w, r, httpapi.CodePayloadTooLarge, "request body too large", nil)
@@ -115,6 +147,8 @@ func writeLoginError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, auth.ErrRateLimited):
 		httpapi.WriteError(w, r, httpapi.CodeRateLimited, "too many login attempts", nil)
+	case errors.Is(err, auth.ErrAccountLocked):
+		httpapi.WriteError(w, r, httpapi.CodeAccountLocked, "account is locked", nil)
 	case errors.Is(err, auth.ErrInvalidCredentials), errors.Is(err, auth.ErrUserInactive):
 		httpapi.WriteError(w, r, httpapi.CodeUnauthorized, "invalid credentials", nil)
 	case errors.Is(err, auth.ErrWorkstationRequired):
@@ -138,6 +172,11 @@ type userJSON struct {
 	ServiceCode *string `json:"service_code"`
 	Level       string  `json:"level"`
 	Active      bool    `json:"active"`
+	// ADR-038: login policy state. LockedUntil is set only while a lock is
+	// in force. The flag is named for what the client must do, not for the
+	// secret it concerns: response bodies never mention "password".
+	LockedUntil        *string `json:"locked_until"`
+	MustChangePassword bool    `json:"credentials_change_required"`
 }
 
 type workstationJSON struct {
@@ -167,10 +206,16 @@ func writeMe(w http.ResponseWriter, r *http.Request, status int, me auth.Me) {
 // responses — every endpoint that renders a User or Workstation uses the
 // same shape (openapi.yaml's User/Workstation schemas).
 func toUserJSON(u auth.User) userJSON {
-	return userJSON{
+	body := userJSON{
 		ID: u.ID.String(), Login: u.Login, FullName: u.FullName,
 		Role: string(u.Role), ServiceCode: u.ServiceCode, Level: string(u.Level), Active: u.Active,
+		MustChangePassword: u.MustChangePassword,
 	}
+	if u.LockedUntil != nil && u.LockedUntil.After(time.Now()) {
+		until := u.LockedUntil.UTC().Format(time.RFC3339)
+		body.LockedUntil = &until
+	}
+	return body
 }
 
 func toWorkstationJSON(w auth.Workstation) workstationJSON {

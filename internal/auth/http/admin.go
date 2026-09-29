@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"emsim/internal/auth"
 	"emsim/internal/platform/httpapi"
@@ -25,6 +26,8 @@ type adminService interface {
 	CreateUser(ctx context.Context, n auth.NewUser, actor auth.Principal, requestID string) (auth.User, error)
 	UpdateUser(ctx context.Context, id uuid.UUID, patch auth.Patch, actor auth.Principal, requestID string) (auth.User, error)
 	ListUsers(ctx context.Context, page, pageSize int) ([]auth.User, int, error)
+	ListUserSessions(ctx context.Context, id uuid.UUID) ([]auth.SessionInfo, error)
+	RevokeUserSessions(ctx context.Context, id uuid.UUID, actor auth.Principal, requestID string) (int, error)
 	ListWorkstations(ctx context.Context) ([]auth.Workstation, error)
 	ReplaceWorkstations(ctx context.Context, workstations []auth.Workstation, actor auth.Principal, requestID string) ([]auth.Workstation, error)
 }
@@ -51,6 +54,8 @@ func (h *AdminHandlers) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/admin/users", protect(h.listUsers))
 	mux.Handle("POST /api/v1/admin/users", protect(h.createUser))
 	mux.Handle("PATCH /api/v1/admin/users/{userId}", protect(h.patchUser))
+	mux.Handle("GET /api/v1/admin/users/{userId}/sessions", protect(h.listSessions))
+	mux.Handle("DELETE /api/v1/admin/users/{userId}/sessions", protect(h.revokeSessions))
 	mux.Handle("GET /api/v1/admin/workstations", protect(h.listWorkstations))
 	mux.Handle("PUT /api/v1/admin/workstations", protect(h.replaceWorkstations))
 }
@@ -191,6 +196,13 @@ func parseUserPatch(raw map[string]json.RawMessage) (auth.Patch, error) {
 			patch.ServiceCode = &s
 		}
 	}
+	if v, ok := raw["unlock"]; ok {
+		var b bool
+		if err := json.Unmarshal(v, &b); err != nil || !b {
+			return auth.Patch{}, errors.New("unlock must be true")
+		}
+		patch.Unlock = true
+	}
 	if v, ok := raw["active"]; ok {
 		if isJSONNull(v) {
 			return auth.Patch{}, errors.New("active must not be null")
@@ -224,6 +236,57 @@ func writeUserMutationError(w http.ResponseWriter, r *http.Request, err error) {
 	default:
 		httpapi.WriteError(w, r, httpapi.CodeInternalError, "operation failed", nil)
 	}
+}
+
+type sessionJSON struct {
+	CreatedAt         string  `json:"created_at"`
+	LastSeenAt        string  `json:"last_seen_at"`
+	ExpiresAt         string  `json:"expires_at"`
+	WorkstationNumber *int    `json:"workstation_number"`
+	WorkstationLabel  *string `json:"workstation_label"`
+}
+
+// listSessions is GET /admin/users/{id}/sessions (ADR-038): when each live
+// session began, was last used and expires, and at which workstation.
+func (h *AdminHandlers) listSessions(w http.ResponseWriter, r *http.Request) {
+	userID, err := uuid.Parse(r.PathValue("userId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "user not found", nil)
+		return
+	}
+	sessions, err := h.service.ListUserSessions(r.Context(), userID)
+	if err != nil {
+		writeUserMutationError(w, r, err)
+		return
+	}
+	items := make([]sessionJSON, len(sessions))
+	for i, s := range sessions {
+		items[i] = sessionJSON{
+			CreatedAt: s.CreatedAt.UTC().Format(time.RFC3339), LastSeenAt: s.LastSeenAt.UTC().Format(time.RFC3339),
+			ExpiresAt: s.ExpiresAt.UTC().Format(time.RFC3339), WorkstationNumber: s.WorkstationNumber,
+		}
+		if s.WorkstationNumber != nil {
+			label := s.WorkstationLabel
+			items[i].WorkstationLabel = &label
+		}
+	}
+	writeJSON(w, r, http.StatusOK, items)
+}
+
+// revokeSessions is DELETE /admin/users/{id}/sessions: ends every session
+// of the user.
+func (h *AdminHandlers) revokeSessions(w http.ResponseWriter, r *http.Request) {
+	userID, err := uuid.Parse(r.PathValue("userId"))
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.CodeNotFound, "user not found", nil)
+		return
+	}
+	actor, _ := PrincipalFromContext(r.Context())
+	if _, err := h.service.RevokeUserSessions(r.Context(), userID, actor, httpapi.RequestIDFromContext(r.Context())); err != nil {
+		writeUserMutationError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *AdminHandlers) listWorkstations(w http.ResponseWriter, r *http.Request) {

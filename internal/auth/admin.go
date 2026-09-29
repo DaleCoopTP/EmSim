@@ -19,6 +19,9 @@ func (s *Service) CreateUser(ctx context.Context, n NewUser, actor Principal, re
 	if err := ValidateNewUser(n); err != nil {
 		return User{}, err
 	}
+	if err := s.policy.checkPassword(n.Password); err != nil {
+		return User{}, err
+	}
 	if err := s.checkServiceCode(ctx, n.ServiceCode); err != nil {
 		return User{}, err
 	}
@@ -29,6 +32,7 @@ func (s *Service) CreateUser(ctx context.Context, n NewUser, actor Principal, re
 	candidate := User{
 		ID: uuid.New(), Login: n.Login, PasswordHash: hash, FullName: n.FullName,
 		Role: n.Role, ServiceCode: n.ServiceCode, Level: LevelEasy, Active: true,
+		MustChangePassword: s.policy.forcesChange(n.Role),
 	}
 
 	var created User
@@ -75,6 +79,11 @@ func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, patch Patch, act
 		if err := ValidateUserPatch(current, patch); err != nil {
 			return err
 		}
+		if patch.Password != nil {
+			if err := s.policy.checkPassword(*patch.Password); err != nil {
+				return err
+			}
+		}
 		if wouldLoseLastActiveAdmin(current, patch) {
 			count, err := s.store.CountActiveAdmins(ctx, tx)
 			if err != nil {
@@ -89,6 +98,20 @@ func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, patch Patch, act
 		if err != nil {
 			return err
 		}
+		// ADR-038: a password set by the administrator is a temporary one
+		// for the roles the policy names, and setting it (like an explicit
+		// unlock) also ends any login lock.
+		if patch.Password != nil {
+			effective := current.Role
+			if patch.Role != nil {
+				effective = *patch.Role
+			}
+			force := s.policy.forcesChange(effective)
+			storeUpdate.MustChangePassword = &force
+		}
+		if patch.Unlock || patch.Password != nil {
+			storeUpdate.ClearLockout = true
+		}
 		u, err := s.store.UpdateUser(ctx, tx, id, storeUpdate)
 		if err != nil {
 			return err
@@ -100,6 +123,14 @@ func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, patch Patch, act
 			ResourceType: "user", ResourceID: &id, Outcome: audit.OutcomeOK, RequestID: requestID,
 		}); err != nil {
 			return err
+		}
+		if patch.Unlock {
+			if err := s.store.AuditRecord(ctx, tx, audit.Entry{
+				ActorID: &actor.UserID, ActorRole: string(actor.Role), Action: "admin.user.unlock",
+				ResourceType: "user", ResourceID: &id, Outcome: audit.OutcomeOK, RequestID: requestID,
+			}); err != nil {
+				return err
+			}
 		}
 
 		deactivated := patch.Active != nil && !*patch.Active
@@ -315,4 +346,44 @@ func validateWorkstationReplace(workstations []Workstation) error {
 		seen[w.Number] = struct{}{}
 	}
 	return nil
+}
+
+// ListUserSessions returns a user's live sessions for the administrator
+// (ADR-038): timings and workstation only, never a token.
+func (s *Service) ListUserSessions(ctx context.Context, id uuid.UUID) ([]SessionInfo, error) {
+	var sessions []SessionInfo
+	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		if _, err := s.store.UserByID(ctx, tx, id); err != nil {
+			return err
+		}
+		list, err := s.store.ListUserSessions(ctx, tx, id)
+		sessions = list
+		return err
+	})
+	return sessions, err
+}
+
+// RevokeUserSessions ends every session of a user (ADR-038) and audits it.
+// It returns how many were live.
+func (s *Service) RevokeUserSessions(ctx context.Context, id uuid.UUID, actor Principal, requestID string) (int, error) {
+	count := 0
+	err := s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		if _, err := s.store.UserByID(ctx, tx, id); err != nil {
+			return err
+		}
+		list, err := s.store.ListUserSessions(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		count = len(list)
+		if err := s.store.DeleteUserSessions(ctx, tx, id); err != nil {
+			return err
+		}
+		return s.store.AuditRecord(ctx, tx, audit.Entry{
+			ActorID: &actor.UserID, ActorRole: string(actor.Role), Action: "admin.user.sessions_revoke",
+			ResourceType: "user", ResourceID: &id, Outcome: audit.OutcomeOK, RequestID: requestID,
+			Details: map[string]any{"count": count},
+		})
+	})
+	return count, err
 }

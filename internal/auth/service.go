@@ -58,6 +58,11 @@ type Store interface {
 	TouchSession(ctx context.Context, tx pgx.Tx, id []byte, staleAfter, ttl time.Duration) error
 	DeleteSession(ctx context.Context, tx pgx.Tx, id []byte) error
 	DeleteUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error
+	DeleteOtherUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID, keep []byte) error
+	ListUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]SessionInfo, error)
+
+	RecordFailedLogin(ctx context.Context, tx pgx.Tx, userID uuid.UUID, threshold int, lockFor time.Duration) (bool, error)
+	ClearFailedLogins(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error
 
 	AuditRecord(ctx context.Context, tx pgx.Tx, entry audit.Entry) error
 }
@@ -82,6 +87,8 @@ type Service struct {
 	limiter          *LoginLimiter
 	ttl              time.Duration
 	catalog          ServiceCatalog
+	policy           Policy
+	now              func() time.Time
 }
 
 // NewService constructs a Service. ttl is the session lifetime (RFC-001
@@ -99,7 +106,13 @@ func NewService(store Store, identityProvider IdentityProvider, ttl time.Duratio
 	if limiter == nil {
 		limiter = DefaultLoginLimiter()
 	}
-	return &Service{store: store, identityProvider: identityProvider, limiter: limiter, ttl: ttl, catalog: catalog}
+	return &Service{store: store, identityProvider: identityProvider, limiter: limiter, ttl: ttl, catalog: catalog, policy: DefaultPolicy(), now: time.Now}
+}
+
+// WithPolicy replaces the default login policy (ADR-038).
+func (s *Service) WithPolicy(p Policy) *Service {
+	s.policy = p
+	return s
 }
 
 // LoginRequest is POST /auth/login's body (openapi.yaml).
@@ -139,9 +152,22 @@ func (s *Service) Login(ctx context.Context, req LoginRequest, requestID string)
 		return LoginResult{}, ErrRateLimited
 	}
 
+	known, knownFound := s.lookupUser(ctx, req.Login)
+	if knownFound && known.LockedUntil != nil && known.LockedUntil.After(s.now()) {
+		s.auditRejectedLogin(ctx, &known.ID, "", requestID, "account_locked")
+		return LoginResult{}, ErrAccountLocked
+	}
+
 	user, workstation, err := s.verifyCredentials(ctx, req)
 	if err != nil {
-		s.auditRejectedLogin(ctx, nil, "", requestID, loginRejectionReason(err))
+		var subject *uuid.UUID
+		if knownFound {
+			subject = &known.ID
+		}
+		s.auditRejectedLogin(ctx, subject, "", requestID, loginRejectionReason(err))
+		if knownFound && errors.Is(err, ErrInvalidCredentials) {
+			s.registerFailedLogin(ctx, known, requestID)
+		}
 		return LoginResult{}, err
 	}
 
@@ -163,6 +189,11 @@ func (s *Service) Login(ctx context.Context, req LoginRequest, requestID string)
 		if err != nil {
 			return err
 		}
+		if user.FailedLogins > 0 {
+			if err := s.store.ClearFailedLogins(ctx, tx, user.ID); err != nil {
+				return err
+			}
+		}
 		if err := s.store.AuditRecord(ctx, tx, audit.Entry{
 			ActorID: &user.ID, ActorRole: string(user.Role), Action: "auth.login",
 			ResourceType: "user", ResourceID: &user.ID, Outcome: audit.OutcomeOK, RequestID: requestID,
@@ -180,6 +211,42 @@ func (s *Service) Login(ctx context.Context, req LoginRequest, requestID string)
 		return LoginResult{}, err
 	}
 	return result, nil
+}
+
+// lookupUser reads the account a login names, for the lock check and the
+// failed-attempt counter. A read failure is treated as "not found": the
+// credential check that follows still decides the outcome.
+func (s *Service) lookupUser(ctx context.Context, login string) (User, bool) {
+	var user User
+	found := false
+	_ = s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		u, err := s.store.UserByLogin(ctx, tx, login)
+		if err == nil {
+			user, found = u, true
+		}
+		return nil
+	})
+	return user, found
+}
+
+// registerFailedLogin counts a wrong password against the account and
+// audits the lock when this attempt starts one (ADR-038). Best effort,
+// like the rejected-login audit row: the client already has its 401.
+func (s *Service) registerFailedLogin(ctx context.Context, user User, requestID string) {
+	if s.policy.LockoutAttempts <= 0 {
+		return
+	}
+	_ = s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		locked, err := s.store.RecordFailedLogin(ctx, tx, user.ID, s.policy.LockoutAttempts, s.policy.LockoutDuration)
+		if err != nil || !locked {
+			return err
+		}
+		return s.store.AuditRecord(ctx, tx, audit.Entry{
+			ActorRole: string(user.Role), Action: "auth.lockout", ResourceType: "user", ResourceID: &user.ID,
+			Outcome: audit.OutcomeRejected, RequestID: requestID,
+			Details: map[string]any{"attempts": s.policy.LockoutAttempts, "minutes": int(s.policy.LockoutDuration / time.Minute)},
+		})
+	})
 }
 
 // verifyCredentials delegates login+password verification to the configured
@@ -248,13 +315,15 @@ func loginRejectionReason(err error) string {
 	}
 }
 
-// auditRejectedLogin best-effort records a rejected attempt; see Login's
+// auditRejectedLogin best-effort records a rejected attempt; subject is the
+// account the login named, when it exists (so the log shows whose account is
+// being guessed). See Login's
 // doc comment for why its own failure is not surfaced.
-func (s *Service) auditRejectedLogin(ctx context.Context, actorID *uuid.UUID, actorRole, requestID, reason string) {
+func (s *Service) auditRejectedLogin(ctx context.Context, subject *uuid.UUID, actorRole, requestID, reason string) {
 	_ = s.store.WithTx(ctx, func(tx pgx.Tx) error {
 		return s.store.AuditRecord(ctx, tx, audit.Entry{
-			ActorID: actorID, ActorRole: actorRole, Action: "auth.login",
-			ResourceType: "user", Outcome: audit.OutcomeRejected, RequestID: requestID,
+			ActorRole: actorRole, Action: "auth.login",
+			ResourceType: "user", ResourceID: subject, Outcome: audit.OutcomeRejected, RequestID: requestID,
 			Details: map[string]any{"reason": reason},
 		})
 	})
@@ -332,6 +401,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Principal, er
 	return Principal{
 		UserID: lookup.User.ID, Role: lookup.User.Role, WorkstationID: workstationID,
 		SessionExpiresAt: lookup.Session.ExpiresAt,
+		SessionID:        lookup.Session.ID, MustChangePassword: lookup.User.MustChangePassword,
 	}, nil
 }
 
@@ -374,4 +444,56 @@ func sessionIDFromToken(token string) ([]byte, error) {
 	}
 	id := sha256.Sum256(raw)
 	return id[:], nil
+}
+
+// ChangePassword lets a user replace their own password (ADR-038): it
+// needs the current one, refuses a new one that is too short or the same,
+// lifts the "must change" flag and ends every other session of the user,
+// keeping the one the change was made from.
+func (s *Service) ChangePassword(ctx context.Context, principal Principal, current, next, requestID string) error {
+	if err := s.policy.checkPassword(next); err != nil {
+		return err
+	}
+	if err := validatePasswordLength(next); err != nil {
+		return err
+	}
+	if next == current {
+		return invalid("password", "same_as_current")
+	}
+	hash, err := HashPassword(next, DefaultParams)
+	if err != nil {
+		return ErrStorage
+	}
+	wrongCurrent := false
+	err = s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		user, err := s.store.UserByID(ctx, tx, principal.UserID)
+		if err != nil {
+			return err
+		}
+		if ok, verr := VerifyPassword(user.PasswordHash, current); verr != nil || !ok {
+			// The rejection is audited and committed; the caller then gets
+			// the validation error.
+			wrongCurrent = true
+			return s.store.AuditRecord(ctx, tx, audit.Entry{
+				ActorID: &user.ID, ActorRole: string(user.Role), Action: "auth.password_change",
+				ResourceType: "user", ResourceID: &user.ID, Outcome: audit.OutcomeRejected, RequestID: requestID,
+				Details: map[string]any{"reason": "invalid_credentials"},
+			})
+		}
+		off := false
+		if _, err := s.store.UpdateUser(ctx, tx, user.ID, UserUpdate{PasswordHash: &hash, PasswordHashSet: true, MustChangePassword: &off}); err != nil {
+			return err
+		}
+		if err := s.store.DeleteOtherUserSessions(ctx, tx, user.ID, principal.SessionID); err != nil {
+			return err
+		}
+		return s.store.AuditRecord(ctx, tx, audit.Entry{
+			ActorID: &user.ID, ActorRole: string(user.Role), Action: "auth.password_change",
+			ResourceType: "user", ResourceID: &user.ID, Outcome: audit.OutcomeOK, RequestID: requestID,
+		})
+	})
+	if err == nil && wrongCurrent {
+		return invalid("current_password", "incorrect")
+	}
+	return err
 }

@@ -16,12 +16,51 @@ var ErrInvalidAPIConfiguration = errors.New("invalid API configuration")
 // to false so the browser still sends the cookie back.
 const defaultSessionTTL = 12 * time.Hour
 
+// Login policy defaults (ADR-038).
+const (
+	defaultLoginLockoutAttempts = 10
+	defaultLoginLockoutDuration = 15 * time.Minute
+	defaultPasswordMinLength    = 8
+	defaultPasswordForceChange  = "admin,instructor"
+)
+
+// parseForceChangeRoles reads PASSWORD_FORCE_CHANGE: unset means the
+// default, "none" means no role, otherwise a comma-separated list of
+// roles. An unknown role name fails startup.
+func parseForceChangeRoles(raw string) ([]string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = defaultPasswordForceChange
+	}
+	if raw == "none" {
+		return []string{}, true
+	}
+	roles := []string{}
+	for _, part := range strings.Split(raw, ",") {
+		role := strings.TrimSpace(part)
+		if role != "admin" && role != "instructor" && role != "trainee" {
+			return nil, false
+		}
+		roles = append(roles, role)
+	}
+	return roles, true
+}
+
 type API struct {
 	DatabaseURL  string
 	PublicAddr   string
 	AdminAddr    string
 	SessionTTL   time.Duration
 	CookieSecure bool
+	// Login policy (ADR-038, set in .env). LoginLockoutAttempts wrong
+	// passwords in a row lock the account for LoginLockoutDuration (0
+	// attempts turns the lock off); PasswordMinLength is never below 8;
+	// PasswordForceChange lists the roles whose admin-set password must be
+	// changed at the next login (PASSWORD_FORCE_CHANGE, "none" for nobody).
+	LoginLockoutAttempts int
+	LoginLockoutDuration time.Duration
+	PasswordMinLength    int
+	PasswordForceChange  []string
 	// LogLevel is LOG_LEVEL (ADR-038): debug, info (default), warn or error.
 	LogLevel string
 	// AssessmentJudge (ADR-028) is api's own half of ASSESSMENT_JUDGE —
@@ -131,7 +170,13 @@ func APIFromEnvironment(lookup func(string) string) (API, error) {
 	callerWarmup, callerOpeningDelay, callerOK := callerTimingFromEnvironment(lookup)
 	dictation, dictationOK := dictationFromEnvironment(lookup)
 	logLevel, logLevelOK := parseLogLevel(lookup("LOG_LEVEL"))
+	lockoutAttempts, lockoutAttemptsErr := parseIntOrDefault(lookup("LOGIN_LOCKOUT_ATTEMPTS"), defaultLoginLockoutAttempts)
+	lockoutDuration, lockoutDurationErr := parseDurationOrDefault(lookup("LOGIN_LOCKOUT_DURATION"), defaultLoginLockoutDuration)
+	passwordMin, passwordMinErr := parseIntOrDefault(lookup("PASSWORD_MIN_LENGTH"), defaultPasswordMinLength)
+	forceChange, forceChangeOK := parseForceChangeRoles(lookup("PASSWORD_FORCE_CHANGE"))
 	config := API{
+		LoginLockoutAttempts: lockoutAttempts, LoginLockoutDuration: lockoutDuration,
+		PasswordMinLength: passwordMin, PasswordForceChange: forceChange,
 		LogLevel:        logLevel,
 		DatabaseURL:     strings.TrimSpace(lookup("DATABASE_URL")),
 		PublicAddr:      strings.TrimSpace(lookup("API_LISTEN_ADDR")),
@@ -142,7 +187,7 @@ func APIFromEnvironment(lookup func(string) string) (API, error) {
 		CallerWarmup:    callerWarmup, CallerOpeningDelay: callerOpeningDelay,
 		Dictation: dictation,
 	}
-	if ttlErr != nil || secureErr != nil || !callerOK || !dictationOK || !logLevelOK {
+	if ttlErr != nil || secureErr != nil || lockoutAttemptsErr != nil || lockoutDurationErr != nil || passwordMinErr != nil || !forceChangeOK || !callerOK || !dictationOK || !logLevelOK {
 		return API{}, ErrInvalidAPIConfiguration
 	}
 	if err := config.Validate(); err != nil {
@@ -154,6 +199,11 @@ func APIFromEnvironment(lookup func(string) string) (API, error) {
 func (c API) Validate() error {
 	if c.DatabaseURL == "" || !validListenAddress(c.PublicAddr) || !validListenAddress(c.AdminAddr) ||
 		c.PublicAddr == c.AdminAddr || c.SessionTTL <= 0 {
+		return ErrInvalidAPIConfiguration
+	}
+	if c.LoginLockoutAttempts < 0 || c.LoginLockoutAttempts > 1000 ||
+		(c.LoginLockoutAttempts > 0 && (c.LoginLockoutDuration < time.Minute || c.LoginLockoutDuration > 30*24*time.Hour)) ||
+		c.PasswordMinLength < 8 || c.PasswordMinLength > 128 {
 		return ErrInvalidAPIConfiguration
 	}
 	if c.AssessmentJudge != AssessmentJudgeOff && c.AssessmentJudge != AssessmentJudgeLLM {

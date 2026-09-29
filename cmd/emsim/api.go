@@ -197,7 +197,7 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub, window
 	contentService := content.NewService(contentpg.NewStore(pool), mustSchemaValidator())
 
 	authStore := authpg.NewStore(pool)
-	authService := auth.NewService(authStore, auth.NewPasswordIdentityProvider(authStore), cfg.SessionTTL, nil, contentService)
+	authService := auth.NewService(authStore, auth.NewPasswordIdentityProvider(authStore), cfg.SessionTTL, nil, contentService).WithPolicy(loginPolicy(cfg))
 	authhttp.NewHandlers(authService, cfg.CookieSecure).Register(apiMux)
 	authhttp.NewAdminHandlers(authService, cfg.CookieSecure).Register(apiMux)
 
@@ -370,4 +370,17 @@ func runAPIProber(ctx context.Context, pool *pgxpool.Pool, cfg config.API) {
 	prober := status.NewProber(probes, status.NewStore(pool), 30*time.Second, 5*time.Second,
 		func(interval time.Duration) status.Ticker { return tasks.SystemTickerFactory{}.NewTicker(interval) })
 	_ = prober.Run(ctx)
+}
+
+// loginPolicy turns the api's .env settings into the auth module's login
+// policy (ADR-038).
+func loginPolicy(cfg config.API) auth.Policy {
+	roles := make([]auth.Role, 0, len(cfg.PasswordForceChange))
+	for _, name := range cfg.PasswordForceChange {
+		roles = append(roles, auth.Role(name))
+	}
+	return auth.Policy{
+		LockoutAttempts: cfg.LoginLockoutAttempts, LockoutDuration: cfg.LoginLockoutDuration,
+		PasswordMinLength: cfg.PasswordMinLength, ForceChangeRoles: roles,
+	}
 }

@@ -203,6 +203,12 @@ func (f *fakeStore) UpdateUser(_ context.Context, _ pgx.Tx, id uuid.UUID, update
 	if update.Active != nil {
 		u.Active = *update.Active
 	}
+	if update.MustChangePassword != nil {
+		u.MustChangePassword = *update.MustChangePassword
+	}
+	if update.ClearLockout {
+		u.FailedLogins, u.LockedUntil = 0, nil
+	}
 	f.usersByID[id] = u
 	f.usersByLogin[u.Login] = u
 	return u, nil
@@ -387,3 +393,63 @@ func (f *fakeStore) auditEntriesByAction(action string) []audit.Entry {
 }
 
 var _ Store = (*fakeStore)(nil)
+
+func (f *fakeStore) DeleteOtherUserSessions(_ context.Context, _ pgx.Tx, userID uuid.UUID, keep []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, session := range f.sessions {
+		if session.UserID == userID && id != string(keep) {
+			delete(f.sessions, id)
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) ListUserSessions(_ context.Context, _ pgx.Tx, userID uuid.UUID) ([]SessionInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := []SessionInfo{}
+	for _, session := range f.sessions {
+		if session.UserID == userID && session.ExpiresAt.After(time.Now()) {
+			info := SessionInfo{CreatedAt: session.CreatedAt, LastSeenAt: session.LastSeenAt, ExpiresAt: session.ExpiresAt}
+			if session.WorkstationID != nil {
+				if w, ok := f.workstationsByID[*session.WorkstationID]; ok {
+					n := w.Number
+					info.WorkstationNumber, info.WorkstationLabel = &n, w.Label
+				}
+			}
+			out = append(out, info)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) RecordFailedLogin(_ context.Context, _ pgx.Tx, userID uuid.UUID, threshold int, lockFor time.Duration) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.usersByID[userID]
+	if !ok {
+		return false, nil
+	}
+	locked := false
+	if u.FailedLogins+1 >= threshold {
+		until := time.Now().Add(lockFor)
+		u.FailedLogins, u.LockedUntil, locked = 0, &until, true
+	} else {
+		u.FailedLogins++
+	}
+	f.usersByID[userID] = u
+	f.usersByLogin[u.Login] = u
+	return locked, nil
+}
+
+func (f *fakeStore) ClearFailedLogins(_ context.Context, _ pgx.Tx, userID uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if u, ok := f.usersByID[userID]; ok {
+		u.FailedLogins = 0
+		f.usersByID[userID] = u
+		f.usersByLogin[u.Login] = u
+	}
+	return nil
+}

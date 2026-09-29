@@ -74,6 +74,12 @@ type User struct {
 	Level        Level
 	Active       bool
 	CreatedAt    time.Time
+	// Login policy state (ADR-038). FailedLogins counts wrong passwords in
+	// a row; LockedUntil, when in the future, refuses every login;
+	// MustChangePassword confines the session to changing the password.
+	FailedLogins       int
+	LockedUntil        *time.Time
+	MustChangePassword bool
 }
 
 // Workstation is one workstations row. IPAddress is the optional
@@ -114,6 +120,12 @@ type Principal struct {
 	Role             Role
 	WorkstationID    *uuid.UUID
 	SessionExpiresAt time.Time
+	// SessionID is the session's stored id (sha256 of the cookie token),
+	// so "change password" can keep this session and end the others.
+	SessionID []byte
+	// MustChangePassword confines the session to the password-change
+	// endpoints (ADR-038).
+	MustChangePassword bool
 }
 
 // Me is the read model behind openapi.yaml's Me schema — returned by both
@@ -163,6 +175,8 @@ type Patch struct {
 	Role        *Role
 	ServiceCode *string
 	Active      *bool
+	// Unlock clears a login lock and the failed-login run (ADR-038).
+	Unlock bool
 }
 
 // UserUpdate is the storage-layer partial update for one user — lower-
@@ -185,6 +199,21 @@ type UserUpdate struct {
 	ServiceCodeSet  bool
 	Level           *Level
 	Active          *bool
+	// MustChangePassword sets the flag (ADR-038); ClearLockout zeroes the
+	// failed-login run and the lock.
+	MustChangePassword *bool
+	ClearLockout       bool
+}
+
+// SessionInfo is one live session as an administrator sees it: when it
+// started, was last used and expires, and at which workstation. Never the
+// session id or token.
+type SessionInfo struct {
+	CreatedAt         time.Time
+	LastSeenAt        time.Time
+	ExpiresAt         time.Time
+	WorkstationNumber *int
+	WorkstationLabel  string
 }
 
 var (
@@ -201,6 +230,10 @@ var (
 	// ErrRateLimited is LoginLimiter's "no more attempts this window" —
 	// RFC-001 §9's "5 попыток/мин".
 	ErrRateLimited = errors.New("too many login attempts")
+	// ErrAccountLocked is a login refused because a run of wrong passwords
+	// locked the account (ADR-038); the lock ends by itself or when an
+	// administrator unlocks it.
+	ErrAccountLocked = errors.New("account is locked")
 	// ErrSessionInvalid covers a missing cookie, a malformed token, and a
 	// session the store could not find (which includes an expired one —
 	// SessionByID does not distinguish "expired" from "never existed", see

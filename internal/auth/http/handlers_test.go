@@ -42,6 +42,9 @@ type fakeService struct {
 	meResult auth.Me
 	meErr    error
 
+	changePasswordErr   error
+	changePasswordCalls []string
+
 	createUserResult auth.User
 	createUserErr    error
 	createUserCalls  []auth.NewUser
@@ -104,6 +107,21 @@ func (f *fakeService) Authenticate(_ context.Context, token string) (auth.Princi
 
 func (f *fakeService) Me(_ context.Context, _ auth.Principal) (auth.Me, error) {
 	return f.meResult, f.meErr
+}
+
+func (f *fakeService) ChangePassword(_ context.Context, _ auth.Principal, current, next, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.changePasswordCalls = append(f.changePasswordCalls, current+"|"+next)
+	return f.changePasswordErr
+}
+
+func (f *fakeService) ListUserSessions(_ context.Context, _ uuid.UUID) ([]auth.SessionInfo, error) {
+	return nil, nil
+}
+
+func (f *fakeService) RevokeUserSessions(_ context.Context, _ uuid.UUID, _ auth.Principal, _ string) (int, error) {
+	return 0, nil
 }
 
 func (f *fakeService) CreateUser(_ context.Context, n auth.NewUser, _ auth.Principal, _ string) (auth.User, error) {
@@ -270,6 +288,7 @@ func TestLoginMapsDomainErrorsToClosedCodes(t *testing.T) {
 		{"invalid credentials", auth.ErrInvalidCredentials, http.StatusUnauthorized, "unauthorized"},
 		{"inactive user collapses to the same 401", auth.ErrUserInactive, http.StatusUnauthorized, "unauthorized"},
 		{"rate limited", auth.ErrRateLimited, http.StatusTooManyRequests, "rate_limited"},
+		{"account locked", auth.ErrAccountLocked, http.StatusLocked, "account_locked"},
 		{"workstation required", auth.ErrWorkstationRequired, http.StatusUnprocessableEntity, "validation_failed"},
 		{"workstation unknown", auth.ErrWorkstationUnknown, http.StatusUnprocessableEntity, "validation_failed"},
 		{"workstation inactive", auth.ErrWorkstationInactive, http.StatusUnprocessableEntity, "validation_failed"},
@@ -517,4 +536,45 @@ func assertErrorEnvelope(t *testing.T, response *httptest.ResponseRecorder, want
 	if body.Error.Code != wantCode {
 		t.Fatalf("error.code = %q, want %q", body.Error.Code, wantCode)
 	}
+}
+
+// TestMustChangePasswordSessionReachesOnlyPasswordEndpoints (ADR-038): a
+// session whose password must be changed can read /me and change the
+// password, and gets 403 password_change_required anywhere else behind the
+// session middleware.
+func TestMustChangePasswordSessionReachesOnlyPasswordEndpoints(t *testing.T) {
+	me := sampleMe()
+	svc := &fakeService{
+		validToken: "temp-session",
+		principal:  auth.Principal{UserID: me.User.ID, Role: auth.RoleAdmin, MustChangePassword: true},
+		meResult:   me,
+	}
+	_, mux := newTestHandlers(svc, true)
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.AddCookie(&http.Cookie{Name: CookieName, Value: "temp-session"})
+		response := httptest.NewRecorder()
+		wrapped(mux).ServeHTTP(response, r)
+		return response
+	}
+
+	if response := call(http.MethodGet, "/api/v1/me", ""); response.Code != http.StatusOK {
+		t.Fatalf("GET /me = %d, want 200", response.Code)
+	}
+	adminMux := newTestAdminMux(svc)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
+	r.AddCookie(&http.Cookie{Name: CookieName, Value: "temp-session"})
+	blocked := httptest.NewRecorder()
+	wrapped(adminMux).ServeHTTP(blocked, r)
+	assertErrorEnvelope(t, blocked, http.StatusForbidden, "password_change_required")
+	if response := call(http.MethodPost, "/api/v1/me/password", `{"current_password":"old-password","new_password":"new-password-1"}`); response.Code != http.StatusNoContent {
+		t.Fatalf("POST /me/password = %d, want 204", response.Code)
+	}
+	if len(svc.changePasswordCalls) != 1 || svc.changePasswordCalls[0] != "old-password|new-password-1" {
+		t.Fatalf("ChangePassword calls = %v", svc.changePasswordCalls)
+	}
+
+	svc.changePasswordErr = &auth.ValidationError{Field: "current_password", Reason: "incorrect"}
+	response := call(http.MethodPost, "/api/v1/me/password", `{"current_password":"x","new_password":"new-password-1"}`)
+	assertErrorEnvelope(t, response, http.StatusUnprocessableEntity, "validation_failed")
 }

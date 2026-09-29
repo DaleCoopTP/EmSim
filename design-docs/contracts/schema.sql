@@ -16,6 +16,9 @@ CREATE TABLE users (
     level         text NOT NULL DEFAULT 'easy' CHECK (level IN ('easy', 'medium', 'hard')),
     active        boolean NOT NULL DEFAULT true,
     created_at    timestamptz NOT NULL DEFAULT now(),
+    failed_logins integer NOT NULL DEFAULT 0 CHECK (failed_logins >= 0),   -- ADR-038: подряд неверные пароли
+    locked_until  timestamptz,                         -- ADR-038: вход заблокирован до этого момента
+    must_change_password boolean NOT NULL DEFAULT false, -- ADR-038: сменить пароль при следующем входе
     CONSTRAINT users_login_shape CHECK (login ~ '^[a-z0-9._-]{3,64}$')
 );
 

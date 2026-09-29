@@ -70,11 +70,11 @@ func (s *Store) WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 
 // ------------------------------------------------------------ users
 
-const userColumns = `id, login, password_hash, full_name, role, service_code, level, active, created_at`
+const userColumns = `id, login, password_hash, full_name, role, service_code, level, active, created_at, failed_logins, locked_until, must_change_password`
 
 func scanUser(row pgx.Row) (auth.User, error) {
 	var u auth.User
-	err := row.Scan(&u.ID, &u.Login, &u.PasswordHash, &u.FullName, &u.Role, &u.ServiceCode, &u.Level, &u.Active, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Login, &u.PasswordHash, &u.FullName, &u.Role, &u.ServiceCode, &u.Level, &u.Active, &u.CreatedAt, &u.FailedLogins, &u.LockedUntil, &u.MustChangePassword)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return auth.User{}, auth.ErrNotFound
 	}
@@ -141,10 +141,10 @@ func (s *Store) ListUsers(ctx context.Context, tx pgx.Tx, page, pageSize int) ([
 // never has to inspect a *pgconn.PgError itself.
 func (s *Store) InsertUser(ctx context.Context, tx pgx.Tx, u auth.User) (auth.User, error) {
 	err := tx.QueryRow(ctx, `
-		INSERT INTO users (id, login, password_hash, full_name, role, service_code, level, active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO users (id, login, password_hash, full_name, role, service_code, level, active, must_change_password)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING created_at
-	`, u.ID, u.Login, u.PasswordHash, u.FullName, string(u.Role), u.ServiceCode, string(u.Level), u.Active,
+	`, u.ID, u.Login, u.PasswordHash, u.FullName, string(u.Role), u.ServiceCode, string(u.Level), u.Active, u.MustChangePassword,
 	).Scan(&u.CreatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -187,6 +187,12 @@ func (s *Store) UpdateUser(ctx context.Context, tx pgx.Tx, id uuid.UUID, update 
 	}
 	if update.Active != nil {
 		add("active", *update.Active)
+	}
+	if update.MustChangePassword != nil {
+		add("must_change_password", *update.MustChangePassword)
+	}
+	if update.ClearLockout {
+		sets = append(sets, "failed_logins = 0", "locked_until = NULL")
 	}
 
 	if len(sets) == 0 {
@@ -340,7 +346,7 @@ func (s *Store) SessionByID(ctx context.Context, tx pgx.Tx, id []byte) (auth.Ses
 	row := tx.QueryRow(ctx, `
 		SELECT
 			s.id, s.user_id, s.workstation_id, s.created_at, s.last_seen_at, s.expires_at,
-			u.id, u.login, u.password_hash, u.full_name, u.role, u.service_code, u.level, u.active, u.created_at,
+			u.id, u.login, u.password_hash, u.full_name, u.role, u.service_code, u.level, u.active, u.created_at, u.failed_logins, u.locked_until, u.must_change_password,
 			w.id, w.number, w.label, w.ip_address::text, w.active
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
@@ -355,7 +361,7 @@ func (s *Store) SessionByID(ctx context.Context, tx pgx.Tx, id []byte) (auth.Ses
 	var wActive *bool
 	err := row.Scan(
 		&lookup.Session.ID, &lookup.Session.UserID, &workstationID, &lookup.Session.CreatedAt, &lookup.Session.LastSeenAt, &lookup.Session.ExpiresAt,
-		&lookup.User.ID, &lookup.User.Login, &lookup.User.PasswordHash, &lookup.User.FullName, &lookup.User.Role, &lookup.User.ServiceCode, &lookup.User.Level, &lookup.User.Active, &lookup.User.CreatedAt,
+		&lookup.User.ID, &lookup.User.Login, &lookup.User.PasswordHash, &lookup.User.FullName, &lookup.User.Role, &lookup.User.ServiceCode, &lookup.User.Level, &lookup.User.Active, &lookup.User.CreatedAt, &lookup.User.FailedLogins, &lookup.User.LockedUntil, &lookup.User.MustChangePassword,
 		&wID, &wNumber, &wLabel, &wIPAddress, &wActive,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -402,6 +408,74 @@ func (s *Store) DeleteSession(ctx context.Context, tx pgx.Tx, id []byte) error {
 // stops working immediately rather than at its natural expiry.
 func (s *Store) DeleteUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID); err != nil {
+		return auth.ErrStorage
+	}
+	return nil
+}
+
+// DeleteOtherUserSessions removes every session of userID except keep —
+// the one a password change was made from (ADR-038).
+func (s *Store) DeleteOtherUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID, keep []byte) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND id <> $2`, userID, keep); err != nil {
+		return auth.ErrStorage
+	}
+	return nil
+}
+
+// ListUserSessions returns userID's live sessions, newest first, with the
+// workstation they were opened at. Never the session id.
+func (s *Store) ListUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]auth.SessionInfo, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT s.created_at, s.last_seen_at, s.expires_at, w.number, COALESCE(w.label, '')
+		FROM sessions s LEFT JOIN workstations w ON w.id = s.workstation_id
+		WHERE s.user_id = $1 AND s.expires_at > clock_timestamp()
+		ORDER BY s.created_at DESC`, userID)
+	if err != nil {
+		return nil, auth.ErrStorage
+	}
+	defer rows.Close()
+	out := []auth.SessionInfo{}
+	for rows.Next() {
+		var info auth.SessionInfo
+		if err := rows.Scan(&info.CreatedAt, &info.LastSeenAt, &info.ExpiresAt, &info.WorkstationNumber, &info.WorkstationLabel); err != nil {
+			return nil, auth.ErrStorage
+		}
+		out = append(out, info)
+	}
+	if rows.Err() != nil {
+		return nil, auth.ErrStorage
+	}
+	return out, nil
+}
+
+// ------------------------------------------------------------ login policy
+
+// RecordFailedLogin counts one more wrong password for userID and, when
+// the run reaches threshold, starts a lock of lockFor and resets the run.
+// It is one statement, so concurrent attempts cannot skip the threshold;
+// the lock's end comes from PostgreSQL's clock. It reports whether this
+// attempt locked the account.
+func (s *Store) RecordFailedLogin(ctx context.Context, tx pgx.Tx, userID uuid.UUID, threshold int, lockFor time.Duration) (bool, error) {
+	var locked bool
+	err := tx.QueryRow(ctx, `
+		UPDATE users SET
+			failed_logins = CASE WHEN failed_logins + 1 >= $2 THEN 0 ELSE failed_logins + 1 END,
+			locked_until  = CASE WHEN failed_logins + 1 >= $2 THEN clock_timestamp() + make_interval(secs => $3) ELSE locked_until END
+		WHERE id = $1
+		RETURNING failed_logins = 0 AND locked_until > clock_timestamp()`,
+		userID, threshold, lockFor.Seconds()).Scan(&locked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, auth.ErrStorage
+	}
+	return locked, nil
+}
+
+// ClearFailedLogins ends a run of wrong passwords after a good login.
+func (s *Store) ClearFailedLogins(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `UPDATE users SET failed_logins = 0 WHERE id = $1 AND failed_logins <> 0`, userID); err != nil {
 		return auth.ErrStorage
 	}
 	return nil

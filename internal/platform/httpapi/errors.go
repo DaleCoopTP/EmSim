@@ -48,6 +48,12 @@ const (
 	// CodeMaintenanceMode is ADR-038's: a lesson or preview start refused
 	// while the administrator has maintenance mode on.
 	CodeMaintenanceMode ErrorCode = "maintenance_mode"
+	// CodeAccountLocked and CodePasswordChangeRequired are ADR-038's login
+	// policy: a run of wrong passwords locked the account (423), and a
+	// session whose password must be changed may only reach the
+	// password-change endpoints (403).
+	CodeAccountLocked          ErrorCode = "account_locked"
+	CodePasswordChangeRequired ErrorCode = "password_change_required"
 )
 
 // statusFor is the fixed HTTP status each code carries. Five of them —
@@ -85,6 +91,8 @@ var statusFor = map[ErrorCode]int{
 	CodeDictationBusy:           http.StatusTooManyRequests,
 	CodeDictationUnavailable:    http.StatusServiceUnavailable,
 	CodeMaintenanceMode:         http.StatusConflict,
+	CodeAccountLocked:           http.StatusLocked,
+	CodePasswordChangeRequired:  http.StatusForbidden,
 }
 
 // StatusFor returns the HTTP status WriteError sends for code, or 500 for
