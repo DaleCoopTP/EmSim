@@ -159,11 +159,11 @@ func defaultTiming() Timing {
 	return Timing{OpenS: 30, PrimaryS: 30, CompleteS: 180}
 }
 
-// DDS timing norm bounds (ADR-035): open_s 10–300, primary_s from open_s to
-// 600, complete_s 60–3600. spawn_every_s stays hard-only and positive.
+// DDS timing norm bounds (ADR-035, amended 2026-09-29): open_s 10–300,
+// primary_s 10–600 counted from the card's opening, complete_s 60–3600. spawn_every_s stays hard-only and positive.
 const (
 	timingOpenMinS, timingOpenMaxS         = 10, 300
-	timingPrimaryMaxS                      = 600
+	timingPrimaryMinS, timingPrimaryMaxS   = 10, 600
 	timingCompleteMinS, timingCompleteMaxS = 60, 3600
 )
 
@@ -173,8 +173,8 @@ func validateTiming(t Timing, level auth.Level) error {
 	if t.OpenS < timingOpenMinS || t.OpenS > timingOpenMaxS {
 		return validationErr("timing.open_s", "must be between 10 and 300")
 	}
-	if t.PrimaryS < t.OpenS || t.PrimaryS > timingPrimaryMaxS {
-		return validationErr("timing.primary_s", "must be between open_s and 600")
+	if t.PrimaryS < timingPrimaryMinS || t.PrimaryS > timingPrimaryMaxS {
+		return validationErr("timing.primary_s", "must be between 10 and 600")
 	}
 	if t.CompleteS < timingCompleteMinS || t.CompleteS > timingCompleteMaxS {
 		return validationErr("timing.complete_s", "must be between 60 and 3600")
@@ -1321,8 +1321,10 @@ func (s *Service) offerQueueVersion(ctx context.Context, tx pgx.Tx, lesson Lesso
 		Card: card, Workflow: svc.Workflow,
 		PilotGoal: version.Body.Reference.PilotGoal, Mode: lesson.Mode,
 		TimingEffective: lesson.Timing,
-		Deadlines:       Deadlines{OpenAt: openAt, PrimaryAt: now.Add(time.Duration(lesson.Timing.PrimaryS) * time.Second)},
-		OfferedAt:       now,
+		// Until the card is opened the primary deadline is provisional: the
+		// latest in-norm opening plus primary_s; `open` re-anchors it.
+		Deadlines: Deadlines{OpenAt: openAt, PrimaryAt: openAt.Add(time.Duration(lesson.Timing.PrimaryS) * time.Second)},
+		OfferedAt: now,
 	}
 	if _, err := s.store.InsertItem(ctx, tx, item); err != nil {
 		return uuid.Nil, err
@@ -1682,7 +1684,11 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 		if decision.CompleteAt != nil {
 			completeAt = decision.CompleteAt
 		}
-		receipt.Deadlines = &Deadlines{OpenAt: item.Deadlines.OpenAt, PrimaryAt: item.Deadlines.PrimaryAt, CompleteAt: completeAt}
+		primaryAt := item.Deadlines.PrimaryAt
+		if decision.OpenedAt != nil && item.OpenedAt == nil {
+			primaryAt = decision.OpenedAt.Add(time.Duration(item.TimingEffective.PrimaryS) * time.Second)
+		}
+		receipt.Deadlines = &Deadlines{OpenAt: item.Deadlines.OpenAt, PrimaryAt: primaryAt, CompleteAt: completeAt}
 	} else {
 		receipt.Outcome = OutcomeRejected
 		rejection := decision.Rejection
@@ -1766,6 +1772,12 @@ func (s *Service) recordDecision(ctx context.Context, tx pgx.Tx, lesson Lesson, 
 		LogSeq: newLogSeq, Seq: newSeq, Reaction: decision.Reaction, State: decision.State, Card: decision.Card,
 		IntakeCard: decision.IntakeCard, IntakeState: decision.IntakeState,
 		OpenedAt: decision.OpenedAt, PrimaryAt: decision.PrimaryAt, CompleteAt: decision.CompleteAt,
+	}
+	// The primary-decision norm runs from the card's first opening, not
+	// from its offer (user decision 2026-09-29, amends ADR-035).
+	if decision.Accepted && decision.OpenedAt != nil && item.OpenedAt == nil {
+		primaryDeadline := decision.OpenedAt.Add(time.Duration(item.TimingEffective.PrimaryS) * time.Second)
+		patch.PrimaryDeadline = &primaryDeadline
 	}
 	if decision.Accepted && decision.Close != nil {
 		closedAt := now

@@ -145,6 +145,9 @@ type receiptResponse struct {
 	Replayed  bool    `json:"replayed"`
 	ErrorCode *string `json:"error_code"`
 	CallID    string  `json:"call_id"`
+	Deadlines *struct {
+		PrimaryAt time.Time `json:"primary_at"`
+	} `json:"deadlines"`
 }
 
 // provisionWorkstations replaces the active workstation inventory in one

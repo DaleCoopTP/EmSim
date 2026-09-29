@@ -1471,7 +1471,7 @@ components:
           description: Только ДДС. У 112-1 нет временных нормативов; сервер возвращает нулевую политику, но не использует её для оценки.
           properties:
             open_s: { type: integer, default: 30, minimum: 10, maximum: 300 }
-            primary_s: { type: integer, default: 30, minimum: 10, maximum: 600, description: 'Не меньше open_s (ADR-035); дедлайн первичного решения — offered_at + primary_s.' }
+            primary_s: { type: integer, default: 30, minimum: 10, maximum: 600, description: 'ADR-035 (поправка 2026-09-29): 10–600, отсчёт с первого открытия карточки — дедлайн первичного решения opened_at + primary_s (до открытия — offered_at + open_s + primary_s).' }
             complete_s: { type: integer, default: 180, minimum: 60, maximum: 3600 }
             spawn_every_s: { type: integer, nullable: true, description: hard — интервал новых карточек }
     Lesson:

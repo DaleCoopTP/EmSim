@@ -174,8 +174,8 @@ func TestEvidenceValidatesAgainstSchema(t *testing.T) {
 	if body.Derived.OpenSeconds == nil || *body.Derived.OpenSeconds != 5 {
 		t.Fatalf("open_seconds = %v, want 5", body.Derived.OpenSeconds)
 	}
-	if body.Derived.PrimarySeconds == nil || *body.Derived.PrimarySeconds != 10 {
-		t.Fatalf("primary_seconds = %v, want 10", body.Derived.PrimarySeconds)
+	if body.Derived.PrimarySeconds == nil || *body.Derived.PrimarySeconds != 5 {
+		t.Fatalf("primary_seconds = %v, want 5 (primary_at - opened_at)", body.Derived.PrimarySeconds)
 	}
 	if body.Derived.WorkSeconds == nil || *body.Derived.WorkSeconds != 15 {
 		t.Fatalf("work_seconds = %v, want 15 (closed_at - primary_at)", body.Derived.WorkSeconds)

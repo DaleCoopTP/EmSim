@@ -663,7 +663,8 @@ func (s *Store) ItemsByRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID) ([]t
 // rejected Decision these equal the item's own current values
 // (training.Decision's own documented contract), so writing them back
 // is a harmless no-op. opened_at/primary_at are COALESCEd (each
-// transitions from NULL exactly once); deadlines.complete_at gets the
+// transitions from NULL exactly once); deadlines.primary_at is replaced
+// only together with the first opened_at; deadlines.complete_at gets the
 // same treatment at the JSON-key level, since it lives inside the
 // deadlines jsonb column rather than its own column; closed_at/
 // close_reason are COALESCEd too, though in practice each item is only
@@ -703,12 +704,16 @@ func (s *Store) ApplyItemDecision(ctx context.Context, tx pgx.Tx, itemID uuid.UU
 				WHEN $9::timestamptz IS NOT NULL AND (deadlines ->> 'complete_at') IS NULL
 				THEN jsonb_set(deadlines, '{complete_at}', to_jsonb($9::timestamptz))
 				ELSE deadlines
+			END || CASE
+				WHEN $13::timestamptz IS NOT NULL AND opened_at IS NULL
+				THEN jsonb_build_object('primary_at', to_jsonb($13::timestamptz))
+				ELSE '{}'::jsonb
 			END,
 			closed_at = COALESCE(closed_at, $10),
 			close_reason = COALESCE(close_reason, $11)
 		WHERE id = $1
 	`, itemID, patch.LogSeq, patch.Seq, patch.Reaction, patch.State, cardJSON,
-		patch.OpenedAt, patch.PrimaryAt, patch.CompleteAt, patch.ClosedAt, closeReason, intakeJSON)
+		patch.OpenedAt, patch.PrimaryAt, patch.CompleteAt, patch.ClosedAt, closeReason, intakeJSON, patch.PrimaryDeadline)
 	if err != nil {
 		return mapErr(err)
 	}

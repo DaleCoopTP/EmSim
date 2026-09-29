@@ -80,9 +80,9 @@ func TestDDSLessonSettingsThroughAPIAndWorker(t *testing.T) {
 
 	// --- time norm ---
 	if response := jsonRequest(t, f.ctx, instructor, f.baseURL, http.MethodPatch, lessonPath, map[string]any{
-		"timing": map[string]any{"open_s": 30, "primary_s": 20, "complete_s": 240},
+		"timing": map[string]any{"open_s": 30, "primary_s": 9, "complete_s": 240},
 	}, nil); response.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("primary_s below open_s = %d, want 422", response.StatusCode)
+		t.Fatalf("primary_s below 10 = %d, want 422", response.StatusCode)
 	}
 	if response := jsonRequest(t, f.ctx, instructor, f.baseURL, http.MethodPatch, lessonPath, map[string]any{
 		"timing": map[string]any{"open_s": 30, "primary_s": 45, "complete_s": 240},
@@ -213,8 +213,9 @@ func TestDDSLessonSettingsThroughAPIAndWorker(t *testing.T) {
 	if got := open.Sub(offered); got != 30*time.Second {
 		t.Fatalf("open deadline = offered+%v, want 30s", got)
 	}
-	if got := primary.Sub(offered); got != 45*time.Second {
-		t.Fatalf("primary deadline = offered+%v, want the lesson's 45s (not open_s)", got)
+	// Before opening the primary deadline is provisional: open_at + primary_s.
+	if got := primary.Sub(offered); got != 75*time.Second {
+		t.Fatalf("provisional primary deadline = offered+%v, want 30s+45s", got)
 	}
 
 	// --- play the district cycle to its end ---
@@ -230,7 +231,18 @@ func TestDDSLessonSettingsThroughAPIAndWorker(t *testing.T) {
 		}
 		return receipt
 	}
-	apply("open", map[string]any{})
+	opened := apply("open", map[string]any{})
+	// Opening re-anchors the primary norm at the opening itself (ADR-035 amendment).
+	var openedAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT opened_at, (deadlines->>'primary_at')::timestamptz FROM items WHERE id=$1`, itemID).Scan(&openedAt, &primary); err != nil {
+		t.Fatal(err)
+	}
+	if got := primary.Sub(openedAt); got != 45*time.Second {
+		t.Fatalf("primary deadline = opened+%v, want 45s", got)
+	}
+	if opened.Deadlines == nil || !opened.Deadlines.PrimaryAt.Equal(primary) {
+		t.Fatalf("open receipt deadlines = %+v, want primary_at %v", opened.Deadlines, primary)
+	}
 	apply("set_status", map[string]any{"status": "accepted", "comment": "принята, направляем аварийную бригаду"})
 	call := apply("call_start", map[string]any{"contact": "crew_leader"})
 	apply("call_end", map[string]any{"call_id": call.CallID, "accepted_by": "Петров", "summary": "Россошанская 7 к.1, дерево на проезде", "recording": nil})

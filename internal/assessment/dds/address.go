@@ -55,11 +55,11 @@ func addressRule(ev training.EvidenceBody, c assessment.RubricCriterion) assessm
 	case !mentionsAddress:
 		return na(c)
 	case conflict:
-		return notMet(c, "written text gives a different house number than the card")
+		return notMet(c, "в тексте указан другой номер дома, чем в карточке")
 	case ambiguous:
-		return unavailable(c, "address mention could not be reliably matched to the card")
+		return unavailable(c, "не удалось надёжно сопоставить адрес в тексте с карточкой")
 	default:
-		return met(c, "written address mentions match the card")
+		return met(c, "адрес в тексте совпадает с карточкой")
 	}
 }
 

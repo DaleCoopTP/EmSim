@@ -130,6 +130,9 @@ type ItemPatch struct {
 	OpenedAt    *time.Time
 	PrimaryAt   *time.Time
 	CompleteAt  *time.Time
-	ClosedAt    *time.Time
-	CloseReason *CloseReason
+	// PrimaryDeadline is deadlines.primary_at re-anchored at the card's
+	// first opening (opened_at + primary_s); nil leaves it unchanged.
+	PrimaryDeadline *time.Time
+	ClosedAt        *time.Time
+	CloseReason     *CloseReason
 }

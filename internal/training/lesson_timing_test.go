@@ -20,7 +20,9 @@ func TestValidateTimingBounds(t *testing.T) {
 		{"upper bounds", Timing{OpenS: 300, PrimaryS: 600, CompleteS: 3600}, auth.LevelEasy, ""},
 		{"open too short", Timing{OpenS: 9, PrimaryS: 30, CompleteS: 180}, auth.LevelEasy, "timing.open_s"},
 		{"open too long", Timing{OpenS: 301, PrimaryS: 400, CompleteS: 180}, auth.LevelEasy, "timing.open_s"},
-		{"primary before open", Timing{OpenS: 40, PrimaryS: 30, CompleteS: 180}, auth.LevelEasy, "timing.primary_s"},
+		// primary_s runs from the card's opening, so it may be shorter than open_s.
+		{"primary shorter than open", Timing{OpenS: 40, PrimaryS: 15, CompleteS: 180}, auth.LevelEasy, ""},
+		{"primary too short", Timing{OpenS: 30, PrimaryS: 9, CompleteS: 180}, auth.LevelEasy, "timing.primary_s"},
 		{"primary too long", Timing{OpenS: 30, PrimaryS: 601, CompleteS: 180}, auth.LevelEasy, "timing.primary_s"},
 		{"complete too short", Timing{OpenS: 30, PrimaryS: 30, CompleteS: 59}, auth.LevelEasy, "timing.complete_s"},
 		{"complete too long", Timing{OpenS: 30, PrimaryS: 30, CompleteS: 3601}, auth.LevelEasy, "timing.complete_s"},

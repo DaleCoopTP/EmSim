@@ -227,7 +227,12 @@ func buildEvidenceDerived(item training.Item, actions []training.Action, cutoffL
 		derived.OpenSeconds = &seconds
 	}
 	if item.PrimaryAt != nil {
-		primarySeconds := item.PrimaryAt.Sub(item.OfferedAt).Seconds()
+		// Measured from the card's opening (user decision 2026-09-29).
+		from := item.OfferedAt
+		if item.OpenedAt != nil {
+			from = *item.OpenedAt
+		}
+		primarySeconds := item.PrimaryAt.Sub(from).Seconds()
 		derived.PrimarySeconds = &primarySeconds
 		workSeconds := closedAt.Sub(*item.PrimaryAt).Seconds()
 		derived.WorkSeconds = &workSeconds

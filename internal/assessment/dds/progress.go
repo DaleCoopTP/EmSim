@@ -184,11 +184,11 @@ func tProgressRule(ev training.EvidenceBody, body content.Body, c assessment.Rub
 	}
 	switch {
 	case matched == total:
-		return met(c, fmt.Sprintf("%d/%d crew reports got a timely status", matched, total))
+		return met(c, fmt.Sprintf("на %d из %d докладов бригады статус поставлен вовремя", matched, total))
 	case matched > 0:
-		return partial(c, float64(matched)/float64(total), fmt.Sprintf("%d/%d crew reports got a timely status", matched, total))
+		return partial(c, float64(matched)/float64(total), fmt.Sprintf("на %d из %d докладов бригады статус поставлен вовремя", matched, total))
 	default:
-		return notMet(c, "no crew report got a timely status")
+		return notMet(c, "ни на один доклад бригады статус не поставлен вовремя")
 	}
 }
 
@@ -256,11 +256,11 @@ func sequenceReportsRule(ev training.EvidenceBody, body content.Body, c assessme
 	}
 	switch {
 	case matched == len(ref.ExpectedChain):
-		return met(c, "expected chain observed in order, none earlier than its own crew report")
+		return met(c, "ожидаемая цепочка статусов соблюдена, ни один статус не поставлен раньше доклада")
 	case matched > 0:
-		return partial(c, float64(matched)/float64(len(ref.ExpectedChain)), fmt.Sprintf("%d/%d expected transitions observed in order", matched, len(ref.ExpectedChain)))
+		return partial(c, float64(matched)/float64(len(ref.ExpectedChain)), fmt.Sprintf("по порядку выполнено %d из %d ожидаемых переходов", matched, len(ref.ExpectedChain)))
 	default:
-		return notMet(c, "none of the expected transitions were observed in the right order")
+		return notMet(c, "ни один ожидаемый переход статуса не выполнен в нужном порядке")
 	}
 }
 
@@ -317,10 +317,10 @@ func callsRule(ev training.EvidenceBody, body content.Body, c assessment.RubricC
 	}
 	switch {
 	case matched == total:
-		return met(c, fmt.Sprintf("%d/%d required calls completed", matched, total))
+		return met(c, fmt.Sprintf("выполнено %d из %d обязательных звонков", matched, total))
 	case matched > 0:
-		return partial(c, float64(matched)/float64(total), fmt.Sprintf("%d/%d required calls completed", matched, total))
+		return partial(c, float64(matched)/float64(total), fmt.Sprintf("выполнено %d из %d обязательных звонков", matched, total))
 	default:
-		return notMet(c, "no required call was completed")
+		return notMet(c, "ни один обязательный звонок не выполнен")
 	}
 }

@@ -94,7 +94,7 @@ func evaluateCriterion(ev training.EvidenceBody, body content.Body, c assessment
 	case "c_calls":
 		return callsRule(ev, body, c)
 	default:
-		return unavailable(c, fmt.Sprintf("unknown deterministic rule %q", c.Rule))
+		return unavailable(c, fmt.Sprintf("неизвестное правило %q", c.Rule))
 	}
 }
 
@@ -148,16 +148,16 @@ func timingRule(ev training.EvidenceBody, c assessment.RubricCriterion, elapsed 
 		return na(c)
 	}
 	if !reached {
-		return notMet(c, "the trainee never reached this milestone")
+		return notMet(c, "обучаемый не дошёл до этого этапа")
 	}
 	partialUntil := paramInt(c.Params, "partial_until_s", limit)
 	switch {
 	case *elapsed <= float64(limit):
-		return met(c, fmt.Sprintf("%.0fs within the %ds norm", *elapsed, limit))
+		return met(c, fmt.Sprintf("%.0f с — в пределах норматива %d с", *elapsed, limit))
 	case *elapsed <= float64(partialUntil):
-		return partial(c, 0.5, fmt.Sprintf("%.0fs exceeds the %ds norm but within the %ds partial allowance", *elapsed, limit, partialUntil))
+		return partial(c, 0.5, fmt.Sprintf("%.0f с — больше норматива %d с, но в пределах допуска %d с", *elapsed, limit, partialUntil))
 	default:
-		return notMet(c, fmt.Sprintf("%.0fs exceeds even the %ds partial allowance", *elapsed, partialUntil))
+		return notMet(c, fmt.Sprintf("%.0f с — больше даже допуска %d с", *elapsed, partialUntil))
 	}
 }
 
@@ -172,7 +172,7 @@ func primaryDecisionRule(ev training.EvidenceBody, ref content.Reference, c asse
 		return na(c)
 	}
 	if !reached {
-		return notMet(c, "no primary decision was ever made")
+		return notMet(c, "первичное решение не принято")
 	}
 	actual := *ev.Derived.PrimaryStatus
 	expected := ref.PrimaryDecision.Status
@@ -189,9 +189,9 @@ func primaryDecisionRule(ev training.EvidenceBody, ref content.Reference, c asse
 	}
 	refs := primaryDecisionRefs(ev)
 	if actual == expected {
-		return result(c, assessment.CriterionMet, critical, fmt.Sprintf("decision %q matches the reference", actual), refs)
+		return result(c, assessment.CriterionMet, critical, fmt.Sprintf("решение «%s» совпадает с эталоном", reactionRu(string(actual))), refs)
 	}
-	return result(c, assessment.CriterionNotMet, critical, fmt.Sprintf("decision %q does not match the reference %q", actual, expected), refs)
+	return result(c, assessment.CriterionNotMet, critical, fmt.Sprintf("решение «%s» не совпадает с эталоном «%s»", reactionRu(string(actual)), reactionRu(string(expected))), refs)
 }
 
 func primaryDecisionRefs(ev training.EvidenceBody) []string {
@@ -212,9 +212,9 @@ func commentRequiredRule(ev training.EvidenceBody, ref content.Reference, c asse
 		return na(c)
 	}
 	if len(ev.Comments) > 0 {
-		return met(c, "a comment was recorded")
+		return met(c, "комментарий есть")
 	}
-	return notMet(c, "comment_required but no comment was recorded")
+	return notMet(c, "комментарий обязателен, но не написан")
 }
 
 // fieldCorrectionsRule is D_FIELD_CORRECTIONS (ADR-017/019): every
@@ -242,11 +242,11 @@ func fieldCorrectionsRule(ev training.EvidenceBody, ref content.Reference, c ass
 	}
 	switch {
 	case matched == total:
-		return result(c, assessment.CriterionMet, c.Critical, fmt.Sprintf("%d/%d required corrections applied", matched, total), refs)
+		return result(c, assessment.CriterionMet, c.Critical, fmt.Sprintf("внесено %d из %d обязательных исправлений", matched, total), refs)
 	case matched > 0:
-		return partial(c, float64(matched)/float64(total), fmt.Sprintf("%d/%d required corrections applied", matched, total), refs...)
+		return partial(c, float64(matched)/float64(total), fmt.Sprintf("внесено %d из %d обязательных исправлений", matched, total), refs...)
 	default:
-		return notMet(c, "no required correction was applied")
+		return notMet(c, "обязательные исправления не внесены")
 	}
 }
 
@@ -303,11 +303,11 @@ func sequenceRule(ev training.EvidenceBody, ref content.Reference, c assessment.
 	}
 	switch {
 	case matched == len(ref.ExpectedChain):
-		return met(c, "expected chain observed in order")
+		return met(c, "ожидаемая цепочка статусов соблюдена")
 	case matched > 0:
-		return partial(c, float64(matched)/float64(len(ref.ExpectedChain)), fmt.Sprintf("%d/%d expected transitions observed", matched, len(ref.ExpectedChain)))
+		return partial(c, float64(matched)/float64(len(ref.ExpectedChain)), fmt.Sprintf("выполнено %d из %d ожидаемых переходов", matched, len(ref.ExpectedChain)))
 	default:
-		return notMet(c, "none of the expected transitions were observed")
+		return notMet(c, "ни один ожидаемый переход не выполнен")
 	}
 }
 
@@ -321,9 +321,9 @@ func callMadeRule(ev training.EvidenceBody, ref content.Reference, c assessment.
 		return na(c)
 	}
 	if completedRequiredCall(ev, ref) != nil {
-		return met(c, "the required call was completed")
+		return met(c, "обязательный звонок выполнен")
 	}
-	return notMet(c, "no completed call to the required contact")
+	return notMet(c, "нет завершённого звонка нужному абоненту")
 }
 
 // callLogRule is C_CALL_LOG (rubric rule name call_log_required):
@@ -335,13 +335,13 @@ func callLogRule(ev training.EvidenceBody, ref content.Reference, c assessment.R
 	}
 	call := completedRequiredCall(ev, ref)
 	if call == nil {
-		return notMet(c, "no completed call to the required contact")
+		return notMet(c, "нет завершённого звонка нужному абоненту")
 	}
 	if call.AcceptedBy != nil && strings.TrimSpace(*call.AcceptedBy) != "" &&
 		call.Summary != nil && strings.TrimSpace(*call.Summary) != "" {
-		return met(c, "call log ('кто принял'/'суть сообщения') is filled")
+		return met(c, "журнал звонка («кто принял»/«суть сообщения») заполнен")
 	}
-	return notMet(c, "call log is missing 'кто принял' or 'суть сообщения'")
+	return notMet(c, "в журнале звонка не заполнено «кто принял» или «суть сообщения»")
 }
 
 func completedRequiredCall(ev training.EvidenceBody, ref content.Reference) *training.EvidenceCall {
@@ -372,7 +372,7 @@ func llmCriterionResult(c assessment.RubricCriterion, ref content.Reference) ass
 			return na(c)
 		}
 	}
-	return unavailable(c, "LLM judge is not enabled in this slice (JUDGE=off)")
+	return unavailable(c, "ИИ-судья не включён")
 }
 
 func result(c assessment.RubricCriterion, status assessment.CriterionStatus, critical bool, explanation string, refs []string) assessment.CriterionResult {
@@ -388,7 +388,7 @@ func notMet(c assessment.RubricCriterion, explanation string, refs ...string) as
 }
 
 func na(c assessment.RubricCriterion) assessment.CriterionResult {
-	return result(c, assessment.CriterionNotApplicable, c.Critical, "not applicable to this case", nil)
+	return result(c, assessment.CriterionNotApplicable, c.Critical, "не применимо к этому случаю", nil)
 }
 
 func unavailable(c assessment.RubricCriterion, explanation string) assessment.CriterionResult {
@@ -399,4 +399,18 @@ func partial(c assessment.RubricCriterion, score float64, explanation string, re
 	r := result(c, assessment.CriterionPartial, c.Critical, explanation, refs)
 	r.Score = &score
 	return r
+}
+
+// reactionRu is the instructor-facing name of a reaction status, as the
+// DDS памятка calls it, for criterion explanations.
+func reactionRu(status string) string {
+	names := map[string]string{
+		"added": "Добавлена", "received": "Получена", "accepted": "Принята", "not_accepted": "Не принята",
+		"responding": "Начало реагирования", "arrived": "Прибытие", "working": "Проведение работ",
+		"completed": "Работы завершены", "refused": "Отказ от выполнения работ", "completed_without_team": "Завершение работ без бригады",
+	}
+	if name, ok := names[status]; ok {
+		return name
+	}
+	return status
 }
