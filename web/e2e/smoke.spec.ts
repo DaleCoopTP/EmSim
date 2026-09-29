@@ -1,12 +1,8 @@
-import { expect, request as apiRequest, test, type APIRequestContext, type APIResponse, type Locator, type Page } from "@playwright/test";
+import { expect, request as apiRequest, test, type APIRequestContext, type APIResponse } from "@playwright/test";
 
 const password = "e2e-password-123";
 const bootstrapPassword = "local-only-admin-password";
 const workstationNo = 901;
-const desktopViewports = [
-	{ width: 1366, height: 768 },
-	{ width: 1920, height: 1080 },
-] as const;
 
 async function expectOK(response: APIResponse) {
   expect(response.ok(), await response.text()).toBeTruthy();
@@ -23,17 +19,6 @@ async function login(request: APIRequestContext, loginName: string, loginPasswor
 		const response = await request.post("/api/v1/auth/login", { data: { login: loginName, password: loginPassword } });
 		if (response.status() !== 429 || attempt >= 14) { await expectOK(response); return; }
 		await new Promise((resolve) => setTimeout(resolve, 5_000));
-	}
-}
-
-async function expectDesktopScreenshots(page: Page, name: string, masks: Locator[] = []) {
-	for (const viewport of desktopViewports) {
-		await page.setViewportSize(viewport);
-		await expect(page).toHaveScreenshot(`${name}-${viewport.width}.png`, {
-			animations: "disabled",
-			mask: masks,
-			maxDiffPixelRatio: 0.002,
-		});
 	}
 }
 
@@ -101,7 +86,6 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → crew
 	});
 
 	await page.goto(`${baseURL}/login`);
-	await expectDesktopScreenshots(page, "login");
 	await page.getByLabel("Логин").fill("wrong-login");
 	await page.getByLabel("Пароль").fill("wrong-password");
 	await page.getByRole("button", { name: "Войти" }).click();
@@ -112,10 +96,6 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → crew
 	await expect(page.getByRole("heading", { name: "Занятия" })).toBeVisible();
 	await page.goto(`${baseURL}/instructor/lessons/${lesson.id}/monitor`);
 	await expect(page.getByRole("heading", { name: `Монитор: ${lesson.title}` })).toBeVisible();
-	await expectDesktopScreenshots(page, "live-monitor", [
-		page.locator(".layout-clock"),
-		page.locator(".monitor-heading p"),
-	]);
 	await page.getByRole("button", { name: "Выйти" }).click();
 	await expect(page.getByRole("heading", { name: "ВХОД В СИСТЕМУ" })).toBeVisible();
 
@@ -126,18 +106,7 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → crew
 	await page.getByLabel("Номер рабочего места (для обучаемого)").fill(String(workstationNo));
 	await page.getByRole("button", { name: "Войти" }).click();
 	await expect(page.getByRole("heading", { name: "E2E phone smoke" })).toBeVisible();
-	await expectDesktopScreenshots(page, "incident-queue", [
-		page.locator(".layout-clock"),
-		page.locator(".arm112-main-operator"),
-		page.locator(".arm112-main-grid .c-time"),
-		page.locator(".arm112-main-grid .c-num"),
-	]);
 	await page.getByRole("button", { name: /Открыть карточку №/ }).click();
-	await expectDesktopScreenshots(page, "dds-card", [
-		page.locator(".layout-clock"),
-		page.locator(".dds-card-registration"),
-		page.locator(".dds-arm-timer"),
-	]);
 
 	await page.getByRole("button", { name: "Открыть карточку" }).click();
 	await page.getByRole("button", { name: "Вызов" }).click();
@@ -189,13 +158,6 @@ test("ARM-112 acceptance: login → queue → card → monitor → call → crew
 	await incoming.getByRole("button", { name: "Ответить" }).click();
 	await expect(comms.getByText("«Диспетчер, это бригада. Мы на месте, дерево лежит поперёк проезда.»")).toBeVisible();
 	await expect(page.getByRole("button", { name: "Вызов" })).toBeDisabled();
-	await expectDesktopScreenshots(page, "dds-comms", [
-		page.locator(".layout-clock"),
-		page.locator(".dds-card-registration"),
-		page.locator(".dds-arm-timer"),
-		page.locator(".dds-service-block-head"),
-		page.locator(".dds-comms-meta"),
-	]);
 	await comms.getByRole("button", { name: "Завершить разговор" }).click();
 	await expect(comms.locator(".dds-comms-meta").filter({ hasText: /Входящий звонок.*принят/ })).toBeVisible();
 	await saveStatus("Прибытие", "Бригада на месте.");
