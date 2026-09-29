@@ -16,6 +16,7 @@ export const taskStatusLabels: Record<string, string> = {
 export const taskKindLabels: Record<string, string> = {
   "backup.run": "Резервная копия",
   "audit.prune": "Очистка журнала аудита",
+  "integrity.check": "Проверка целостности",
   "lesson.close": "Закрытие занятия",
   "assessment.evaluate": "Автооценка",
   "report.build": "PDF-отчёт",
@@ -35,6 +36,8 @@ export const auditActionLabels: Record<string, string> = {
   "admin.task.retry": "Повтор задачи",
   "admin.audit.export": "Выгружен журнал аудита",
   "backup.run": "Резервная копия",
+  "admin.integrity.start": "Запущена проверка целостности",
+  "integrity.check": "Проверка целостности",
   "audit.prune": "Очистка журнала",
   "content.import.classifier": "Импорт классификатора",
   "content.import.intake_catalog": "Импорт каталога 112",
@@ -124,4 +127,13 @@ export const configParamLabels: Record<string, string> = {
   BACKUP_DIR: "Каталог резервных копий",
   BACKUP_KEEP: "Сколько копий хранить",
   BACKUP_AT: "Время ежедневной копии",
+};
+
+// ADR-038: the integrity check's sections, as the status screen names them.
+export const integritySectionLabels: Record<string, string> = {
+  schema: "Версия схемы БД",
+  blobs: "Файлы (записи звонков, озвучка)",
+  evidence: "Свидетельства закрытых карточек",
+  scenario_versions: "Версии сценариев",
+  backup: "Новейшая резервная копия",
 };

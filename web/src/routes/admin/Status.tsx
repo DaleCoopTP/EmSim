@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
-import { useAdminStatus, useRetryTask, useSetMaintenance, useStartBackup, type AdminStatus, type AdminTaskSummary } from "../../api/admin";
+import { useAdminStatus, useRetryTask, useSetMaintenance, useStartBackup, useStartIntegrity, type AdminStatus, type AdminTaskSummary } from "../../api/admin";
 import { errorMessage } from "../../api/errors";
-import { taskKindLabels as kindLabels, taskStatusLabels } from "../../adminLabels";
+import { integritySectionLabels, taskKindLabels as kindLabels, taskStatusLabels } from "../../adminLabels";
 import { formatBytes, formatDateTime } from "../../format";
 
 // ADR-033: what an administrator needs to keep the class running — the
@@ -19,6 +19,7 @@ export function StatusRoute() {
   const status = useAdminStatus();
   const backup = useStartBackup();
   const retry = useRetryTask();
+  const integrity = useStartIntegrity();
 
   return (
     <section className="admin-status">
@@ -40,6 +41,13 @@ export function StatusRoute() {
             onStart={() => backup.mutate()}
             starting={backup.isPending}
             error={backup.isError ? errorMessage(backup.error) : null}
+          />
+          <IntegrityPanel
+            status={status.data}
+            onStart={() => integrity.mutate()}
+            starting={integrity.isPending}
+            started={integrity.isSuccess}
+            error={integrity.isError ? errorMessage(integrity.error) : null}
           />
           <FailedTasks
             tasks={status.data.failed_tasks}
@@ -213,6 +221,48 @@ function BackupPanel(props: { status: AdminStatus; onStart: () => void; starting
             ))}
           </tbody>
         </table>
+      )}
+    </div>
+  );
+}
+
+// ADR-038: the last integrity check. It only reads and reports; a mismatch
+// lists ids to look at, never content. The check runs daily by itself; the
+// button asks for one now and the result appears on the next refresh.
+function IntegrityPanel(props: { status: AdminStatus; onStart: () => void; starting: boolean; started: boolean; error: string | null }) {
+  const report = props.status.integrity;
+  return (
+    <div className="status-panel admin-integrity">
+      <div className="status-panel-heading">
+        <h2>Целостность данных</h2>
+        <button type="button" onClick={props.onStart} disabled={props.starting}>
+          Проверить сейчас
+        </button>
+      </div>
+      {props.error && <p className="error">{props.error}</p>}
+      {props.started && <p className="notice">Проверка поставлена в очередь, результат появится здесь.</p>}
+      {!report && <p>Проверка ещё не выполнялась. Она запускается раз в сутки.</p>}
+      {report && (
+        <>
+          <p className={report.ok ? undefined : "error"}>
+            {report.ok ? "Расхождений не найдено." : "Найдены расхождения или проверка не выполнилась."} Последняя проверка: {formatDateTime(report.checked_at)}
+          </p>
+          <table>
+            <thead>
+              <tr><th>Раздел</th><th>Проверено</th><th>Расхождений</th><th>Идентификаторы</th></tr>
+            </thead>
+            <tbody>
+              {report.sections.map((section) => (
+                <tr key={section.name} className={section.problems > 0 || section.error ? "audit-error" : undefined}>
+                  <td>{integritySectionLabels[section.name] ?? section.name}</td>
+                  <td>{section.checked}</td>
+                  <td>{section.error ? "проверка не выполнилась" : section.problems}</td>
+                  <td>{section.examples.length > 0 ? section.examples.map((id) => <code key={id}>{id} </code>) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
     </div>
   );

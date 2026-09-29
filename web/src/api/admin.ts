@@ -83,6 +83,14 @@ export function useStartBackup() {
   });
 }
 
+export function useStartIntegrity() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<{ task_id: string }>("/admin/integrity"),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: statusQueryKey }),
+  });
+}
+
 export function useRetryTask() {
   const queryClient = useQueryClient();
   return useMutation({

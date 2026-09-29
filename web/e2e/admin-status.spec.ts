@@ -37,4 +37,10 @@ test("admin status: worker heartbeat, manual backup appears in the list", async 
   await expect(copies).toHaveCount(before + 1, { timeout: 60_000 });
   await expect(startButton).toBeEnabled();
   await expect(page.getByText("Каталог копий не настроен")).toHaveCount(0);
+
+  // ADR-038: a manual integrity check on a clean stack finds nothing.
+  const integrity = page.locator(".admin-integrity");
+  await integrity.getByRole("button", { name: "Проверить сейчас" }).click();
+  await expect(integrity.getByText("Расхождений не найдено.")).toBeVisible({ timeout: 60_000 });
+  await expect(integrity.locator("tbody tr")).not.toHaveCount(0);
 });
