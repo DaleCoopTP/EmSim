@@ -29,6 +29,9 @@ const bufferCap = 1000
 // отправляет resync". Hub itself never touches PostgreSQL; Listener
 // does that and calls Publish/Reset.
 type Hub struct {
+	// streams counts open SSE connections (ADR-038's load panel).
+	streams atomic.Int64
+
 	mu      sync.Mutex
 	epoch   uint64
 	counter uint64
@@ -36,6 +39,13 @@ type Hub struct {
 	buffer  []Event
 	waiters chan struct{}
 }
+
+// StreamOpened and StreamClosed bracket one SSE connection's lifetime.
+func (h *Hub) StreamOpened() { h.streams.Add(1) }
+func (h *Hub) StreamClosed() { h.streams.Add(-1) }
+
+// Streams is how many SSE connections are open right now.
+func (h *Hub) Streams() int { return int(h.streams.Load()) }
 
 func NewHub() *Hub {
 	return &Hub{epoch: nextEpoch(), waiters: make(chan struct{})}

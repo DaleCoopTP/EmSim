@@ -222,6 +222,8 @@ func (h *Handlers) serveSSE(w http.ResponseWriter, r *http.Request, match func(r
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	h.hub.StreamOpened()
+	defer h.hub.StreamClosed()
 
 	cursor := h.hub.Cursor()
 	writeSSE(w, "stream.ready", cursor, map[string]string{"cursor": cursor})

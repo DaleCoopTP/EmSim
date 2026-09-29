@@ -218,6 +218,16 @@ CREATE TABLE platform_heartbeats (
     checked_at timestamptz NOT NULL
 );
 
+-- ADR-038: maintenance mode — one row; while enabled, no new lesson starts.
+CREATE TABLE platform_maintenance (
+    id      boolean PRIMARY KEY DEFAULT true CHECK (id),
+    enabled boolean NOT NULL DEFAULT false,
+    reason  text NOT NULL DEFAULT '' CHECK (char_length(reason) <= 200),
+    set_by  uuid,
+    set_at  timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO platform_maintenance (id) VALUES (true);
+
 -- ============================================================ training
 
 CREATE TABLE lessons (

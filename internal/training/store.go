@@ -23,8 +23,11 @@ var (
 	// ErrConflict is a row that already exists where the caller expected
 	// none — e.g. a second active run for a user/workstation the
 	// partial unique indexes (migrations/00006) reject.
-	ErrConflict   = errors.New("conflict")
-	ErrValidation = errors.New("validation failed")
+	ErrConflict = errors.New("conflict")
+	// ErrMaintenance: a start refused because the administrator switched
+	// maintenance mode on (ADR-038).
+	ErrMaintenance = errors.New("training: maintenance mode is on")
+	ErrValidation  = errors.New("validation failed")
 	// Recording conflicts have stable public API codes distinct from
 	// generic lesson/assignment conflicts.
 	ErrRecordingConflict       = errors.New("recording conflict")

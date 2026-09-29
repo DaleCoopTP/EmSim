@@ -29,13 +29,13 @@ type workerTelemetry struct {
 	logger   observability.Logger
 }
 
-func newWorkerTelemetry(role tasks.Role) (workerTelemetry, error) {
+func newWorkerTelemetry(role tasks.Role, logLevel string) (workerTelemetry, error) {
 	registry := prometheus.NewRegistry()
 	metrics, err := observability.NewMetrics(registry, string(role))
 	if err != nil {
 		return workerTelemetry{}, errors.New("observability configuration is invalid")
 	}
-	logger := observability.NewLogger(slog.New(slog.NewJSONHandler(os.Stderr, nil)), "worker", string(role))
+	logger := observability.NewLogger(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: config.SlogLevel(logLevel)})), "worker", string(role))
 	return workerTelemetry{registry: registry, metrics: metrics, logger: logger}, nil
 }
 

@@ -114,7 +114,9 @@ paths:
   /admin/import/classifier:
     post:
       tags: [admin]
-      summary: Импорт классификатора (XLSX) — фоновая задача
+      summary: Импорт классификатора (XLSX) — фоновая задача — НЕ РЕАЛИЗОВАНО
+      x-status: not-implemented
+      description: Маршрут не зарегистрирован (ADR-033, ADR-038). Импорт выполняется из CLI — `emsim import`; загрузка через админку ждёт формата классификатора и билетов от заказчика (ДДС-5).
       requestBody:
         required: true
         content:
@@ -125,7 +127,9 @@ paths:
   /admin/import/tickets:
     post:
       tags: [admin]
-      summary: Импорт билетов (zip/docx/txt) — фоновая задача
+      summary: Импорт билетов (zip/docx/txt) — фоновая задача — НЕ РЕАЛИЗОВАНО
+      x-status: not-implemented
+      description: Маршрут не зарегистрирован (ADR-033, ADR-038). Импорт выполняется из CLI — `emsim import`; загрузка через админку ждёт формата классификатора и билетов от заказчика (ДДС-5).
       requestBody:
         required: true
         content:
@@ -156,6 +160,96 @@ paths:
               schema: { $ref: '#/components/schemas/AdminStatus' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/audit:
+    get:
+      tags: [admin]
+      summary: Журнал аудита (ADR-038)
+      description: Только администратор. Новые записи первыми; страница листается курсором before (значение next_cursor предыдущей страницы). actor_login — логин пользователя, ФИО не отдаются. details содержит только то, что записал модуль (по правилам аудита — без паролей, текстов и ФИО).
+      parameters:
+      - { name: from, in: query, schema: { type: string, format: date-time }, description: Начало периода (включительно) }
+      - { name: to, in: query, schema: { type: string, format: date-time }, description: Конец периода (не включая) }
+      - { name: actor_id, in: query, schema: { type: string, format: uuid } }
+      - { name: action, in: query, schema: { type: string }, description: 'Префикс действия: admin. или auth.login' }
+      - { name: outcome, in: query, schema: { type: string, enum: [ok, rejected, error] } }
+      - { name: resource_type, in: query, schema: { type: string } }
+      - { name: before, in: query, schema: { type: integer, format: int64, minimum: 1 } }
+      - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AuditPage' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+  /admin/audit.csv:
+    get:
+      tags: [admin]
+      summary: Выгрузка журнала аудита в CSV (ADR-038)
+      description: Те же фильтры, что у /admin/audit. Не более 50 000 строк за выгрузку. Сама выгрузка пишется в аудит (admin.audit.export).
+      parameters:
+      - { name: from, in: query, schema: { type: string, format: date-time } }
+      - { name: to, in: query, schema: { type: string, format: date-time } }
+      - { name: actor_id, in: query, schema: { type: string, format: uuid } }
+      - { name: action, in: query, schema: { type: string } }
+      - { name: outcome, in: query, schema: { type: string, enum: [ok, rejected, error] } }
+      - { name: resource_type, in: query, schema: { type: string } }
+      - { name: before, in: query, schema: { type: integer, format: int64, minimum: 1 } }
+      responses:
+        '200': { description: CSV, content: { text/csv: { schema: { type: string } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+  /admin/config:
+    get:
+      tags: [admin]
+      summary: Действующая конфигурация — только чтение (ADR-038)
+      description: Значения, с которыми работают api и каждый worker, с именем переменной .env. Секреты не отдаются никогда - из адреса БД остаются хост и имя базы, ключ модели показывается как «задан»/«не задан». Изменить параметр можно только в .env на сервере с перезапуском контейнеров. Настройки worker'а приходят из его heartbeat (обновляются раз в 30 с).
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminConfig' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/maintenance:
+    put:
+      tags: [admin]
+      summary: Включить или выключить режим обслуживания (ADR-038)
+      description: Пока режим включён, новое занятие и предпросмотр сценария не стартуют (409 maintenance_mode); идущие занятия, команды обучаемых и экраны не затрагиваются. Причина (до 200 символов) видна всем в баннере. Изменение пишется в аудит.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [enabled], properties: { enabled: { type: boolean }, reason: { type: string, maxLength: 200 } } } } } }
+      responses:
+        '200': { description: Новое состояние, content: { application/json: { schema: { $ref: '#/components/schemas/Maintenance' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+  /system:
+    get:
+      tags: [auth]
+      summary: Состояние системы для всех ролей — режим обслуживания (ADR-038)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, required: [maintenance], properties: { maintenance: { $ref: '#/components/schemas/Maintenance' } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/failures:
+    get:
+      tags: [admin]
+      summary: Отчёт о сбоях за период (ADR-038)
+      description: Сводка, а не строки. Упавшие задачи по виду и коду ошибки; перезапуски сервера, прервавшие карточки; отклонённые входы по причине; ошибки, записанные модулями в аудит; ответы 5xx с момента запуска api. Без содержимого задач и занятий.
+      parameters:
+      - { name: from, in: query, schema: { type: string, format: date-time }, description: 'Начало периода; по умолчанию за 7 суток до to' }
+      - { name: to, in: query, schema: { type: string, format: date-time }, description: Конец периода; по умолчанию сейчас }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/FailuresReport' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+  /admin/failures.csv:
+    get:
+      tags: [admin]
+      summary: Отчёт о сбоях в CSV (ADR-038)
+      description: Те же данные плоской таблицей; колонка section отличает части отчёта.
+      parameters:
+      - { name: from, in: query, schema: { type: string, format: date-time }, description: 'Начало периода; по умолчанию за 7 суток до to' }
+      - { name: to, in: query, schema: { type: string, format: date-time }, description: Конец периода; по умолчанию сейчас }
+      responses:
+        '200': { description: CSV, content: { text/csv: { schema: { type: string } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
 
   # ------------------------------------------------------------ content
   /services:
@@ -739,7 +833,7 @@ components:
           properties:
             code:
               type: string
-              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, call_required, call_in_progress, call_not_active, call_missed, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation, stale_draft, has_blocking_issues, unsupported_for_editor, not_enough_scenarios, dictation_busy, dictation_unavailable]
+              enum: [invalid_request, validation_failed, unauthorized, forbidden, not_found, conflict, rate_limited, payload_too_large, unsupported_media_type, lesson_stopped, item_closed, stale_seq, transition_not_allowed, comment_required, call_required, call_in_progress, call_not_active, call_missed, internal_error, command_id_conflict, recording_conflict, recording_deadline_passed, stale_revision, stale_recommendation, stale_draft, has_blocking_issues, unsupported_for_editor, not_enough_scenarios, dictation_busy, dictation_unavailable, maintenance_mode]
             message: { type: string }
             details: { type: object, additionalProperties: true }
         request_id: { type: string }
@@ -2854,20 +2948,23 @@ components:
 
     AdminStatus:
       type: object
-      required: [server_time, db_schema_version, expected_schema_version, tasks, models, disk_free_bytes, last_backup_at, backup, workers, failed_tasks]
+      required: [build, server_time, db_schema_version, expected_schema_version, tasks, models, disk_free_bytes, last_backup_at, load, maintenance, backup, workers, failed_tasks]
       properties:
+        build: { type: string, description: 'Версия сборки api (git describe; dev — локальная сборка). ADR-038' }
         server_time: { type: string, format: date-time }
         db_schema_version: { type: integer }
         expected_schema_version: { type: integer, description: Версия схемы, которую ждёт эта сборка }
         tasks: { type: object, additionalProperties: { type: object, additionalProperties: { type: integer } }, description: kind → status → count }
         models:
           type: object
-          description: llm — по последней проверке worker'а (null, если модель не используется); stt/tts пока всегда null
+          description: llm — по последней проверке worker'а (null, если модель не используется); stt — по проверке api, когда DICTATION=whisper (иначе null); tts пока всегда null
           properties:
             llm: { $ref: '#/components/schemas/AdminModelStatus' }
             stt: { $ref: '#/components/schemas/AdminModelStatus' }
             tts: { $ref: '#/components/schemas/AdminModelStatus' }
         disk_free_bytes: { type: [integer, 'null'], description: Свободно на диске блобов (BLOB_ROOT api) }
+        load: { $ref: '#/components/schemas/AdminLoad' }
+        maintenance: { $ref: '#/components/schemas/Maintenance' }
         last_backup_at: { type: [string, 'null'], format: date-time }
         backup: { $ref: '#/components/schemas/AdminBackupStatus' }
         workers:
@@ -2878,8 +2975,41 @@ components:
             properties:
               id: { type: string }
               role: { type: string }
+              version: { type: string, description: Версия сборки worker'а; расхождение с build — обновление не доведено до конца }
               checked_at: { type: string, format: date-time }
         failed_tasks: { type: array, items: { $ref: '#/components/schemas/AdminTaskSummary' }, description: failed/dead_letter, до 50 последних }
+    AdminLoad:
+      type: object
+      description: Нагрузка на сервер (ADR-038). Окно запросов живёт в памяти api и обнуляется при его перезапуске; Prometheus на :8081 хранит длинную историю.
+      required: [window_seconds, requests, commands, sse_connections, active_sessions, running_lessons, open_items, host]
+      properties:
+        window_seconds: { type: integer, description: Ширина окна для requests и commands }
+        requests: { $ref: '#/components/schemas/AdminLatency' }
+        commands: { allOf: [ { $ref: '#/components/schemas/AdminLatency' } ], description: 'Только команды обучаемых (POST /items/{id}/actions)' }
+        sse_connections: { type: [integer, 'null'], description: Открытые SSE-потоки }
+        active_sessions: { type: [integer, 'null'], description: Сеансы с запросом за последние 5 минут }
+        running_lessons: { type: [integer, 'null'] }
+        open_items: { type: [integer, 'null'], description: Незакрытые карточки идущих занятий }
+        host: { $ref: '#/components/schemas/AdminHost' }
+    AdminLatency:
+      type: object
+      required: [requests, errors_5xx, p50_ms, p95_ms]
+      properties:
+        requests: { type: integer }
+        errors_5xx: { type: integer }
+        p50_ms: { type: [number, 'null'], description: Верхняя граница интервала гистограммы, null без запросов }
+        p95_ms: { type: [number, 'null'] }
+    AdminHost:
+      type: object
+      description: Данные ядра (/proc). Вне Linux load и память — null.
+      required: [cpus, load1, load5, load15, mem_total_bytes, mem_available_bytes]
+      properties:
+        cpus: { type: integer }
+        load1: { type: [number, 'null'] }
+        load5: { type: [number, 'null'] }
+        load15: { type: [number, 'null'] }
+        mem_total_bytes: { type: [integer, 'null'] }
+        mem_available_bytes: { type: [integer, 'null'] }
     AdminModelStatus:
       type: [object, 'null']
       required: [status, checked_at]
@@ -2917,6 +3047,89 @@ components:
         last_error_code: { type: [string, 'null'] }
         created_at: { type: string, format: date-time }
         terminal_at: { type: [string, 'null'], format: date-time }
+    AuditRow:
+      type: object
+      required: [id, at, actor_id, actor_login, actor_role, action, resource_type, resource_id, outcome, request_id, details]
+      properties:
+        id: { type: integer, format: int64 }
+        at: { type: string, format: date-time }
+        actor_id: { type: [string, 'null'], format: uuid, description: null для системных действий }
+        actor_login: { type: [string, 'null'] }
+        actor_role: { type: [string, 'null'] }
+        action: { type: string }
+        resource_type: { type: string }
+        resource_id: { type: [string, 'null'], format: uuid }
+        outcome: { type: string, enum: [ok, rejected, error] }
+        request_id: { type: [string, 'null'] }
+        details: { type: object, additionalProperties: true }
+    AuditPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AuditRow' } }
+        next_cursor: { type: [string, 'null'], description: Значение для параметра before следующей страницы; null — страница последняя }
+    AdminConfigParam:
+      type: object
+      required: [group, env, value]
+      properties:
+        group: { type: string, enum: [database, security, performance, models, backup, logging, process] }
+        env: { type: string, description: Имя переменной окружения (.env) }
+        value: { type: string }
+    AdminConfigProcess:
+      type: object
+      required: [id, params]
+      properties:
+        id: { type: string }
+        version: { type: string }
+        params: { type: array, items: { $ref: '#/components/schemas/AdminConfigParam' } }
+    AdminConfig:
+      type: object
+      required: [api, workers]
+      properties:
+        api: { $ref: '#/components/schemas/AdminConfigProcess' }
+        workers: { type: array, items: { $ref: '#/components/schemas/AdminConfigProcess' } }
+    Maintenance:
+      type: object
+      required: [enabled, reason, set_at]
+      properties:
+        enabled: { type: boolean }
+        reason: { type: string }
+        set_at: { type: string, format: date-time }
+    FailureCount:
+      type: object
+      required: [key, count, first_at, last_at]
+      properties:
+        key: { type: string }
+        count: { type: integer }
+        first_at: { type: string, format: date-time }
+        last_at: { type: string, format: date-time }
+    FailuresReport:
+      type: object
+      required: [from, to, tasks, restarts, rejected_logins, audited_errors, server_errors]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        tasks:
+          type: array
+          items:
+            type: object
+            required: [kind, error_code, count, first_at, last_at]
+            properties:
+              kind: { type: string }
+              error_code: { type: string }
+              count: { type: integer }
+              first_at: { type: string, format: date-time }
+              last_at: { type: string, format: date-time }
+        restarts: { type: array, items: { $ref: '#/components/schemas/FailureCount' }, description: 'Записи training.recover: перезапуск api, прервавший идущие карточки' }
+        rejected_logins: { type: array, items: { $ref: '#/components/schemas/FailureCount' }, description: 'key — причина отказа' }
+        audited_errors: { type: array, items: { $ref: '#/components/schemas/FailureCount' }, description: 'key — действие, завершившееся ошибкой' }
+        server_errors:
+          type: object
+          required: [since, count]
+          description: Ответы 5xx с запуска этого процесса api; не зависят от выбранного периода
+          properties:
+            since: { type: string, format: date-time }
+            count: { type: integer }
     Task:
       type: object
       required:

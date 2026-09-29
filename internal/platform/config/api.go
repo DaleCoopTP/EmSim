@@ -22,6 +22,8 @@ type API struct {
 	AdminAddr    string
 	SessionTTL   time.Duration
 	CookieSecure bool
+	// LogLevel is LOG_LEVEL (ADR-038): debug, info (default), warn or error.
+	LogLevel string
 	// AssessmentJudge (ADR-028) is api's own half of ASSESSMENT_JUDGE —
 	// the same enum Worker.AssessmentJudge reads, read here only to
 	// decide which rubric version (content.RubricVersionForJudge, both
@@ -128,7 +130,9 @@ func APIFromEnvironment(lookup func(string) string) (API, error) {
 	}
 	callerWarmup, callerOpeningDelay, callerOK := callerTimingFromEnvironment(lookup)
 	dictation, dictationOK := dictationFromEnvironment(lookup)
+	logLevel, logLevelOK := parseLogLevel(lookup("LOG_LEVEL"))
 	config := API{
+		LogLevel:        logLevel,
 		DatabaseURL:     strings.TrimSpace(lookup("DATABASE_URL")),
 		PublicAddr:      strings.TrimSpace(lookup("API_LISTEN_ADDR")),
 		AdminAddr:       strings.TrimSpace(lookup("ADMIN_LISTEN_ADDR")),
@@ -138,7 +142,7 @@ func APIFromEnvironment(lookup func(string) string) (API, error) {
 		CallerWarmup:    callerWarmup, CallerOpeningDelay: callerOpeningDelay,
 		Dictation: dictation,
 	}
-	if ttlErr != nil || secureErr != nil || !callerOK || !dictationOK {
+	if ttlErr != nil || secureErr != nil || !callerOK || !dictationOK || !logLevelOK {
 		return API{}, ErrInvalidAPIConfiguration
 	}
 	if err := config.Validate(); err != nil {

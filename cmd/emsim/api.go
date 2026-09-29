@@ -35,6 +35,7 @@ import (
 	"emsim/internal/platform/admin"
 	"emsim/internal/platform/config"
 	"emsim/internal/platform/httpapi"
+	"emsim/internal/platform/maintenance"
 	"emsim/internal/platform/observability"
 	pgstore "emsim/internal/platform/postgres"
 	"emsim/internal/platform/realtime"
@@ -45,6 +46,7 @@ import (
 	reportingpg "emsim/internal/reporting/postgres"
 	"emsim/internal/training"
 	traininghttp "emsim/internal/training/http"
+	trainingpg "emsim/internal/training/postgres"
 	"emsim/web"
 
 	"github.com/google/uuid"
@@ -76,7 +78,7 @@ func runAPI(ctx context.Context, args []string) error {
 	if err != nil {
 		return errors.New("observability configuration is invalid")
 	}
-	logger := observability.NewLogger(slog.New(slog.NewJSONHandler(os.Stderr, nil)), "api", "api")
+	logger := observability.NewLogger(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: config.SlogLevel(processConfig.LogLevel)})), "api", "api")
 	var live atomic.Bool
 	live.Store(true)
 	defer live.Store(false)
@@ -106,8 +108,10 @@ func runAPI(ctx context.Context, args []string) error {
 	adminHandler := observability.InstrumentHTTP(
 		admin.AdminWithMetrics(readiness, metricRegistry), metrics, logger, observability.AdminRouteNamer,
 	)
-	publicRoutes, publicRouteName, trainingService := newPublicHTTP(pool, processConfig, hub)
-	publicHandler := observability.InstrumentHTTP(publicRoutes, metrics, logger, publicRouteName)
+	// ADR-038: the status screen's load panel reads this rolling window.
+	window := observability.NewWindow(nil)
+	publicRoutes, publicRouteName, trainingService := newPublicHTTP(pool, processConfig, hub, window)
+	publicHandler := observability.InstrumentHTTP(publicRoutes, metrics, logger, publicRouteName, observability.WithWindow(window))
 	publicServer := &http.Server{Addr: processConfig.PublicAddr, Handler: publicHandler, ReadHeaderTimeout: 5 * time.Second}
 	adminServer := &http.Server{Addr: processConfig.AdminAddr, Handler: adminHandler, ReadHeaderTimeout: 5 * time.Second}
 
@@ -130,6 +134,7 @@ func runAPI(ctx context.Context, args []string) error {
 	defer metrics.SetReady("api", false)
 
 	go runTrainingScheduler(backgroundCtx, trainingService, logger)
+	go runAPIProber(backgroundCtx, pool, processConfig)
 
 	return serveAPI(ctx, publicServer, adminServer)
 }
@@ -143,6 +148,10 @@ func runAPI(ctx context.Context, args []string) error {
 const realtimeListenTimeout = 15 * time.Second
 
 const trainingRecoveryCause = "server_restart"
+
+// activeSessionWindow is what "active" means on the load panel: the
+// session made an authenticated request within this long (ADR-038).
+const activeSessionWindow = 5 * time.Minute
 
 // runTrainingScheduler is the durable time-based training work loop
 // (RFC-001 §7.2's scheduler tick — due scenario events and hard-level
@@ -178,7 +187,7 @@ var errAPITakesNoArgs = errors.New("api subcommand takes no arguments")
 // second one built from the same pool. hub is runAPI's own realtime.Hub
 // (C9) — SSE handlers read from it, training's domain code publishes to
 // it via realtime.NotifyTx inside its own transactions.
-func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.Handler, observability.RouteNamer, *training.Service) {
+func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub, window *observability.Window) (http.Handler, observability.RouteNamer, *training.Service) {
 	apiMux := httpapi.NewMux()
 
 	// contentService is built first: auth.NewService takes it as its
@@ -202,6 +211,7 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.
 	// holds back the opening; the worker runs the warm-ups.
 	trainingService := newTrainingService(pool, mustTaskEnqueuer(pool), cfg.AssessmentJudge == config.AssessmentJudgeLLM).
 		WithCallerTiming(training.CallerTiming{Warmup: cfg.CallerWarmup, OpeningDelay: cfg.CallerOpeningDelay}).
+		WithMaintenance(maintenance.Gate{}).
 		WithDictation(newTranscriber(cfg.Dictation), dictationSettings(cfg.Dictation))
 	contenthttp.NewHandlers(contentService, trainingService, authService, cfg.CookieSecure).Register(apiMux)
 	traininghttp.NewHandlers(trainingService, authService, cfg.CookieSecure, hub).Register(apiMux)
@@ -215,6 +225,9 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.
 	adminOnly := func(handler http.HandlerFunc) http.Handler {
 		return authhttp.SessionMiddleware(authService, cfg.CookieSecure)(authhttp.RequireRole(auth.GroupAdmin)(handler))
 	}
+	anyRole := func(handler http.HandlerFunc) http.Handler {
+		return authhttp.SessionMiddleware(authService, cfg.CookieSecure)(authhttp.RequireRole(auth.GroupAuth)(handler))
+	}
 	sessionActor := func(ctx context.Context) (uuid.UUID, string, bool) {
 		principal, ok := authhttp.PrincipalFromContext(ctx)
 		return principal.UserID, string(principal.Role), ok
@@ -226,8 +239,23 @@ func newPublicHTTP(pool *pgxpool.Pool, cfg config.API, hub *realtime.Hub) (http.
 		training.KindCallerReply:        tasks.NeverRetry{},
 		training.KindCallerWarmup:       tasks.NeverRetry{},
 	}
-	status.NewHandlers(pool, mustTaskEnqueuer(pool), retryGuards, kindBackupRun, os.Getenv("BLOB_ROOT"), pgstore.ExpectedSchemaVersion, sessionActor).
-		Register(apiMux, adminOnly)
+	statusHandlers := status.NewHandlers(pool, mustTaskEnqueuer(pool), retryGuards, kindBackupRun, os.Getenv("BLOB_ROOT"), pgstore.ExpectedSchemaVersion, sessionActor).
+		WithLogins(authStore.LoginsByID).
+		WithBuild(buildVersion).
+		WithConfig(cfg.Public(os.Getenv("BLOB_ROOT"))).
+		WithLoad(status.LoadSources{
+			Window:  window,
+			Streams: hub.Streams,
+			ActiveSessions: func(ctx context.Context) (int, error) {
+				return authStore.ActiveSessions(ctx, activeSessionWindow)
+			},
+			Activity: func(ctx context.Context) (status.Activity, error) {
+				lessons, items, err := trainingpg.NewStore(pool).ActivityCounts(ctx)
+				return status.Activity{RunningLessons: lessons, OpenItems: items}, err
+			},
+		})
+	statusHandlers.Register(apiMux, adminOnly)
+	statusHandlers.RegisterSystem(apiMux, anyRole)
 
 	root := http.NewServeMux()
 	root.Handle("/api/", apiMux)
@@ -324,4 +352,21 @@ func shutdownAPIServers(servers []*http.Server) {
 		}()
 	}
 	group.Wait()
+}
+
+// runAPIProber records what only the api can observe for the status screen
+// (ADR-038): whether the speech engine answers, when dictation runs on
+// whisper. The worker probes the language model the same way.
+func runAPIProber(ctx context.Context, pool *pgxpool.Pool, cfg config.API) {
+	dictation := cfg.Dictation
+	if dictation.Engine != config.DictationWhisper || dictation.STTURL == "" {
+		return
+	}
+	probes := []status.Probe{{
+		Component: status.ComponentSTT,
+		Check:     status.HTTPCheck(strings.TrimSuffix(dictation.STTURL, "/")+"/health", "", map[string]any{"model": dictation.Model}),
+	}}
+	prober := status.NewProber(probes, status.NewStore(pool), 30*time.Second, 5*time.Second,
+		func(interval time.Duration) status.Ticker { return tasks.SystemTickerFactory{}.NewTicker(interval) })
+	_ = prober.Run(ctx)
 }

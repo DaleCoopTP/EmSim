@@ -817,6 +817,8 @@ func writeTrainingError(w http.ResponseWriter, r *http.Request, err error) {
 		httpapi.WriteError(w, r, httpapi.CodeRecordingConflict, "recording does not match the declared manifest", nil)
 	case errors.Is(err, training.ErrRecordingDeadlinePassed):
 		httpapi.WriteError(w, r, httpapi.CodeRecordingDeadlinePassed, "recording upload deadline passed", nil)
+	case errors.Is(err, training.ErrMaintenance):
+		httpapi.WriteError(w, r, httpapi.CodeMaintenanceMode, "maintenance mode is on: new lessons cannot be started", nil)
 	case errors.Is(err, training.ErrConflict):
 		httpapi.WriteError(w, r, httpapi.CodeConflict, "conflict", nil)
 	case errors.Is(err, training.ErrDictationBusy):

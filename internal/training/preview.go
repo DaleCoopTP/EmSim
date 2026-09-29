@@ -55,6 +55,10 @@ func (s *Service) StartPreview(ctx context.Context, actorID, scenarioID, version
 	}
 
 	err = s.store.WithTx(ctx, func(tx pgx.Tx) error {
+		// ADR-038: no new preview run during maintenance either.
+		if err := s.checkMaintenanceTx(ctx, tx); err != nil {
+			return err
+		}
 		sc, err := s.scenarios.ScenarioByID(ctx, tx, scenarioID)
 		if err != nil {
 			return err

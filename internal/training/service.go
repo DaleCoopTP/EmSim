@@ -89,6 +89,9 @@ type Service struct {
 	// reply (the no-model opening) is held back. Zero value: no warm-ups,
 	// no delay — what every test composition gets unless it opts in.
 	callerTiming CallerTiming
+	// maintenance (ADR-038) refuses a lesson or preview start while the
+	// administrator's maintenance mode is on; nil means never.
+	maintenance MaintenanceGate
 	// dictation (ADR-037) is operator 112's voice input; nil when the
 	// engine is off.
 	dictation *dictationRuntime
@@ -103,6 +106,35 @@ type Service struct {
 type CallerTiming struct {
 	Warmup       bool
 	OpeningDelay time.Duration
+}
+
+// MaintenanceGate is the consumer-side view of platform/maintenance: it
+// reports whether maintenance mode is on, holding the switch's row FOR
+// SHARE for the rest of tx so a start cannot race the switch flipping.
+type MaintenanceGate interface {
+	ActiveTx(ctx context.Context, tx pgx.Tx) (bool, error)
+}
+
+// WithMaintenance sets the gate a lesson or preview start consults and
+// returns s, for composition.
+func (s *Service) WithMaintenance(gate MaintenanceGate) *Service {
+	s.maintenance = gate
+	return s
+}
+
+// checkMaintenanceTx returns ErrMaintenance while the mode is on.
+func (s *Service) checkMaintenanceTx(ctx context.Context, tx pgx.Tx) error {
+	if s.maintenance == nil {
+		return nil
+	}
+	active, err := s.maintenance.ActiveTx(ctx, tx)
+	if err != nil {
+		return ErrStorage
+	}
+	if active {
+		return ErrMaintenance
+	}
+	return nil
 }
 
 // WithCallerTiming sets s's CallerTiming and returns s, for composition.
@@ -526,6 +558,11 @@ func (s *Service) Start(ctx context.Context, actor auth.Principal, lessonID uuid
 			return nil
 		case LessonStopped, LessonFinished:
 			return ErrConflict
+		}
+		// ADR-038: a draft does not start during maintenance. A lesson that
+		// is already running (the case above) is not affected.
+		if err := s.checkMaintenanceTx(ctx, tx); err != nil {
+			return err
 		}
 
 		// Validated now, before creating anything, rather than only

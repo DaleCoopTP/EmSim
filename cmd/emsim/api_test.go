@@ -21,7 +21,7 @@ import (
 // middleware behavior (listen failures, shutdown, the 404 fallback),
 // never a handler that would actually query the database.
 func testPublicHandler() http.Handler {
-	handler, _, _ := newPublicHTTP(nil, config.API{}, realtime.NewHub())
+	handler, _, _ := newPublicHTTP(nil, config.API{}, realtime.NewHub(), nil)
 	return handler
 }
 

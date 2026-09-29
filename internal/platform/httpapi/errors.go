@@ -45,6 +45,9 @@ const (
 	// every recognition slot stayed taken, or the engine is off/failed.
 	CodeDictationBusy        ErrorCode = "dictation_busy"
 	CodeDictationUnavailable ErrorCode = "dictation_unavailable"
+	// CodeMaintenanceMode is ADR-038's: a lesson or preview start refused
+	// while the administrator has maintenance mode on.
+	CodeMaintenanceMode ErrorCode = "maintenance_mode"
 )
 
 // statusFor is the fixed HTTP status each code carries. Five of them —
@@ -81,6 +84,7 @@ var statusFor = map[ErrorCode]int{
 	CodeNotEnoughScenarios:      http.StatusUnprocessableEntity,
 	CodeDictationBusy:           http.StatusTooManyRequests,
 	CodeDictationUnavailable:    http.StatusServiceUnavailable,
+	CodeMaintenanceMode:         http.StatusConflict,
 }
 
 // StatusFor returns the HTTP status WriteError sends for code, or 500 for

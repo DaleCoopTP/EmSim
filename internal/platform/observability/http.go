@@ -28,7 +28,21 @@ import (
 // and logs — never the raw path, which could contain IDs.
 type RouteNamer func(r *http.Request) string
 
-func InstrumentHTTP(next http.Handler, metrics *Metrics, logger Logger, routeName RouteNamer) http.Handler {
+// HTTPOption adds an optional sink to InstrumentHTTP.
+type HTTPOption func(*httpOptions)
+
+type httpOptions struct{ window *Window }
+
+// WithWindow also feeds every finished request to window (ADR-038).
+func WithWindow(window *Window) HTTPOption {
+	return func(o *httpOptions) { o.window = window }
+}
+
+func InstrumentHTTP(next http.Handler, metrics *Metrics, logger Logger, routeName RouteNamer, options ...HTTPOption) http.Handler {
+	var opts httpOptions
+	for _, apply := range options {
+		apply(&opts)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		route := routeName(r)
@@ -39,7 +53,9 @@ func InstrumentHTTP(next http.Handler, metrics *Metrics, logger Logger, routeNam
 			method = "OTHER"
 		}
 		class := strconv.Itoa(recorder.status/100) + "xx"
-		metrics.ObserveHTTP(route, method, class, time.Since(started).Seconds())
+		elapsed := time.Since(started)
+		metrics.ObserveHTTP(route, method, class, elapsed.Seconds())
+		opts.window.Observe(route, method, recorder.status, elapsed)
 		if !isProbeRoute(route) || recorder.status >= http.StatusInternalServerError {
 			logger.Operation(r.Context(), 0, "http_request", class, recorder.Header().Get("X-Request-ID"), "")
 		}

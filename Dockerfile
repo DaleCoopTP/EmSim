@@ -9,6 +9,8 @@ COPY design-docs/contracts/openapi.yaml design-docs/contracts/openapi.yaml
 RUN cd web && npm run build
 
 FROM golang:1.26.6-alpine3.24@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS build
+# ADR-038: shown on the admin status screen; `make` passes git describe.
+ARG VERSION=dev
 WORKDIR /src
 
 COPY go.mod go.sum ./
@@ -30,7 +32,7 @@ ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/emsim ./cmd/emsim
+    go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/emsim ./cmd/emsim
 
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS runtime
 # pg_dump/pg_restore for backup.run and `emsim restore` (ADR-033): the

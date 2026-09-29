@@ -34,7 +34,7 @@ func runWorker(ctx context.Context, args []string) error {
 		return err
 	}
 	defer pool.Close()
-	telemetry, err := newWorkerTelemetry(processConfig.Role)
+	telemetry, err := newWorkerTelemetry(processConfig.Role, processConfig.LogLevel)
 	if err != nil {
 		return err
 	}

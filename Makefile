@@ -1,5 +1,8 @@
 .PHONY: demo class-up class-ca stt-model format-check build test test-integration vet staticcheck verify verify-integration compose-config compose-build seed model web-install web-build web-check verify-web
 
+# ADR-038: the build version shown on the admin status screen.
+export EMSIM_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 GO_FILES := $(shell git ls-files --cached --others --exclude-standard -- '*.go' | while IFS= read -r file; do test -f "$$file" && printf '%s\n' "$$file"; done)
 
 format-check:

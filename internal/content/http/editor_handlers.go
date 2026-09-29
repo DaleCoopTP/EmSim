@@ -10,6 +10,7 @@ import (
 	authhttp "emsim/internal/auth/http"
 	"emsim/internal/content"
 	"emsim/internal/platform/httpapi"
+	"emsim/internal/training"
 
 	"github.com/google/uuid"
 )
@@ -343,6 +344,8 @@ func writeEditorError(w http.ResponseWriter, r *http.Request, err error) {
 		httpapi.WriteError(w, r, httpapi.CodeNotFound, "scenario not found", nil)
 	case errors.Is(err, content.ErrStaleDraft):
 		httpapi.WriteError(w, r, httpapi.CodeStaleDraft, "the scenario was changed since it was last read", nil)
+	case errors.Is(err, training.ErrMaintenance):
+		httpapi.WriteError(w, r, httpapi.CodeMaintenanceMode, "maintenance mode is on: a preview cannot be started", nil)
 	case errors.Is(err, content.ErrUnsupportedForEditor):
 		httpapi.WriteError(w, r, httpapi.CodeUnsupportedForEditor, "the editor only supports full_case scenarios with a free-text caller", nil)
 	default:

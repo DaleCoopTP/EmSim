@@ -40,6 +40,8 @@ services:
     image: emsim:local
     build:
       context: .
+      args:
+        VERSION: ${EMSIM_VERSION:-dev}
     command: ["migrate", "up"]
     environment:
       DATABASE_URL: *database-url

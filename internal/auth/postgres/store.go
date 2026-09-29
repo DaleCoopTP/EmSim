@@ -419,3 +419,43 @@ func (s *Store) AuditRecord(ctx context.Context, tx pgx.Tx, entry audit.Entry) e
 
 // pgUniqueViolation is PostgreSQL's SQLSTATE for a unique_violation.
 const pgUniqueViolation = "23505"
+
+// LoginsByID maps user ids to logins for the administrator's audit view.
+// Ids with no user row are simply absent. It reads only id and login —
+// never a name or a hash.
+func (s *Store) LoginsByID(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	out := make(map[uuid.UUID]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `SELECT id, login FROM users WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, auth.ErrStorage
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		var login string
+		if err := rows.Scan(&id, &login); err != nil {
+			return nil, auth.ErrStorage
+		}
+		out[id] = login
+	}
+	if err := rows.Err(); err != nil {
+		return nil, auth.ErrStorage
+	}
+	return out, nil
+}
+
+// ActiveSessions counts sessions that made an authenticated request
+// within the given window (last_seen_at) and have not expired.
+func (s *Store) ActiveSessions(ctx context.Context, within time.Duration) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM sessions
+		WHERE last_seen_at > now() - make_interval(secs => $1) AND expires_at > now()`, within.Seconds()).Scan(&n)
+	if err != nil {
+		return 0, auth.ErrStorage
+	}
+	return n, nil
+}

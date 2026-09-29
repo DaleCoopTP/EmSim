@@ -788,9 +788,18 @@ func statusProbes(processConfig config.Worker) []status.Probe {
 	probes := []status.Probe{{
 		Component: status.ComponentWorkerPrefix + heartbeatID(processConfig.WorkerID),
 		Check: func(context.Context) (string, map[string]any) {
-			return status.StatusOK, map[string]any{"role": string(processConfig.Role)}
+			return status.StatusOK, map[string]any{"role": string(processConfig.Role), "version": buildVersion}
 		},
 	}}
+	// ADR-038: the settings this worker runs with, for the api's read-only
+	// configuration screen. Rewritten on every probe round, so a restart
+	// with a changed .env shows the new values within half a minute.
+	probes = append(probes, status.Probe{
+		Component: status.ComponentConfigWorkerPrefix + shortHeartbeatID(processConfig.WorkerID),
+		Check: func(context.Context) (string, map[string]any) {
+			return status.StatusOK, map[string]any{"params": processConfig.Public()}
+		},
+	})
 	if url, model, key := modelEndpoint(processConfig); url != "" {
 		probeURL := strings.TrimSuffix(strings.TrimSuffix(url, "/"), "/v1") + "/health"
 		if processConfig.LLMDialect == llm.DialectOpenAI {
@@ -838,6 +847,16 @@ func modelEndpoint(processConfig config.Worker) (url, model, key string) {
 
 // heartbeatID fits a WORKER_ID into platform_heartbeats.component's
 // alphabet.
+// shortHeartbeatID keeps "config.worker.<id>" within the 64-character
+// component limit of platform_heartbeats.
+func shortHeartbeatID(workerID string) string {
+	id := heartbeatID(workerID)
+	if len(id) > 40 {
+		id = id[:40]
+	}
+	return id
+}
+
 func heartbeatID(workerID string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(workerID) {

@@ -66,9 +66,11 @@ const (
 )
 
 type Worker struct {
-	DatabaseURL       string
-	Role              tasks.Role
-	WorkerID          string
+	DatabaseURL string
+	Role        tasks.Role
+	WorkerID    string
+	// LogLevel is LOG_LEVEL (ADR-038): debug, info (default), warn or error.
+	LogLevel          string
 	PollInterval      time.Duration
 	DrainTimeout      time.Duration
 	AdminAddr         string
@@ -279,13 +281,17 @@ func WorkerFromEnvironment(lookup func(string) string, roleValue string) (Worker
 	if err != nil {
 		return Worker{}, fmt.Errorf("%w: BACKUP_AT must be HH:MM", ErrInvalidWorkerConfiguration)
 	}
+	logLevel, logLevelOK := parseLogLevel(lookup("LOG_LEVEL"))
+	if !logLevelOK {
+		return Worker{}, fmt.Errorf("%w: LOG_LEVEL must be debug, info, warn or error", ErrInvalidWorkerConfiguration)
+	}
 	sharedAPIKey := strings.TrimSpace(lookup("LLM_API_KEY"))
 	llmDialect := llmclient.Dialect(strings.TrimSpace(lookup("LLM_DIALECT")))
 	if llmDialect == "" {
 		llmDialect = llmclient.DialectLlama
 	}
 	config := Worker{
-		DatabaseURL: strings.TrimSpace(lookup("DATABASE_URL")), Role: role,
+		DatabaseURL: strings.TrimSpace(lookup("DATABASE_URL")), Role: role, LogLevel: logLevel,
 		WorkerID: strings.TrimSpace(lookup("WORKER_ID")), PollInterval: poll, DrainTimeout: drain,
 		AdminAddr:        strings.TrimSpace(lookup("WORKER_ADMIN_LISTEN_ADDR")),
 		ShortConcurrency: short, LLMConcurrency: llm, STTConcurrency: stt, ReportConcurrency: report,

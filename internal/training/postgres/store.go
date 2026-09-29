@@ -1256,3 +1256,17 @@ func (s *Store) ControlReportsByItem(ctx context.Context, tx pgx.Tx, itemID uuid
 	}
 	return reports, nil
 }
+
+// ActivityCounts is how much training is going on right now: lessons in
+// state running and the items in them that are not closed yet. The admin
+// load panel reads only these two numbers, never a lesson's content.
+func (s *Store) ActivityCounts(ctx context.Context) (lessons, openItems int, err error) {
+	err = s.pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM lessons WHERE state = 'running'),
+		       (SELECT count(*) FROM items i JOIN runs r ON r.id = i.run_id JOIN lessons l ON l.id = r.lesson_id
+		         WHERE l.state = 'running' AND i.closed_at IS NULL)`).Scan(&lessons, &openItems)
+	if err != nil {
+		return 0, 0, errors.New("training activity counts failed")
+	}
+	return lessons, openItems, nil
+}

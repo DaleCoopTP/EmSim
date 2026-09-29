@@ -33,6 +33,8 @@ const (
 const (
 	ComponentLLM    = "llm"
 	ComponentBackup = "backup"
+	// ComponentSTT is written by the api itself (it alone knows STT_URL).
+	ComponentSTT = "stt"
 	// A worker's own heartbeat is "worker.<id>".
 	ComponentWorkerPrefix = "worker."
 )

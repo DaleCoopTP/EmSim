@@ -174,6 +174,7 @@ func resetSchema(t *testing.T, ctx context.Context, databaseURL string) {
 		DROP TABLE IF EXISTS classifier_types;
 		DROP TABLE IF EXISTS sessions;
 		DROP TABLE IF EXISTS platform_heartbeats;
+		DROP TABLE IF EXISTS platform_maintenance;
 		DROP TABLE IF EXISTS audit_log;
 		DROP TABLE IF EXISTS tasks;
 		DROP TABLE IF EXISTS users;
@@ -277,7 +278,7 @@ func assertTableSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		"actions", "assessment_inputs", "assessments", "assignments", "audit_log", "blobs", "calls",
 		"classifier_types", "control_reports", "evidence",
 		"intake_catalog_versions", "intake_dispatches", "intake_notifications", "item_events",
-		"items", "lessons", "platform_heartbeats", "report_files", "runs", "scenario_versions", "scenarios",
+		"items", "lessons", "platform_heartbeats", "platform_maintenance", "report_files", "runs", "scenario_versions", "scenarios",
 		"services", "sessions", "tasks", "tickets", "trainee_assessment_state", "training_examples", "users",
 		"voice_assets", "workstations",
 	}
