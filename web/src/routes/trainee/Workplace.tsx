@@ -92,7 +92,9 @@ export function WorkplaceRoute() {
   useEventStream("/my/stream", () => {
     void queryClient.invalidateQueries({ queryKey: myRunQueryKey });
     void queryClient.invalidateQueries({ queryKey: myItemsQueryKey });
-    if (itemId) void queryClient.invalidateQueries({ queryKey: itemQueryKey(itemId) });
+    // The queue can have several expanded previews alongside the opened card.
+    // Refresh every active item query when the stream reports a change.
+    void queryClient.invalidateQueries({ queryKey: ["training", "item"], refetchType: "active" });
   });
 
   if (run.isPending) return <p>Ожидание назначения…</p>;

@@ -17,6 +17,11 @@ const steps = [
   },
 ] as const;
 
+const cardSteps = [
+  { target: "preview-toggle", text: "Открывает предпросмотр карточки" },
+  { target: "preview", text: "В предпросмотре видны службы, заявитель, информация о происшествии и действия оператора" },
+] as const;
+
 type Spotlight = {
   top: number;
   right: number;
@@ -30,11 +35,18 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(value, max));
 }
 
-export function Arm112Tour({ rootRef, onClose }: { rootRef: RefObject<HTMLElement>; onClose: () => void }) {
+export function Arm112Tour({ rootRef, onClose, hasCard, onPreviewStep }: {
+  rootRef: RefObject<HTMLElement>; onClose: () => void; hasCard: boolean; onPreviewStep: (open: boolean) => void;
+}) {
+  const tourSteps: readonly { target: string; text: string }[] = hasCard ? [...steps, ...cardSteps] : steps;
   const [step, setStep] = useState(0);
   const [spotlight, setSpotlight] = useState<Spotlight | null>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
   const ready = spotlight !== null;
+  const goToStep = (next: number) => {
+    onPreviewStep(hasCard && next === steps.length + 1);
+    setStep(next);
+  };
 
   useEffect(() => {
     const app = document.getElementById("root");
@@ -46,7 +58,7 @@ export function Arm112Tour({ rootRef, onClose }: { rootRef: RefObject<HTMLElemen
   }, []);
 
   useLayoutEffect(() => {
-    const target = rootRef.current?.querySelector<HTMLElement>(`[data-tour-target="${steps[step].target}"]`);
+    const target = rootRef.current?.querySelector<HTMLElement>(`[data-tour-target="${tourSteps[step].target}"]`);
     if (!target) {
       onClose();
       return;
@@ -69,7 +81,7 @@ export function Arm112Tour({ rootRef, onClose }: { rootRef: RefObject<HTMLElemen
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
-  }, [rootRef, step, onClose]);
+  }, [rootRef, step, onClose, hasCard]);
 
   useEffect(() => {
     if (ready) nextRef.current?.focus();
@@ -80,17 +92,17 @@ export function Arm112Tour({ rootRef, onClose }: { rootRef: RefObject<HTMLElemen
       if (event.key === "Escape") onClose();
       if (event.key === "ArrowLeft" && step > 0) {
         event.preventDefault();
-        setStep(step - 1);
+        goToStep(step - 1);
       }
       if (event.key === "ArrowRight") {
         event.preventDefault();
-        if (step === steps.length - 1) onClose();
-        else setStep(step + 1);
+        if (step === tourSteps.length - 1) onClose();
+        else goToStep(step + 1);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose, step]);
+  }, [onClose, step, hasCard, onPreviewStep]);
 
   if (!spotlight) return null;
   const tooltipWidth = Math.min(340, spotlight.width - 32);
@@ -114,13 +126,13 @@ export function Arm112Tour({ rootRef, onClose }: { rootRef: RefObject<HTMLElemen
       }} />}
       <div className="arm112-tour-tip" style={{ top: tooltipTop, left: tooltipLeft, width: tooltipWidth }}>
         <button type="button" className="arm112-tour-close" aria-label="Закрыть ознакомительный режим" onClick={onClose}>×</button>
-        <p>{steps[step].text}</p>
+        <p>{tourSteps[step].text}</p>
       </div>
       <nav className="arm112-tour-navigation" aria-label="Шаги ознакомительного режима">
-        <button type="button" aria-label="Предыдущее объяснение" disabled={step === 0} onClick={() => setStep(step - 1)}>←</button>
-        <span aria-live="polite">{step + 1} / {steps.length}</span>
-        <button ref={nextRef} type="button" aria-label={step === steps.length - 1 ? "Завершить ознакомительный режим" : "Следующее объяснение"}
-          onClick={() => step === steps.length - 1 ? onClose() : setStep(step + 1)}>→</button>
+        <button type="button" aria-label="Предыдущее объяснение" disabled={step === 0} onClick={() => goToStep(step - 1)}>←</button>
+        <span aria-live="polite">{step + 1} / {tourSteps.length}</span>
+        <button ref={nextRef} type="button" aria-label={step === tourSteps.length - 1 ? "Завершить ознакомительный режим" : "Следующее объяснение"}
+          onClick={() => step === tourSteps.length - 1 ? onClose() : goToStep(step + 1)}>→</button>
       </nav>
     </div>,
     document.body,

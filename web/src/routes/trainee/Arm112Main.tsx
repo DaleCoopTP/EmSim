@@ -2,13 +2,16 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { NavLink, useNavigate } from "react-router-dom";
 import { useLogout } from "../../api/auth";
 import type { Me } from "../../api/useMe";
-import { useItem, type ItemSummary, type MyRun } from "../../api/workplace";
+import { useItem, type CardView, type Item, type ItemSummary, type MyRun } from "../../api/workplace";
 import { armCardNumber, armOperatorNumber, armShortName, formatPhone } from "../../arm112Number";
+import { formatDateTime } from "../../format";
+import { serviceNames } from "../../intakeServices";
+import { reactionLabel } from "../../labels";
 import {
   BadgeIcon, BookmarkIcon, ChartIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon, ClipboardIcon, CloseIcon, DocIcon, EditIcon, ExitIcon,
   GearIcon, GlassesIcon, GlobeIcon, HeadsetIcon, HelicopterIcon, HelpIcon, InfoIcon, MenuIcon, PushpinIcon, ScreenIcon, SearchIcon, StopwatchIcon,
 } from "../../components/Arm112Icons";
-import type { IntakeItem } from "./Operator112Workplace";
+import type { IntakeField, IntakeItem } from "./Operator112Workplace";
 import { Arm112Tour } from "./Arm112Tour";
 import "../../arm112-main.css";
 
@@ -31,10 +34,12 @@ export function Arm112Main({ me, run, items, search, onSearch, onOpen, notices, 
   notices?: ReactNode;
 }) {
   const [tourOpen, setTourOpen] = useState(false);
+  const [tourPreviewOpen, setTourPreviewOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   const tourButtonRef = useRef<HTMLButtonElement>(null);
   const closeTour = useCallback(() => {
     setTourOpen(false);
+    setTourPreviewOpen(false);
     window.requestAnimationFrame(() => tourButtonRef.current?.focus());
   }, []);
   const needle = search.trim().toLocaleLowerCase("ru-RU");
@@ -86,7 +91,8 @@ export function Arm112Main({ me, run, items, search, onSearch, onOpen, notices, 
               <th>Тип происшествия</th><th>Постр.</th><th>Статус</th><th>Адрес</th><th /><th>Проверена</th>
             </tr>
           </thead>
-          {visible.map((candidate) => <GridRow key={candidate.id} item={candidate} operatorNo={operatorNo} workstationNo={workstationNo} onOpen={onOpen} status={statusOf(candidate)} />)}
+          {visible.map((candidate, index) => <GridRow key={candidate.id} item={candidate} operatorNo={operatorNo} workstationNo={workstationNo}
+            onOpen={onOpen} status={statusOf(candidate)} tourExpanded={tourOpen && tourPreviewOpen && index === 0} tourTarget={index === 0} />)}
           {visible.length === 0 && <tbody><tr><td colSpan={16} className="arm112-main-empty">
             {items.length === 0 ? "Новых карточек пока нет." : "По этому запросу происшествий нет."}</td></tr></tbody>}
         </table>
@@ -103,7 +109,7 @@ export function Arm112Main({ me, run, items, search, onSearch, onOpen, notices, 
     </section>
 
     <IncomingCallBanner items={items} onAccept={(id) => onOpen(id, true)} />
-    {tourOpen && <Arm112Tour rootRef={mainRef} onClose={closeTour} />}
+    {tourOpen && <Arm112Tour rootRef={mainRef} onClose={closeTour} hasCard={visible.length > 0} onPreviewStep={setTourPreviewOpen} />}
   </section>;
 }
 
@@ -177,14 +183,24 @@ function statusLabel(item: ItemSummary): string {
   return "В работе";
 }
 
-function GridRow({ item, operatorNo, workstationNo, onOpen, status }: { item: ItemSummary; operatorNo: string; workstationNo: string; onOpen: (id: string) => void; status: string }) {
+function GridRow({ item, operatorNo, workstationNo, onOpen, status, tourExpanded, tourTarget }: {
+  item: ItemSummary; operatorNo: string; workstationNo: string; onOpen: (id: string) => void; status: string; tourExpanded: boolean; tourTarget: boolean;
+}) {
+  const [manuallyExpanded, setManuallyExpanded] = useState(false);
+  const expanded = manuallyExpanded || tourExpanded;
+  const detail = useItem(item.id, expanded);
   const offered = new Date(item.offered_at);
   const two = (value: number) => String(value).padStart(2, "0");
   const number = armCardNumber(item.card_number);
   const closed = item.state === "closed" || item.state === "interrupted";
+  const previewId = `arm112-preview-${item.id}`;
   return <tbody className={`arm112-main-row${item.state === "offered" ? " is-new" : ""}`}>
     <tr onClick={() => onOpen(item.id)}>
-      <td className="c-chevron"><ChevronDownIcon size={16} /></td>
+      <td className="c-chevron"><button type="button" data-tour-target={tourTarget ? "preview-toggle" : undefined}
+        aria-label={`${expanded ? "Свернуть" : "Раскрыть"} предпросмотр карточки № ${number}`}
+        aria-expanded={expanded} aria-controls={expanded ? previewId : undefined} title={expanded ? "Свернуть предпросмотр" : "Открыть предпросмотр"}
+        onClick={(event) => { event.stopPropagation(); setManuallyExpanded((value) => !value); }}>
+        {expanded ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}</button></td>
       <td className="c-links" />
       <td className="c-icon"><BookmarkIcon size={18} /></td>
       <td className="c-icon"><PushpinIcon size={17} /></td>
@@ -202,7 +218,77 @@ function GridRow({ item, operatorNo, workstationNo, onOpen, status }: { item: It
         onClick={(event) => { event.stopPropagation(); onOpen(item.id); }}><ClipboardIcon size={18} /></button></td>
       <td className={`c-check${closed ? " is-done" : ""}`}><CheckCircleIcon size={22} /></td>
     </tr>
+    {expanded && <tr className="arm112-main-preview-row" onClick={(event) => event.stopPropagation()}>
+      <td colSpan={16} id={previewId} data-tour-target={tourTarget ? "preview" : undefined}>
+        {detail.isPending ? <p className="arm112-main-preview-message">Загрузка предпросмотра…</p>
+          : detail.isError || !detail.data ? <p className="arm112-main-preview-message" role="alert">Не удалось загрузить карточку. Сверните и раскройте строку повторно.</p>
+            : <GridPreview item={detail.data} />}
+      </td>
+    </tr>}
   </tbody>;
+}
+
+function fieldValue(field: IntakeField | undefined): string | null {
+  if (!field || field.state === "unanswered") return null;
+  if (field.state === "unknown") return "неизвестно";
+  if (field.state === "negative") return "нет";
+  return field.value?.trim() || null;
+}
+
+function GridPreview({ item }: { item: Item }) {
+  if (item.intake_state) return <IntakeGridPreview item={item as IntakeItem} />;
+  const card = item.card as CardView;
+  const applicant = [card.applicant?.name, card.applicant?.phone, card.phones?.aon && `АОН ${formatPhone(card.phones.aon)}`].filter(Boolean).join(" · ");
+  const services = card.notification_list?.map((entry) => `${serviceNames[entry.service ?? ""] ?? entry.service ?? "Служба"}${entry.status ? ` — ${reactionLabel(entry.status)}` : ""}`).join("; ");
+  return <div className="arm112-main-preview" aria-label="Предпросмотр карточки">
+    <PreviewLine label="Службы" value={services || "Оповещения пока нет"} />
+    <PreviewLine label="Заявитель" value={applicant || "Сведения пока не указаны"} />
+    <PreviewLine label="Информация" value={[card.incident?.type_name, card.incident?.description].filter(Boolean).join(" · ") || "Сведения пока не указаны"} />
+    <PreviewLine label="Отработки" value={item.calls.length ? `${item.calls.length} звонков` : "Звонков пока нет"} />
+  </div>;
+}
+
+function IntakeGridPreview({ item }: { item: IntakeItem }) {
+  const { card, intake_state: state } = item;
+  const catalog = state.catalog;
+  const typeNames = card.incident_types?.map((id) => catalog?.types.find((entry) => entry.id === id)?.name ?? id) ?? [];
+  const incident = typeNames.length ? typeNames.join(", ") : fieldValue(card.incident_type);
+  const signs = Object.entries(card.profiles ?? {}).flatMap(([id, profile]) => {
+    const definition = catalog?.profiles.find((entry) => entry.id === id);
+    return Object.entries(profile.answers).flatMap(([fieldId, answer]) => {
+      if (answer.state === "unanswered") return [];
+      const label = definition?.fields.find((entry) => entry.id === fieldId)?.label ?? fieldId;
+      const value = answer.state === "unknown" ? "неизвестно" : answer.values?.join(", ") || answer.value;
+      return value ? [`${label}: ${value}`] : [];
+    });
+  });
+  const services = item.notification?.services.map(({ service_code }) => serviceNames[service_code] ?? service_code)
+    ?? (item.dispatch ? [serviceNames[item.dispatch.service_code] ?? item.dispatch.service_code] : []);
+  const notifiedAt = item.notification?.notified_at ?? item.dispatch?.sent_at;
+  const providedPhone = fieldValue(card.provided_phone);
+  const channel = fieldValue(card.channel);
+  const victimsPresent = fieldValue(card.victims_present);
+  const victimsCount = fieldValue(card.victims_count);
+  const applicant = [fieldValue(card.applicant_name), `АОН ${formatPhone(card.aon)}`,
+    providedPhone && `телефон ${formatPhone(providedPhone)}`,
+    channel && `канал связи: ${channel}`].filter(Boolean).join(" · ");
+  const info = [incident, ...signs, fieldValue(card.complaint), victimsPresent && `Пострадавшие: ${victimsPresent}`,
+    victimsCount && `Количество пострадавших: ${victimsCount}`].filter(Boolean).join(" · ");
+  const operatorLines = state.transcript.filter((line) => line.speaker === "operator");
+  const activity = [state.answered_at && `Вызов принят ${formatDateTime(state.answered_at)}`,
+    operatorLines.length > 0 && `Реплик оператора: ${operatorLines.length}`,
+    state.ended_at && `Вызов завершён ${formatDateTime(state.ended_at)}`,
+    notifiedAt && `Службы оповещены ${formatDateTime(notifiedAt)}`].filter(Boolean).join(" · ");
+  return <div className="arm112-main-preview" aria-label="Предпросмотр карточки">
+    <PreviewLine label="Службы" value={services.length ? `${services.join(", ")}${notifiedAt ? ` · ${formatDateTime(notifiedAt)}` : ""}` : "Оповещения пока нет"} />
+    <PreviewLine label="Заявитель" value={applicant || "Сведения пока не указаны"} />
+    <PreviewLine label="Информация" value={info || "Сведения пока не указаны"} />
+    <PreviewLine label="Отработки" value={activity || "Действий оператора пока нет"} />
+  </div>;
+}
+
+function PreviewLine({ label, value }: { label: string; value: string }) {
+  return <div className="arm112-main-preview-line"><strong>{label}:</strong><span>{value}</span></div>;
 }
 
 // Instruction p. 3, fig. 3: an incoming call pops up over the list with a
