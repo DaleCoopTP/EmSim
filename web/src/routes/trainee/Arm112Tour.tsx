@@ -107,7 +107,7 @@ export function Arm112Tour({ rootRef, onClose, hasCard, onPreviewStep }: {
   rootRef: RefObject<HTMLElement>; onClose: () => void; hasCard: boolean; onPreviewStep: (open: boolean) => void;
 }) {
   return <SpotlightTour rootRef={rootRef} onClose={onClose} steps={hasCard ? fullMainSteps : introSteps}
-    onStepChange={(next) => onPreviewStep(hasCard && next >= introSteps.length + 5)} />;
+    onStepChange={(next) => onPreviewStep(hasCard && next >= introSteps.length + 5)} closePosition="left" />;
 }
 
 export function SpotlightTour({ rootRef, onClose, steps, onStepChange, tipPlacements, closePosition = "right", label = "Ознакомительный режим" }: {

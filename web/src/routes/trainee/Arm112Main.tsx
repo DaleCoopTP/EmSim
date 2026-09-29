@@ -16,6 +16,7 @@ import { Arm112Tour } from "./Arm112Tour";
 import "../../arm112-main.css";
 
 const unavailable = "Недоступно в учебном АРМ";
+const referencePdf = "/arm112-reference.pdf";
 
 // The ARM-112 main screen for an operator 112 run: the search panel and the
 // dark operator block on top, then the grid "Список происшествий"
@@ -33,7 +34,7 @@ export function Arm112Main({ me, run, items, search, onSearch, onOpen, notices, 
   onOpen: (id: string, accept?: boolean) => void;
   notices?: ReactNode;
 }) {
-  const [tourOpen, setTourOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(() => run.exercise_type === "operator112_intake");
   const [tourPreviewOpen, setTourPreviewOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   const tourButtonRef = useRef<HTMLButtonElement>(null);
@@ -131,13 +132,13 @@ function OperatorBlock({ me, operatorNo, workstationNo, is112, tourButtonRef, on
   const capitalize = (value: string) => value.charAt(0).toLocaleUpperCase("ru-RU") + value.slice(1);
   const date = `${capitalize(now.toLocaleDateString("ru-RU", { weekday: "long" }))}, ${now.getDate()} ${capitalize(now.toLocaleDateString("ru-RU", { month: "long" }))} ${now.getFullYear()}`;
   const two = (value: number) => String(value).padStart(2, "0");
-  const tabs: { label: string; icon: ReactNode; to?: string }[] = [
+  const tabs: { label: string; icon: ReactNode; to?: string; href?: string }[] = [
     { label: "журнал", icon: <MenuIcon size={20} />, to: "/my" },
     { label: "экран", icon: <ScreenIcon size={20} /> },
     { label: "статистика", icon: <ChartIcon size={20} /> },
     { label: "УЕР", icon: <GearIcon size={20} /> },
-    { label: "БДПН", icon: <DocIcon size={20} /> },
-    { label: "вики", icon: <HelpIcon size={20} /> },
+    { label: "БДПН", icon: <DocIcon size={20} />, href: referencePdf },
+    { label: "вики", icon: <HelpIcon size={20} />, href: referencePdf },
     { label: "заявители", icon: <BadgeIcon size={20} /> },
     { label: "техника", icon: <HelicopterIcon size={20} /> },
     { label: "аудит", icon: <GlassesIcon size={20} /> },
@@ -147,7 +148,7 @@ function OperatorBlock({ me, operatorNo, workstationNo, is112, tourButtonRef, on
     { label: "регионы", icon: <GlobeIcon size={20} /> },
   ];
 
-  return <div className="arm112-main-operator">
+  return <div className={`arm112-main-operator${is112 ? " has-tour" : ""}`}>
     <div className="arm112-main-status">
       <div className="arm112-main-who">
         <strong>{date}</strong>
@@ -171,7 +172,9 @@ function OperatorBlock({ me, operatorNo, workstationNo, is112, tourButtonRef, on
     <nav className="arm112-main-tabs" aria-label="Разделы АРМ">
       {tabs.map((tab) => tab.to
         ? <NavLink key={tab.label} to={tab.to} end>{tab.icon}<span>{tab.label}</span></NavLink>
-        : <span key={tab.label} className="is-off" title={unavailable}>{tab.icon}<span>{tab.label}</span></span>)}
+        : tab.href
+          ? <a key={tab.label} href={tab.href} target="_blank" rel="noopener noreferrer" title="Открыть справочник PDF">{tab.icon}<span>{tab.label}</span></a>
+          : <span key={tab.label} className="is-off" title={unavailable} aria-disabled="true">{tab.icon}<span>{tab.label}</span></span>)}
     </nav>
   </div>;
 }
