@@ -51,6 +51,8 @@ export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }),
+  // postBlob sends a binary body as-is (dictation audio, ADR-037).
+  postBlob: <T>(path: string, body: Blob) => request<T>(path, { method: "POST", body, headers: { "Content-Type": body.type } }),
   put: <T>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
 };

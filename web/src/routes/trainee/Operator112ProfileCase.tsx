@@ -489,7 +489,7 @@ export function Operator112ProfileCase({ me, item, onClose }: { me: Me; item: In
     </div></div>}
 
     {isCall && state.caller_mode === "free_text" && bodyReady && <CallerChat item={item} open={chatOpen} onToggle={toggleChat} pending={!!pending} rejected={chatRejection}
-      onSend={(text) => send("send_caller_message", { text })} />}
+      onSend={(text, input) => send("send_caller_message", input ? { text, input } : { text })} />}
   </section>;
 }
 
