@@ -59,7 +59,14 @@ Do not silently resolve a material contradiction. Record the chosen interpretati
   - `llm.Client` bearer key and `LLM_DIALECT`, `compose.remote-llm.yaml`;
   - `emsim demo-setup` / `make demo`.
 
-  Load testing/W0, the offline package, documentation/video and `/admin/import/*` are tech debt.
+  Load testing/W0, the offline package's model weights, documentation/video and `/admin/import/*` are tech debt.
+
+  DDS-10 part 2 — the administrator role ([ADR-038](design-docs/adr/038-admin-role.md), `slice-dds-10-part2-plan.md`, 2026-09-29) is implemented; the admin still has no access to lessons, scenarios, assessments or lesson reports. Screens: «Состояние» (load, build version, backups, integrity, maintenance mode, failed tasks), «Журнал» (`GET /admin/audit(.csv)`), «Отчёты» (`GET /admin/usage(.csv)` in `internal/reporting`, `GET /admin/failures(.csv)`), «Конфигурация» (`GET /admin/config`, read-only, no secrets), «Пользователи». Points to know:
+  - maintenance mode (`platform_maintenance`, migration `00022`, `PUT /admin/maintenance`) makes `training.Service.Start`/`StartPreview` answer `409 maintenance_mode`; running lessons are untouched;
+  - `integrity.check` (`internal/platform/integrity` + `cmd/emsim/integrity.go`, daily 05:00 and `POST /admin/integrity`) re-reads blob files, recomputes evidence and scenario-version digests, verifies the newest backup copy and the schema version; it reports ids only and never repairs;
+  - login policy (migration `00023`, `.env`: `LOGIN_LOCKOUT_ATTEMPTS`, `LOGIN_LOCKOUT_DURATION`, `PASSWORD_MIN_LENGTH`, `PASSWORD_FORCE_CHANGE`; `auth.Policy`): lockout → `423 account_locked`; an admin-set password of the forced roles must be changed (`User.credentials_change_required`, `403 password_change_required` everywhere except `/me`, `POST /me/password`, logout); admin can unlock (`PATCH /admin/users/{id} {unlock:true}`) and list/end sessions (`/admin/users/{id}/sessions`). Test stacks set `PASSWORD_FORCE_CHANGE` explicitly (integration `none`, e2e `admin`);
+  - `POST /admin/users/import` (CSV, all or nothing, `dry_run`, server-generated passwords returned once and never stored or logged);
+  - `scripts/update.sh` (mandatory backup first), `make release-bundle` (`scripts/release-bundle.sh`, images already present locally, no model weights), `scripts/restore.sh` takes a safety copy first, `audit.prune` waits for a backup younger than 24 h when `BACKUP_DIR` is set. The update/bundle/restore scripts were only syntax-checked (no Docker where they were written).
 - The same scenario version may be assigned to multiple participants. Each participant receives an independent run and item state.
 - When a slice needs UI, stabilize its model, rules, and API first, then implement the UI before declaring the slice complete.
 

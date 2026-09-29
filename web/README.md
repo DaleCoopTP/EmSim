@@ -140,3 +140,19 @@ browser once locally with:
 ```bash
 PLAYWRIGHT_BROWSERS_PATH="$PWD/.playwright-browsers" npx playwright install chromium
 ```
+
+## Administrator screens (ADR-038)
+
+Under `routes/admin/`: `Users` (create one by one, `ImportPanel` for a CSV
+class — the server's generated passwords are shown once and offered as a
+sheet built in the browser — lock badge with «Разблокировать», and
+`SessionsPanel`), `Workstations`, `Status` (load, build version, backups,
+`IntegrityPanel`, maintenance mode, failed tasks), `Audit`, `Reports`
+(usage as one-series day bars plus totals, and failures; both with CSV) and
+`Config` (read-only). `routes/ChangePassword.tsx` is where `RequireAuth`
+sends a session whose `user.credentials_change_required` is set; the server
+refuses everything else for it (`403 password_change_required`). Labels for
+audit actions, task kinds and integrity sections live in `adminLabels.ts`.
+The e2e specs `admin-*.spec.ts` need the stack to run with
+`PASSWORD_FORCE_CHANGE=admin` and `LOGIN_LOCKOUT_ATTEMPTS=3` (`e2e/run.mjs`
+sets both).

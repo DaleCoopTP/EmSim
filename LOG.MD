@@ -3896,3 +3896,20 @@ Status: частично. Реализованы и отправлены в ве
 - НЕ прогонялись (по решению пользователя интеграционные идут каждые 5 коммитов, ближайший — на границе c10): `TestMaintenanceModeBlocksNewLessonStarts` (`test/integration/admin_maintenance_test.go`) и `TestAdminFailuresReport` (`test/integration/admin_failures_test.go`); полный `make test-integration` и `make verify-web` (сборка) не запускались.
 - Известно, не связано с этой работой: `python3 design-docs/contracts/check.py` с `DATABASE_URL` падает на `schema.sql:364` — триггер `intake_dispatches_immutable` создаётся раньше функции `reject_immutable_change()` (порядок в `schema.sql`, не миграции).
 - Next: c10 — UI отчётов «Сбои» и «Использование» нужны бэкенду `GET /admin/usage` (`internal/reporting`, маршрут `GroupAdmin`, без имён и содержимого) → c12; затем c13–c14 (целостность), c15–c16 (политика входа), c17 (импорт CSV), c18 (update.sh), c19 (итоговые записи, README «Параметры: где и как менять»). Полный `make test-integration` — на границе c10.
+
+## 2026-09-29 — Роль администратора (ДДС-10, часть 2, ADR-038): c11–c19
+
+Status: реализовано; продолжение записи выше (c0–c10). Ветка `admin-role-42d2kr`, не в `main`, PR не создавался.
+
+- Что сделано:
+  - c11–c12: статистика использования `GET /admin/usage(.csv)` (`internal/reporting`: `usage.go`, `postgres/usage.go`, `http/handlers.go`) и экран «Отчёты» (использование по дням со столбчатым графиком, сбои, CSV);
+  - c13–c14: `integrity.check` (`internal/platform/integrity`, `cmd/emsim/integrity.go`), `POST /admin/integrity`, `AdminStatus.integrity`, панель «Целостность данных»;
+  - c15–c16: политика входа (миграция `00023`, `ExpectedSchemaVersion` = 23), `auth.Policy`, `POST /me/password`, сеансы пользователя для админа, экран смены пароля, блокировка/разблокировка на «Пользователях»;
+  - c17: `POST /admin/users/import` (CSV, всё или ничего, dry run, пароли генерирует сервер) и загрузка на «Пользователях» с листом «логин — пароль»;
+  - c18: `scripts/update.sh`, `scripts/release-bundle.sh` (`make release-bundle`), страховочная копия в `scripts/restore.sh`, `audit.prune` ждёт копию не старше суток;
+  - c19: документация (README «Обновление» и «Администратор», ADR-038, план, `CLAUDE.md`, `slice-planning-dds.md`).
+- Отклонения от плана — в конце `slice-dds-10-part2-plan.md`. Главные: поле ответа называется `credentials_change_required` (тест запрещает слово «password» в теле входа, тест не ослаблялся); блокировка проверяется до пароля; тестовые стенды задают `PASSWORD_FORCE_CHANGE`.
+- Исправлено по пути: фикстура `TestAdminFailuresReport` нарушала `tasks_attempt_budget` (`lease_token` должен равняться `attempts`); замечание staticcheck S1016 в `status/load.go`; в c14 случайно попал в коммит локальный конфиг Playwright — убран следующим коммитом.
+- Проверено: `make verify` (gofmt, build, test, vet, staticcheck), `python3 design-docs/contracts/check.py` (без DDL), `npm run check`, `npm run lint`; интеграционные тесты против локального PostgreSQL 16 без Docker (`TEST_DATABASE_URL`): весь пакет `test/integration` (итог — в конце записи); e2e без Docker против локального api и worker: `admin-audit`, `admin-status`, `admin-reports`, `admin-login-policy`, `admin-user-import` (новые проходят).
+- Не проверено: `scripts/update.sh`, `scripts/release-bundle.sh` и новый шаг `scripts/restore.sh` (нет Docker, только `bash -n`); штатный `make test-integration`/`npm run test:e2e` через compose не запускались; `check.py` с `DATABASE_URL` падает на `schema.sql:364` до этой работы (триггер создаётся раньше функции `reject_immutable_change()`).
+- Next: на машине с Docker — прогнать `make test-integration`, `npm run test:e2e`, `make compose-config` и вручную `scripts/update.sh` с локальным compose; затем решение пользователя о PR.
