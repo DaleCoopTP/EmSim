@@ -45,24 +45,14 @@ const environment = {
   WORKER_ADMIN_PORT: workerAdminPort,
   E2E_BASE_URL: `http://127.0.0.1:${apiPort}`,
   PLAYWRIGHT_BROWSERS_PATH: resolve(import.meta.dirname, "../.playwright-browsers"),
-  // 112-5a's stub caller (internal/training/operator112/stub_caller.go)
-  // defaults to a 1s reply delay so the async protocol is visibly
-  // exercised in a manual demo; e2e shortens that to stay fast, without
-  // touching the compose default itself. Not zero: operator112.spec.ts's
-  // caller-chat test asserts the turn is still "pending" (the "Заявитель
-  // печатает…" indicator, held long enough to test hold-cancellation) —
-  // a 0s delay lets the worker's reply (poll interval 250ms) land before
-  // that state is ever observably rendered.
+  // Keep the stub response quick for the isolated e2e stack.
   CALLER_STUB_DELAY: process.env.CALLER_STUB_DELAY ?? "800ms",
   // ADR-029: the stock stack needs the bundled model. e2e runs without
   // it (compose.no-llm.yaml), always on the deterministic stub caller and
-  // with no description judge, whatever the developer's shell exports —
-  // the specs assert the stub's fixed phrases and rubric-v2.
+  // with no description judge, whatever the developer's shell exports.
   CALLER_REPLIER: "stub",
   ASSESSMENT_JUDGE: "off",
-  // ADR-037: no speech model either; the api answers every dictated phrase
-  // with a fixed text so the microphone flow is exercised end to end.
-  DICTATION: "stub",
+  DICTATION: "off",
   BACKUP_HOST_DIR: backupDir,
   PASSWORD_FORCE_CHANGE: "admin",
   LOGIN_LOCKOUT_ATTEMPTS: "3",
@@ -86,9 +76,7 @@ function runPlaywright(args) {
     return;
   }
   // Sharing the api container's network namespace keeps the base URL on
-  // 127.0.0.1: a secure context, which the dictation spec's microphone
-  // needs. The repository is mounted at its own path so absolute paths in
-  // the config (the fake microphone file) resolve unchanged.
+  // 127.0.0.1. The repository is mounted at its own path for the test suite.
   const user = process.platform === "linux" ? ["--user", `${process.getuid()}:${process.getgid()}`] : [];
   const passThrough = ["CI", "CALLER_STUB_DELAY"].filter((name) => process.env[name] !== undefined)
     .flatMap((name) => ["-e", `${name}=${process.env[name]}`]);

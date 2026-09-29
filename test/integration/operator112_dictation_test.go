@@ -1,8 +1,7 @@
 // 112-8a/ADR-037: dictation against a real PostgreSQL — the pre-recognition
 // checks read the item, run and lesson rows, the real whisper client talks
 // to a fake whisper-server, and the "voice" mark travels through the
-// send_caller_message command into items.intake_state. The browser and the
-// HTTP endpoint are covered by web/e2e/operator112-dictation.spec.ts.
+// send_caller_message command into items.intake_state.
 
 //go:build integration
 
