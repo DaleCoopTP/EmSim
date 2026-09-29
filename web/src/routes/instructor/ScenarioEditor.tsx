@@ -17,6 +17,7 @@ import {
   type ValidationIssue,
 } from "../../api/content";
 import { errorMessage } from "../../api/errors";
+import { useMaintenanceOn } from "../../api/system";
 import { IntakeReferenceEditor } from "../../components/IntakeReferenceEditor";
 
 type Tab = "general" | "caller" | "facts" | "reference" | "check";
@@ -67,6 +68,7 @@ export function ScenarioEditorRoute() {
   const probeMutation = useProbeScenario(scenarioId ?? "");
   const approveMutation = useApproveScenario();
   const startPreview = useStartPreviewRun();
+  const maintenance = useMaintenanceOn();
 
   const [tab, setTab] = useState<Tab>("general");
   const [title, setTitle] = useState("Новый сценарий 112");
@@ -336,7 +338,7 @@ export function ScenarioEditorRoute() {
 
       <footer className="scenario-editor-actions">
         <button type="button" className="arm-primary-action" disabled={saving} onClick={save}>{isNew ? "Создать черновик" : "Сохранить как новую версию"}</button>
-        <button type="button" className="arm-secondary-action" disabled={!hasSavedVersion || errorCount > 0 || startPreview.isPending} onClick={preview}>Пройти самому (предпросмотр)</button>
+        <button type="button" className="arm-secondary-action" disabled={!hasSavedVersion || errorCount > 0 || startPreview.isPending || maintenance.on} title={maintenance.on ? "Идут технические работы: предпросмотр недоступен" : undefined} onClick={preview}>Пройти самому (предпросмотр)</button>
         <button type="button" className="arm-secondary-action" disabled={!hasSavedVersion || errorCount > 0 || approveMutation.isPending} onClick={approve}>Утвердить</button>
         {saveError && <p className="error">{errorMessage(saveError)}</p>}
         {serverChanged && (

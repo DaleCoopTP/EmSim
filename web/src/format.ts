@@ -15,3 +15,15 @@ export function formatOffset(offsetSeconds: number): string {
   if (offsetSeconds === 0) return "В момент выдачи";
   return `Через ${offsetSeconds} с после выдачи`;
 }
+
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined) return "—";
+  const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toLocaleString("ru-RU", { maximumFractionDigits: unit === 0 ? 0 : 1 })} ${units[unit]}`;
+}

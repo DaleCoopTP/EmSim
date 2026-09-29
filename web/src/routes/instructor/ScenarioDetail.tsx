@@ -1,3 +1,4 @@
+import { useMaintenanceOn } from "../../api/system";
 import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
   useApproveScenario,
@@ -140,6 +141,7 @@ function Operator112ScenarioDetail({ s, me, onNavigate }: { s: Scenario; me: Me;
   const createMutation = useCreateScenario();
   const approveMutation = useApproveScenario();
   const startPreview = useStartPreviewRun();
+  const maintenance = useMaintenanceOn();
   const catalog = useIntake112Catalog();
 
   const copy = () => {
@@ -206,7 +208,7 @@ function Operator112ScenarioDetail({ s, me, onNavigate }: { s: Scenario; me: Me;
       <div className="scenario-editor-actions">
         {eligible && <button type="button" disabled={createMutation.isPending} onClick={copy}>Копировать в свой черновик</button>}
         {isOwner && eligible && <Link to={`/instructor/scenarios/${scenarioId}/edit`} className="arm-primary-action">Редактировать</Link>}
-        {isOwner && eligible && <button type="button" disabled={!canPreviewOrApprove || startPreview.isPending} onClick={preview}>Пройти самому (предпросмотр)</button>}
+        {isOwner && eligible && <button type="button" disabled={!canPreviewOrApprove || startPreview.isPending || maintenance.on} title={maintenance.on ? "Идут технические работы: предпросмотр недоступен" : undefined} onClick={preview}>Пройти самому (предпросмотр)</button>}
         {isOwner && eligible && hasDraft && <button type="button" disabled={!canPreviewOrApprove || approveMutation.isPending} onClick={approve}>Утвердить</button>}
         {createMutation.isError && <p className="error">{errorMessage(createMutation.error)}</p>}
         {startPreview.isError && <p className="error">{errorMessage(startPreview.error)}</p>}

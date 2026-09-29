@@ -1062,3 +1062,25 @@ a.arm-primary-action:hover { color: #fff; background: var(--arm-accent-dark); }
 .dds-review-table tr.is-rejected td { color: #7e1321; background: #fbeef0; }
 .dds-review-table audio { height: 30px; }
 .arm112 .dds-arm-back { margin-right: 8px; font-size: 16px; }
+
+/* ADR-038: the administrator's audit log. */
+.audit-filter { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px 12px; align-items: end; }
+.audit-filter label { display: flex; flex-direction: column; gap: 3px; color: #52616a; }
+.audit-filter-actions { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; }
+.audit-filter .error { grid-column: 1 / -1; margin: 0; }
+.button-link { display: inline-block; padding: 4px 10px; border: 1px solid #9aa7ae; background: #fff; color: inherit; text-decoration: none; }
+.admin-audit td code { font-size: 12px; overflow-wrap: anywhere; }
+.admin-audit tr.audit-rejected td { background: #fff8e6; }
+.admin-audit tr.audit-error td { background: #fdebed; }
+@media (max-width: 900px) { .audit-filter { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ADR-038: read-only configuration. */
+.admin-config .config-group { margin-top: 12px; }
+.admin-config .config-group h3 { margin: 0 0 6px; font-size: 14px; color: #52616a; }
+.admin-config h2 small { font-weight: 400; color: #52616a; }
+.admin-config td code { overflow-wrap: anywhere; }
+
+/* ADR-038: maintenance mode. */
+.maintenance-banner { padding: 8px 16px; background: #fff3cd; border-bottom: 2px solid #d9a400; color: #4d3b00; }
+.status-panel.maintenance-on { border-left: 4px solid #d9a400; background: #fff8e1; }
+.status-panel label { display: flex; flex-direction: column; gap: 3px; max-width: 480px; }

@@ -1,3 +1,4 @@
+import { useMaintenanceOn } from "../../api/system";
 import { useMutation, useQueryClient, useQueries } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -93,6 +94,7 @@ export function LessonDetailRoute() {
     },
     onSuccess: () => { setRows(null); return queryClient.invalidateQueries({ queryKey: lessonQueryKey(lessonId) }); },
   });
+  const maintenance = useMaintenanceOn();
   const start = useMutation({
     mutationFn: () => startLesson(lessonId),
     onSuccess: async (started) => {
@@ -199,7 +201,7 @@ export function LessonDetailRoute() {
         </>
       )}
 
-      {isDraft && <p className="lesson-launch"><button type="button" className="arm-start-action" disabled={!hasSavedAssignments || start.isPending} onClick={() => start.mutate()}>▶ Запустить занятие</button>{start.isError && <span role="alert" className="error"> {errorMessage(start.error)}</span>}</p>}
+      {isDraft && <p className="lesson-launch"><button type="button" className="arm-start-action" disabled={!hasSavedAssignments || start.isPending || maintenance.on} title={maintenance.on ? "Идут технические работы: новые занятия не запускаются" : undefined} onClick={() => start.mutate()}>▶ Запустить занятие</button>{start.isError && <span role="alert" className="error"> {errorMessage(start.error)}</span>}</p>}
       {current.state === "running" && (
         <div className="lesson-form lesson-running-panel">
           <p><Link to={`/instructor/lessons/${lessonId}/monitor`}>Открыть монитор занятия →</Link></p>

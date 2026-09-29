@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import type { components } from "./schema";
 
@@ -88,5 +88,69 @@ export function useRetryTask() {
   return useMutation({
     mutationFn: (taskId: string) => api.post<AdminTaskSummary>(`/admin/tasks/${encodeURIComponent(taskId)}/retry`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: statusQueryKey }),
+  });
+}
+
+// ADR-038: the audit log. Newest first; each page's next_cursor is the
+// next request's `before`.
+export type AuditRow = components["schemas"]["AuditRow"];
+export type AuditPage = components["schemas"]["AuditPage"];
+
+export interface AuditFilter {
+  from?: string;
+  to?: string;
+  actorId?: string;
+  action?: string;
+  outcome?: string;
+}
+
+export function auditQuery(filter: AuditFilter, before?: string | null, limit?: number): string {
+  const params = new URLSearchParams();
+  if (filter.from) params.set("from", filter.from);
+  if (filter.to) params.set("to", filter.to);
+  if (filter.actorId) params.set("actor_id", filter.actorId);
+  if (filter.action) params.set("action", filter.action);
+  if (filter.outcome) params.set("outcome", filter.outcome);
+  if (before) params.set("before", before);
+  if (limit) params.set("limit", String(limit));
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
+
+// The CSV is a plain download: the session cookie rides on the link.
+export const auditCsvUrl = (filter: AuditFilter) => `/api/v1/admin/audit.csv${auditQuery(filter)}`;
+
+export function useAuditLog(filter: AuditFilter) {
+  return useInfiniteQuery({
+    queryKey: ["admin", "audit", filter] as const,
+    queryFn: ({ pageParam }) => api.get<AuditPage>(`/admin/audit${auditQuery(filter, pageParam, 100)}`),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_cursor,
+  });
+}
+
+// ADR-038: the effective configuration, read-only. Values come from .env
+// on the server; nothing here writes.
+export type AdminConfig = components["schemas"]["AdminConfig"];
+export type AdminConfigParam = components["schemas"]["AdminConfigParam"];
+
+export function useAdminConfig() {
+  return useQuery({
+    queryKey: ["admin", "config"] as const,
+    queryFn: () => api.get<AdminConfig>("/admin/config"),
+    refetchInterval: 30_000,
+  });
+}
+
+// ADR-038: maintenance mode. The response is the new state, so the
+// banner query is refreshed at once instead of on its 30 s poll.
+export function useSetMaintenance() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { enabled: boolean; reason?: string }) => api.put<components["schemas"]["Maintenance"]>("/admin/maintenance", body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["system"] });
+      void queryClient.invalidateQueries({ queryKey: statusQueryKey });
+    },
   });
 }

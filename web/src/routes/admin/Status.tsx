@@ -1,7 +1,8 @@
-import type { ReactNode } from "react";
-import { useAdminStatus, useRetryTask, useStartBackup, type AdminStatus, type AdminTaskSummary } from "../../api/admin";
+import { useState, type ReactNode } from "react";
+import { useAdminStatus, useRetryTask, useSetMaintenance, useStartBackup, type AdminStatus, type AdminTaskSummary } from "../../api/admin";
 import { errorMessage } from "../../api/errors";
-import { formatDateTime } from "../../format";
+import { taskKindLabels as kindLabels, taskStatusLabels } from "../../adminLabels";
+import { formatBytes, formatDateTime } from "../../format";
 
 // ADR-033: what an administrator needs to keep the class running — the
 // database schema, the task queue, the model, disk space and backups.
@@ -14,27 +15,6 @@ const staleAfterMs = 2 * 60_000;
 // margin for the nightly slot.
 const backupLateAfterMs = 26 * 60 * 60_000;
 
-const taskStatusLabels: Record<string, string> = {
-  waiting: "ожидает",
-  pending: "в очереди",
-  leased: "выполняется",
-  done: "готово",
-  failed: "ошибка",
-  dead_letter: "исчерпаны попытки",
-  cancelled: "отменена",
-};
-
-const kindLabels: Record<string, string> = {
-  "backup.run": "Резервная копия",
-  "audit.prune": "Очистка журнала аудита",
-  "lesson.close": "Закрытие занятия",
-  "assessment.evaluate": "Автооценка",
-  "report.build": "PDF-отчёт",
-  "caller.reply": "Ответ заявителя",
-  "caller.warmup": "Прогрев модели",
-  "system.noop": "Проверка очереди",
-};
-
 export function StatusRoute() {
   const status = useAdminStatus();
   const backup = useStartBackup();
@@ -45,7 +25,7 @@ export function StatusRoute() {
       <div className="page-heading">
         <div>
           <h1>Состояние</h1>
-          <p>Обновляется каждые 10 секунд{status.data ? ` · сервер: ${formatDateTime(status.data.server_time)}` : ""}</p>
+          <p>Обновляется каждые 10 секунд{status.data ? ` · сервер: ${formatDateTime(status.data.server_time)} · версия ${status.data.build}` : ""}</p>
         </div>
       </div>
       {status.isPending && <p>Загрузка…</p>}
@@ -53,6 +33,8 @@ export function StatusRoute() {
       {status.data && (
         <>
           <Overview status={status.data} />
+          <MaintenancePanel status={status.data} />
+          <LoadPanel status={status.data} />
           <BackupPanel
             status={status.data}
             onStart={() => backup.mutate()}
@@ -80,26 +62,110 @@ function isStale(checkedAt: string | null | undefined, now: string): boolean {
 function Overview({ status }: { status: AdminStatus }) {
   const schemaOk = status.db_schema_version === status.expected_schema_version;
   const llm = status.models.llm;
+  const stt = status.models.stt;
   const workersAlive = status.workers.filter((w) => !isStale(w.checked_at, status.server_time));
+  // A worker that reports no version is an older build than the api.
+  const versionsMatch = status.workers.every((w) => w.version === status.build);
   return (
     <div className="status-cards">
       <StatusCard title="База данных" ok={schemaOk}>
         Схема {status.db_schema_version}
         {!schemaOk && ` — ожидается ${status.expected_schema_version}`}
       </StatusCard>
-      <StatusCard title="Worker" ok={workersAlive.length > 0}>
+      <StatusCard title="Worker" ok={workersAlive.length > 0 && versionsMatch}>
         {status.workers.length === 0
           ? "не отвечает"
           : status.workers.map((w) => `${w.id}${w.role ? ` (${w.role})` : ""}: ${formatDateTime(w.checked_at)}`).join(", ")}
+        {!versionsMatch && " · версия отличается от api"}
       </StatusCard>
       <StatusCard title="Модель" ok={llm ? llm.status === "ok" && !isStale(llm.checked_at, status.server_time) : null}>
         {llm ? `${llm.status === "ok" ? "отвечает" : "недоступна"}${llm.model ? ` · ${llm.model}` : ""}` : "не используется"}
+      </StatusCard>
+      <StatusCard title="Распознавание речи" ok={stt ? stt.status === "ok" && !isStale(stt.checked_at, status.server_time) : null}>
+        {stt ? `${stt.status === "ok" ? "отвечает" : "недоступно"}${stt.model ? ` · ${stt.model}` : ""}` : "не используется"}
       </StatusCard>
       <StatusCard title="Место под записи" ok={status.disk_free_bytes === null ? null : status.disk_free_bytes > 1 << 30}>
         {formatBytes(status.disk_free_bytes)} свободно
       </StatusCard>
     </div>
   );
+}
+
+function MaintenancePanel({ status }: { status: AdminStatus }) {
+  const set = useSetMaintenance();
+  const [reason, setReason] = useState("");
+  const on = status.maintenance.enabled;
+  return (
+    <div className={`status-panel${on ? " maintenance-on" : ""}`}>
+      <div className="status-panel-heading">
+        <h2>Режим обслуживания</h2>
+        <button type="button" disabled={set.isPending} onClick={() => set.mutate({ enabled: !on, reason: on ? "" : reason.trim() })}>
+          {on ? "Выключить" : "Включить"}
+        </button>
+      </div>
+      {on ? (
+        <p>
+          Включён {formatDateTime(status.maintenance.set_at)}
+          {status.maintenance.reason ? ` · ${status.maintenance.reason}` : ""}. Новые занятия и предпросмотры не запускаются; идущие занятия продолжаются.
+        </p>
+      ) : (
+        <>
+          <p>Выключен. Включайте перед обновлением или восстановлением из копии: новые занятия не запустятся, идущие продолжатся.</p>
+          <label>
+            Что показать пользователям (необязательно)
+            <input type="text" maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Например: обновление до 15:00" />
+          </label>
+        </>
+      )}
+      {set.isError && <p className="error">{errorMessage(set.error)}</p>}
+    </div>
+  );
+}
+
+function LoadPanel({ status }: { status: AdminStatus }) {
+  const { load } = status;
+  const minutes = Math.round(load.window_seconds / 60);
+  const memUsed =
+    load.host.mem_total_bytes !== null && load.host.mem_available_bytes !== null
+      ? load.host.mem_total_bytes - load.host.mem_available_bytes
+      : null;
+  const cpuBusy = load.host.load1 !== null && load.host.load1 > load.host.cpus;
+  const memPercent =
+    memUsed !== null && load.host.mem_total_bytes ? Math.round((memUsed / load.host.mem_total_bytes) * 100) : null;
+  return (
+    <div className="status-panel">
+      <h2>Нагрузка</h2>
+      <div className="status-cards">
+        <StatusCard title="Процессор (load 1/5/15 мин)" ok={load.host.load1 === null ? null : !cpuBusy}>
+          {load.host.load1 === null
+            ? "нет данных"
+            : `${[load.host.load1, load.host.load5, load.host.load15].map((v) => v?.toFixed(2)).join(" / ")} · ядер ${load.host.cpus}`}
+        </StatusCard>
+        <StatusCard title="Память" ok={memPercent === null ? null : memPercent < 90}>
+          {memPercent === null ? "нет данных" : `${formatBytes(memUsed)} из ${formatBytes(load.host.mem_total_bytes)} (${memPercent}%)`}
+        </StatusCard>
+        <StatusCard title={`Запросы за ${minutes} мин`} ok={load.requests.errors_5xx === 0}>
+          {load.requests.requests} · ошибок сервера {load.requests.errors_5xx} · p95 {formatLatency(load.requests.p95_ms)}
+        </StatusCard>
+        <StatusCard title={`Команды обучаемых за ${minutes} мин`} ok={load.commands.p95_ms === null ? null : load.commands.p95_ms <= 100}>
+          {load.commands.requests} · p50 {formatLatency(load.commands.p50_ms)} · p95 {formatLatency(load.commands.p95_ms)}
+        </StatusCard>
+        <StatusCard title="Сеансы и потоки" ok={null}>
+          сеансов {load.active_sessions ?? "—"} · SSE-подключений {load.sse_connections ?? "—"}
+        </StatusCard>
+        <StatusCard title="Занятия" ok={null}>
+          идёт {load.running_lessons ?? "—"} · открытых карточек {load.open_items ?? "—"}
+        </StatusCard>
+      </div>
+      <p className="notice">
+        Окно запросов хранится в памяти api и начинается заново после его перезапуска; p50/p95 — верхняя граница интервала. Долгая история — в метриках Prometheus.
+      </p>
+    </div>
+  );
+}
+
+function formatLatency(ms: number | null | undefined): string {
+  return ms === null || ms === undefined ? "—" : `≤ ${ms.toLocaleString("ru-RU")} мс`;
 }
 
 function StatusCard({ title, ok, children }: { title: string; ok: boolean | null; children: ReactNode }) {
@@ -214,16 +280,4 @@ function TaskCounts({ tasks }: { tasks: AdminStatus["tasks"] }) {
       )}
     </div>
   );
-}
-
-function formatBytes(bytes: number | null | undefined): string {
-  if (bytes === null || bytes === undefined) return "—";
-  const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit++;
-  }
-  return `${value.toLocaleString("ru-RU", { maximumFractionDigits: unit === 0 ? 0 : 1 })} ${units[unit]}`;
 }

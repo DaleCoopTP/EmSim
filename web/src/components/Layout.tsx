@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate, useOutletContext } from "react-router-dom";
 import { useLogout } from "../api/auth";
+import { useMaintenanceOn } from "../api/system";
 import type { Me } from "../api/useMe";
 
 const roleLabels: Record<Me["user"]["role"], string> = {
@@ -17,6 +18,7 @@ export function Layout() {
   const me = useOutletContext<Me>();
   const logout = useLogout();
   const navigate = useNavigate();
+  const maintenance = useMaintenanceOn();
 
   const onLogout = () => {
     logout.mutate(undefined, { onSettled: () => navigate("/login", { replace: true }) });
@@ -34,6 +36,8 @@ export function Layout() {
             <NavLink to="/admin/users">Пользователи</NavLink>
             <NavLink to="/admin/workstations">Рабочие места</NavLink>
             <NavLink to="/admin/status">Состояние</NavLink>
+            <NavLink to="/admin/audit">Журнал</NavLink>
+            <NavLink to="/admin/config">Конфигурация</NavLink>
           </nav>
         )}
         {me.user.role === "instructor" && (
@@ -54,6 +58,12 @@ export function Layout() {
           Выйти
         </button>
       </header>
+      {maintenance.on && (
+        <div className="maintenance-banner" role="status">
+          <strong>Технические работы.</strong> Новые занятия не запускаются, идущие продолжаются.
+          {maintenance.reason ? ` ${maintenance.reason}` : ""}
+        </div>
+      )}
       <main className="layout-main">
         <Outlet context={me} />
       </main>

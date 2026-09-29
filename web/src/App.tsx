@@ -5,6 +5,8 @@ import { RequireAuth } from "./components/RequireAuth";
 import { UsersRoute } from "./routes/admin/Users";
 import { WorkstationsRoute } from "./routes/admin/Workstations";
 import { StatusRoute } from "./routes/admin/Status";
+import { AuditRoute } from "./routes/admin/Audit";
+import { ConfigRoute } from "./routes/admin/Config";
 import { HomeRoute } from "./routes/Home";
 import { ScenarioCatalogueRoute } from "./routes/instructor/ScenarioCatalogue";
 import { ScenarioDetailRoute } from "./routes/instructor/ScenarioDetail";
@@ -45,6 +47,8 @@ export default function App() {
               <Route path="/admin/users" element={<UsersRoute />} />
               <Route path="/admin/workstations" element={<WorkstationsRoute />} />
               <Route path="/admin/status" element={<StatusRoute />} />
+              <Route path="/admin/audit" element={<AuditRoute />} />
+              <Route path="/admin/config" element={<ConfigRoute />} />
             </Route>
           </Route>
           <Route element={<RequireAuth roles={["instructor"]} />}>

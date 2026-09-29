@@ -24,6 +24,11 @@ test("admin status: worker heartbeat, manual backup appears in the list", async 
   await expect(schemaCard).toHaveClass(/status-ok/);
   await expect(page.locator(".status-card", { hasText: "Worker" })).toHaveClass(/status-ok/, { timeout: 60_000 });
 
+  // ADR-038: the load panel and the build version are on the same screen.
+  await expect(page.getByRole("heading", { name: "Нагрузка" })).toBeVisible();
+  await expect(page.locator(".status-card", { hasText: "Сеансы и потоки" })).toBeVisible();
+  await expect(page.getByText(/версия \S+/).first()).toBeVisible();
+
   const startButton = page.getByRole("button", { name: "Создать копию сейчас" });
   await expect(startButton).toBeEnabled({ timeout: 60_000 });
   const copies = page.locator(".status-panel", { hasText: "Резервные копии" }).locator("tbody tr");
