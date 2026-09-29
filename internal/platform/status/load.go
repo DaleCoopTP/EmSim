@@ -78,11 +78,7 @@ func (h *Handlers) loadSnapshot(ctx context.Context) loadJSON {
 			out.RunningLessons, out.OpenItems = &lessons, &items
 		}
 	}
-	host := ReadHost()
-	out.Host = hostJSON{
-		CPUs: host.CPUs, Load1: host.Load1, Load5: host.Load5, Load15: host.Load15,
-		MemTotalBytes: host.MemTotalBytes, MemAvailableBytes: host.MemAvailableBytes,
-	}
+	out.Host = hostJSON(ReadHost())
 	return out
 }
 
