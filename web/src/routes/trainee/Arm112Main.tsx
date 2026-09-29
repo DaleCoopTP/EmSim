@@ -8,8 +8,8 @@ import { formatDateTime } from "../../format";
 import { serviceNames } from "../../intakeServices";
 import { reactionLabel } from "../../labels";
 import {
-  BadgeIcon, BookmarkIcon, ChartIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon, ClipboardIcon, CloseIcon, DocIcon, EditIcon, ExitIcon,
-  GearIcon, GlassesIcon, GlobeIcon, HeadsetIcon, HelicopterIcon, HelpIcon, InfoIcon, MenuIcon, PushpinIcon, ScreenIcon, SearchIcon, StopwatchIcon,
+  BadgeIcon, BoltIcon, BookmarkIcon, ChartIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon, ClipboardIcon, CloseIcon, DocIcon, EditIcon, ExitIcon,
+  GearIcon, GlassesIcon, GlobeIcon, HeadsetIcon, HelicopterIcon, HelpIcon, InfoIcon, LinkIcon, MenuIcon, ScreenIcon, SearchIcon, StopwatchIcon,
 } from "../../components/Arm112Icons";
 import type { IntakeField, IntakeItem } from "./Operator112Workplace";
 import { Arm112Tour } from "./Arm112Tour";
@@ -194,6 +194,7 @@ function GridRow({ item, operatorNo, workstationNo, onOpen, status, tourExpanded
   const number = armCardNumber(item.card_number);
   const closed = item.state === "closed" || item.state === "interrupted";
   const previewId = `arm112-preview-${item.id}`;
+  const tour = (target: string) => tourTarget ? target : undefined;
   return <tbody className={`arm112-main-row${item.state === "offered" ? " is-new" : ""}`}>
     <tr onClick={() => onOpen(item.id)}>
       <td className="c-chevron"><button type="button" data-tour-target={tourTarget ? "preview-toggle" : undefined}
@@ -201,28 +202,28 @@ function GridRow({ item, operatorNo, workstationNo, onOpen, status, tourExpanded
         aria-expanded={expanded} aria-controls={expanded ? previewId : undefined} title={expanded ? "Свернуть предпросмотр" : "Открыть предпросмотр"}
         onClick={(event) => { event.stopPropagation(); setManuallyExpanded((value) => !value); }}>
         {expanded ? <ChevronUpIcon size={16} /> : <ChevronDownIcon size={16} />}</button></td>
-      <td className="c-links" />
-      <td className="c-icon"><BookmarkIcon size={18} /></td>
-      <td className="c-icon"><PushpinIcon size={17} /></td>
-      <td className="c-icon"><StopwatchIcon size={17} /></td>
-      <td className="c-num">{operatorNo}</td>
-      <td className="c-num">{workstationNo}</td>
-      <td className="c-num">{number}</td>
-      <td className="c-num">{two(offered.getDate())}.{two(offered.getMonth() + 1)}.{String(offered.getFullYear()).slice(2)}</td>
-      <td className="c-time">{two(offered.getHours())}:{two(offered.getMinutes())}<sup>{two(offered.getSeconds())}</sup></td>
-      <td className="c-type">{item.incident_type ?? (item.call_status === "ringing" ? "Входящий вызов" : "")}{item.interruptions.length > 0 && <span title="Карточка прервана перезапуском сервера"> ⚠</span>}</td>
-      <td className="c-small">—</td>
-      <td className="c-small">{status}</td>
-      <td className="c-address">{item.address_short ?? ""}</td>
-      <td className="c-icon"><button type="button" aria-label={`Открыть карточку № ${number}`} title="Открыть карточку"
+      <td className="c-links" data-tour-target={tour("linked-cards")}>{item.spawned_from_item_id && <LinkIcon size={17} />}</td>
+      <td className="c-icon" data-tour-target={tour("pin-card")}><BookmarkIcon size={18} /></td>
+      <td className="c-icon" data-tour-target={tour("important-card")}><BoltIcon size={17} /></td>
+      <td className="c-icon" data-tour-target={tour("timer")}><StopwatchIcon size={17} /></td>
+      <td className="c-num" data-tour-target={tour("operator-number")}>{operatorNo}</td>
+      <td className="c-num" data-tour-target={tour("workstation-number")}>{workstationNo}</td>
+      <td className="c-num" data-tour-target={tour("card-number")}>{number}</td>
+      <td className="c-num" data-tour-target={tour("creation-date")}>{two(offered.getDate())}.{two(offered.getMonth() + 1)}.{String(offered.getFullYear()).slice(2)}</td>
+      <td className="c-time" data-tour-target={tour("creation-time")}>{two(offered.getHours())}:{two(offered.getMinutes())}<sup>{two(offered.getSeconds())}</sup></td>
+      <td className="c-type" data-tour-target={tour("questionnaire")}>{item.incident_type ?? (item.call_status === "ringing" ? "Входящий вызов" : "")}{item.interruptions.length > 0 && <span title="Карточка прервана перезапуском сервера"> ⚠</span>}</td>
+      <td className="c-small" data-tour-target={tour("victims")}>—</td>
+      <td className="c-small" data-tour-target={tour("card-status")}>{status}</td>
+      <td className="c-address" data-tour-target={tour("address")}>{item.address_short ?? ""}</td>
+      <td className="c-icon" data-tour-target={tour("control-indicator")}><button type="button" aria-label={`Открыть карточку № ${number}`} title="Открыть карточку"
         onClick={(event) => { event.stopPropagation(); onOpen(item.id); }}><ClipboardIcon size={18} /></button></td>
-      <td className={`c-check${closed ? " is-done" : ""}`}><CheckCircleIcon size={22} /></td>
+      <td className={`c-check${closed ? " is-done" : ""}`} data-tour-target={tour("verification")}><CheckCircleIcon size={22} /></td>
     </tr>
     {expanded && <tr className="arm112-main-preview-row" onClick={(event) => event.stopPropagation()}>
       <td colSpan={16} id={previewId} data-tour-target={tourTarget ? "preview" : undefined}>
-        {detail.isPending ? <p className="arm112-main-preview-message">Загрузка предпросмотра…</p>
-          : detail.isError || !detail.data ? <p className="arm112-main-preview-message" role="alert">Не удалось загрузить карточку. Сверните и раскройте строку повторно.</p>
-            : <GridPreview item={detail.data} />}
+        {detail.isPending ? <PreviewPlaceholder value="Загрузка предпросмотра…" tourTarget={tourTarget} />
+          : detail.isError || !detail.data ? <PreviewPlaceholder value="Не удалось загрузить карточку. Сверните и раскройте строку повторно." tourTarget={tourTarget} />
+            : <GridPreview item={detail.data} tourTarget={tourTarget} />}
       </td>
     </tr>}
   </tbody>;
@@ -235,20 +236,20 @@ function fieldValue(field: IntakeField | undefined): string | null {
   return field.value?.trim() || null;
 }
 
-function GridPreview({ item }: { item: Item }) {
-  if (item.intake_state) return <IntakeGridPreview item={item as IntakeItem} />;
+function GridPreview({ item, tourTarget }: { item: Item; tourTarget: boolean }) {
+  if (item.intake_state) return <IntakeGridPreview item={item as IntakeItem} tourTarget={tourTarget} />;
   const card = item.card as CardView;
   const applicant = [card.applicant?.name, card.applicant?.phone, card.phones?.aon && `АОН ${formatPhone(card.phones.aon)}`].filter(Boolean).join(" · ");
   const services = card.notification_list?.map((entry) => `${serviceNames[entry.service ?? ""] ?? entry.service ?? "Служба"}${entry.status ? ` — ${reactionLabel(entry.status)}` : ""}`).join("; ");
   return <div className="arm112-main-preview" aria-label="Предпросмотр карточки">
-    <PreviewLine label="Службы" value={services || "Оповещения пока нет"} />
-    <PreviewLine label="Заявитель" value={applicant || "Сведения пока не указаны"} />
-    <PreviewLine label="Информация" value={[card.incident?.type_name, card.incident?.description].filter(Boolean).join(" · ") || "Сведения пока не указаны"} />
-    <PreviewLine label="Отработки" value={item.calls.length ? `${item.calls.length} звонков` : "Звонков пока нет"} />
+    <PreviewLine label="Службы" value={services || "Оповещения пока нет"} target={tourTarget ? "preview-services" : undefined} />
+    <PreviewLine label="Заявитель" value={applicant || "Сведения пока не указаны"} target={tourTarget ? "preview-applicant" : undefined} />
+    <PreviewLine label="Информация" value={[card.incident?.type_name, card.incident?.description].filter(Boolean).join(" · ") || "Сведения пока не указаны"} target={tourTarget ? "preview-information" : undefined} />
+    <PreviewLine label="Отработки" value={item.calls.length ? `${item.calls.length} звонков` : "Звонков пока нет"} target={tourTarget ? "preview-activity" : undefined} />
   </div>;
 }
 
-function IntakeGridPreview({ item }: { item: IntakeItem }) {
+function IntakeGridPreview({ item, tourTarget }: { item: IntakeItem; tourTarget: boolean }) {
   const { card, intake_state: state } = item;
   const catalog = state.catalog;
   const typeNames = card.incident_types?.map((id) => catalog?.types.find((entry) => entry.id === id)?.name ?? id) ?? [];
@@ -280,15 +281,24 @@ function IntakeGridPreview({ item }: { item: IntakeItem }) {
     state.ended_at && `Вызов завершён ${formatDateTime(state.ended_at)}`,
     notifiedAt && `Службы оповещены ${formatDateTime(notifiedAt)}`].filter(Boolean).join(" · ");
   return <div className="arm112-main-preview" aria-label="Предпросмотр карточки">
-    <PreviewLine label="Службы" value={services.length ? `${services.join(", ")}${notifiedAt ? ` · ${formatDateTime(notifiedAt)}` : ""}` : "Оповещения пока нет"} />
-    <PreviewLine label="Заявитель" value={applicant || "Сведения пока не указаны"} />
-    <PreviewLine label="Информация" value={info || "Сведения пока не указаны"} />
-    <PreviewLine label="Отработки" value={activity || "Действий оператора пока нет"} />
+    <PreviewLine label="Службы" value={services.length ? `${services.join(", ")}${notifiedAt ? ` · ${formatDateTime(notifiedAt)}` : ""}` : "Оповещения пока нет"} target={tourTarget ? "preview-services" : undefined} />
+    <PreviewLine label="Заявитель" value={applicant || "Сведения пока не указаны"} target={tourTarget ? "preview-applicant" : undefined} />
+    <PreviewLine label="Информация" value={info || "Сведения пока не указаны"} target={tourTarget ? "preview-information" : undefined} />
+    <PreviewLine label="Отработки" value={activity || "Действий оператора пока нет"} target={tourTarget ? "preview-activity" : undefined} />
   </div>;
 }
 
-function PreviewLine({ label, value }: { label: string; value: string }) {
-  return <div className="arm112-main-preview-line"><strong>{label}:</strong><span>{value}</span></div>;
+function PreviewPlaceholder({ value, tourTarget }: { value: string; tourTarget: boolean }) {
+  return <div className="arm112-main-preview" role="status">
+    <PreviewLine label="Службы" value={value} target={tourTarget ? "preview-services" : undefined} />
+    <PreviewLine label="Заявитель" value="—" target={tourTarget ? "preview-applicant" : undefined} />
+    <PreviewLine label="Информация" value="—" target={tourTarget ? "preview-information" : undefined} />
+    <PreviewLine label="Отработки" value="—" target={tourTarget ? "preview-activity" : undefined} />
+  </div>;
+}
+
+function PreviewLine({ label, value, target }: { label: string; value: string; target?: string }) {
+  return <div className="arm112-main-preview-line" data-tour-target={target}><strong>{label}:</strong><span>{value}</span></div>;
 }
 
 // Instruction p. 3, fig. 3: an incoming call pops up over the list with a
