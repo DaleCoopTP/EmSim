@@ -133,15 +133,15 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportClassifierTypes: %v", err)
 	}
-	if classifierResult.Created != 3 || classifierResult.Unchanged != 0 {
-		t.Fatalf("ImportClassifierTypes = %+v, want Created=3 Unchanged=0", classifierResult)
+	if classifierResult.Created != 13 || classifierResult.Unchanged != 0 {
+		t.Fatalf("ImportClassifierTypes = %+v, want Created=13 Unchanged=0", classifierResult)
 	}
 	classifierResult2, err := svc.ImportClassifierTypes(ctx, openSeedFile(t, "../../seed/classifier.json"), actorID, actorRole, "req-4")
 	if err != nil {
 		t.Fatalf("ImportClassifierTypes (replay): %v", err)
 	}
-	if classifierResult2.Created != 0 || classifierResult2.Unchanged != 3 {
-		t.Fatalf("ImportClassifierTypes (replay) = %+v, want Created=0 Unchanged=3", classifierResult2)
+	if classifierResult2.Created != 0 || classifierResult2.Unchanged != 13 {
+		t.Fatalf("ImportClassifierTypes (replay) = %+v, want Created=0 Unchanged=13", classifierResult2)
 	}
 
 	// --- scenarios ---
@@ -163,15 +163,18 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	// fire ×6, injury ×2) bring it to 29 scenarios/35 versions; case 8 gained a version 2 (the child's full name and birth date) — 36 versions.
 	// ДДС-4 (ADR-034) added dds-district-not-ours-01, the first DDS case
 	// with comment_must_mention: 30 scenarios/37 versions, 18 in the catalogue.
-	if scenarioResult.NewScenarios != 30 || scenarioResult.NewVersions != 37 || scenarioResult.Unchanged != 0 || scenarioResult.StatusChanged != 12 {
-		t.Fatalf("ImportScenarios = %+v, want NewScenarios=30 NewVersions=37 Unchanged=0 StatusChanged=12", scenarioResult)
+	// Twelve DDS cases converted from the eleven 112 cases (five 03, four
+	// district cycles, three "not our territory"): 42 scenarios/49
+	// versions, 30 in the catalogue.
+	if scenarioResult.NewScenarios != 42 || scenarioResult.NewVersions != 49 || scenarioResult.Unchanged != 0 || scenarioResult.StatusChanged != 12 {
+		t.Fatalf("ImportScenarios = %+v, want NewScenarios=42 NewVersions=49 Unchanged=0 StatusChanged=12", scenarioResult)
 	}
 	scenarioResult2, err := svc.ImportScenarios(ctx, openScenarioDir(t, "../../seed/scenarios"), actorID, actorRole, "req-6")
 	if err != nil {
 		t.Fatalf("ImportScenarios (replay): %v", err)
 	}
-	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 37 || scenarioResult2.StatusChanged != 0 {
-		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=37", scenarioResult2)
+	if scenarioResult2.NewScenarios != 0 || scenarioResult2.NewVersions != 0 || scenarioResult2.Unchanged != 49 || scenarioResult2.StatusChanged != 0 {
+		t.Fatalf("ImportScenarios (replay) = %+v, want all Unchanged=49", scenarioResult2)
 	}
 
 	// --- read side ---
@@ -179,8 +182,8 @@ func TestContentImportSeedEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListScenarios: %v", err)
 	}
-	if total != 18 || len(items) != 18 {
-		t.Fatalf("ListScenarios: total=%d len=%d, want 14 AI-caller 112 and 4 DDS scenarios", total, len(items))
+	if total != 30 || len(items) != 30 {
+		t.Fatalf("ListScenarios: total=%d len=%d, want 14 AI-caller 112 and 16 DDS scenarios", total, len(items))
 	}
 	archivedItems, archivedTotal, err := svc.ListScenarios(ctx, content.ScenarioFilter{Status: "archived"})
 	if err != nil || archivedTotal != 12 || len(archivedItems) != 12 {

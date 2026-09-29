@@ -1,0 +1,185 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "dds-03-eye-playground-01",
+  "version": 1,
+  "title": "ДДС скорой (03): ребёнку попали палкой в глаз на детской площадке",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "target_service": "dds_ambulance_03",
+    "card": {
+      "number": "883101",
+      "registered_at_offset_s": -30,
+      "applicant": {
+        "name": "Морозова Екатерина Олеговна",
+        "phone": "+79167720415",
+        "status": "relative"
+      },
+      "address": {
+        "country": "Россия",
+        "city": "Москва",
+        "okrug": "СВАО",
+        "district": "Алексеевский",
+        "street": "Ракетный бульвар",
+        "house": "13",
+        "landmark": "детская площадка во дворе",
+        "text": "Россия, Москва, (СВАО, Алексеевский), Ракетный бульвар, 13"
+      },
+      "incident": {
+        "type_code": "22530000",
+        "type_name": "Травма",
+        "features": {
+          "признак": "Травма",
+          "место": "Улица",
+          "пол": "Мужчина",
+          "угроза людям": "Нет",
+          "мед. помощь": "Да"
+        },
+        "description": "Мама в панике: на детской площадке шестилетнему сыну попали палкой в глаз, ребёнок сильно плачет, не может открыть глаз, вокруг сильное покраснение. Про кровотечение не знает.",
+        "victims": 1
+      },
+      "notification_list": [
+        {
+          "service": "dds_ambulance_03",
+          "status": "added",
+          "mine": true
+        }
+      ],
+      "phones": {
+        "aon": "+79167720415",
+        "provided": "+7 (916) 772-04-15"
+      }
+    },
+    "contacts": [
+      {
+        "key": "crew_leader",
+        "role": "crew",
+        "label": "Старший бригады СМП",
+        "number": "0307",
+        "voice": "crew_leader_recorded",
+        "phrases": {
+          "greeting": "Диспетчерская, руководитель бригады, слушаю вас.",
+          "ack": "Информация принята. Бригада направлена по указанному адресу."
+        }
+      },
+      {
+        "key": "control",
+        "role": "control_112",
+        "label": "Отдел контроля реагирования 112",
+        "number": "0112",
+        "voice": "female_calm",
+        "phrases": {
+          "greeting": "Отдел контроля реагирования Службы 112, слушаю.",
+          "ack": "Информацию приняли, спасибо."
+        }
+      },
+      {
+        "key": "applicant",
+        "role": "applicant",
+        "label": "Заявитель Морозова",
+        "number": "0415",
+        "voice": "female_urgent",
+        "phrases": {
+          "greeting": "Алло! Скорая уже едет?",
+          "ack": "Хорошо, ждём у площадки."
+        }
+      }
+    ],
+    "events": [
+      {
+        "key": "e1",
+        "at_s": 15,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "notice",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Бригада 7 выехала на вызов, ребёнок 6 лет, травма глаза.",
+        "expects": {
+          "status": "responding",
+          "within_s": 30,
+          "action": "set_status"
+        }
+      },
+      {
+        "key": "e2",
+        "at_s": 40,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "phone_incoming",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Диспетчер, бригада 7 на месте, осматриваем ребёнка.",
+        "expects": {
+          "status": "arrived",
+          "within_s": 30,
+          "action": "set_status"
+        }
+      },
+      {
+        "key": "e3",
+        "at_s": 60,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "notice",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Промыли глаз, наложили повязку, готовим к транспортировке.",
+        "expects": {
+          "status": "working",
+          "within_s": 30,
+          "action": "set_status",
+          "comment_facts": [
+            "наложена повязка"
+          ]
+        }
+      },
+      {
+        "key": "e4",
+        "at_s": 85,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "notice",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Ребёнок доставлен в Морозовскую детскую больницу, вызов завершён.",
+        "expects": {
+          "status": "completed",
+          "within_s": 30,
+          "action": "set_status",
+          "comment_facts": [
+            "доставлен в Морозовскую детскую больницу"
+          ]
+        }
+      }
+    ],
+    "reference": {
+      "primary_decision": {
+        "status": "accepted",
+        "comment_required": false
+      },
+      "expected_chain": [
+        "responding",
+        "arrived",
+        "working",
+        "completed"
+      ],
+      "call": {
+        "required": true,
+        "to": "crew_leader",
+        "must_mention": [
+          "address",
+          "incident_type"
+        ],
+        "before_status": "responding"
+      },
+      "guide_refs": [
+        "Памятка ДДС, стр. 21–23: статусы реагирования; служба 103 не ставит «Не принята» и «Отказ»"
+      ],
+      "notes": "Профильный вызов 03: «Принята», звонок старшему бригады, доклады бригады приходят только после звонка (ADR-031); в комментарии к «Проведению работ» — повязка, к «Работам завершены» — куда доставлен ребёнок. Сценарий переведён из кейса 112 «112-injury-eye-playground-01»: заявитель, суть и описание — из его эталона.",
+      "field_corrections": []
+    },
+    "difficulty": 3,
+    "exercise_type": "dds_processing"
+  }
+}

@@ -3913,3 +3913,14 @@ Status: реализовано; продолжение записи выше (c0
 - Проверено: `make verify` (gofmt, build, test, vet, staticcheck), `python3 design-docs/contracts/check.py` (без DDL), `npm run check`, `npm run lint`; интеграционные тесты против локального PostgreSQL 16 без Docker (`TEST_DATABASE_URL`): весь пакет `test/integration` (итог — в конце записи); e2e без Docker против локального api и worker: `admin-audit`, `admin-status`, `admin-reports`, `admin-login-policy`, `admin-user-import` (новые проходят).
 - Не проверено: `scripts/update.sh`, `scripts/release-bundle.sh` и новый шаг `scripts/restore.sh` (нет Docker, только `bash -n`); штатный `make test-integration`/`npm run test:e2e` через compose не запускались; `check.py` с `DATABASE_URL` падает на `schema.sql:364` до этой работы (триггер создаётся раньше функции `reject_immutable_change()`).
 - Next: на машине с Docker — прогнать `make test-integration`, `npm run test:e2e`, `make compose-config` и вручную `scripts/update.sh` с локальным compose; затем решение пользователя о PR.
+
+## 2026-09-29 — ДДС: 12 сценариев из кейсов 112 с эталоном
+
+Status: реализовано (контент); е2е не прогонялись.
+
+- Решение пользователя: перевести кейсы 112 в ДДС, чтобы получить сценарии с известным эталоном; для ДДС района — «смешанно» (часть адресов оставить как «не наша территория», часть перенести в Чертаново Южное).
+- `seed/scenarios/dds-03-*` (5, полный цикл 03), `dds-district-{gas-hallway,urn-fire,hotel-alarm,ebus-fire}-01` (цикл района; hotel — ложное срабатывание без `working`; ebus — difficulty 7, входящий звонок отдела контроля и `required_contacts`), `dds-district-not-ours-{gas,garbage,metro}-01` (`not_accepted` + `comment_must_mention`). Карточка — заявитель/суть/описание из эталона 112; цепочка и доклады бригады — наш учебный эталон, экспертизой не подтверждён.
+- `seed/classifier.json`: +10 строк XLSX (разделы 01, 13, 22), `notify` по колонкам «Территориальные ОИВ»/«Классификатор СМП». `seed/voice-assets/manifest.json`: WAV старшего бригады для 9 новых сценариев с контактом `crew_leader`. `seed/README.md` описывает набор.
+- Тесты: счётчики сида в `content_import_test.go` (42 сценария/49 версий, 13 типов, 30 в каталоге) и `api_process_test.go` (30); `dds_lesson_settings_test.go` ищет раздел 14 в списке категорий, а не ожидает его первым (раздел 01 теперь сортируется раньше).
+- Проверено: `make test-integration` — всё зелёное, кроме `TestAdminFailuresReport` (незакоммиченная работа по админке: фикстура нарушает `tasks_attempt_budget`, сид не использует); `make verify` — go-тесты ok, падает только staticcheck на `internal/platform/status/load.go:82` (та же незакоммиченная работа); `check.py` ok.
+- Next: проверить эталоны сценариев с экспертом; прогнать сценарии вживую (доклады, оценка v3); при желании — голоса для контактов `control`/`applicant`.

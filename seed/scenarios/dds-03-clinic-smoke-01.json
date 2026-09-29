@@ -1,0 +1,186 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "dds-03-clinic-smoke-01",
+  "version": 1,
+  "title": "ДДС скорой (03): пожар в клинике, женщине плохо от дыма",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "target_service": "dds_ambulance_03",
+    "card": {
+      "number": "883103",
+      "registered_at_offset_s": -30,
+      "applicant": {
+        "name": "Никитин Олег Владимирович",
+        "phone": "+79164478230",
+        "status": "witness"
+      },
+      "address": {
+        "country": "Россия",
+        "city": "Москва",
+        "okrug": "ЮАО",
+        "district": "Донской",
+        "street": "Ленинский проспект",
+        "house": "17",
+        "landmark": "клиника, окно второго этажа с лицевой стороны",
+        "text": "Россия, Москва, (ЮАО, Донской), Ленинский проспект, 17"
+      },
+      "incident": {
+        "type_code": "01060201",
+        "type_name": "пожар: лечебное заведение",
+        "features": {
+          "признак": "Открытое пламя / Дым",
+          "объект": "Медицинское учреждение",
+          "угроза людям": "Да",
+          "мед. помощь": "Да",
+          "эвакуация": "Да"
+        },
+        "description": "Прохожий: пожар в клинике, огонь и дым из окна второго этажа с лицевой стороны. Люди выходят из здания, одна женщина кашляет от дыма.",
+        "victims": 1
+      },
+      "notification_list": [
+        {
+          "service": "dds_ambulance_03",
+          "status": "added",
+          "mine": true
+        }
+      ],
+      "phones": {
+        "aon": "+79164478230",
+        "provided": "+7 (916) 447-82-30"
+      }
+    },
+    "contacts": [
+      {
+        "key": "crew_leader",
+        "role": "crew",
+        "label": "Старший бригады СМП",
+        "number": "0321",
+        "voice": "crew_leader_recorded",
+        "phrases": {
+          "greeting": "Диспетчерская, руководитель бригады, слушаю вас.",
+          "ack": "Информация принята. Бригада направлена по указанному адресу."
+        }
+      },
+      {
+        "key": "control",
+        "role": "control_112",
+        "label": "Отдел контроля реагирования 112",
+        "number": "0112",
+        "voice": "female_calm",
+        "phrases": {
+          "greeting": "Отдел контроля реагирования Службы 112, слушаю.",
+          "ack": "Информацию приняли, спасибо."
+        }
+      },
+      {
+        "key": "applicant",
+        "role": "applicant",
+        "label": "Заявитель Никитин",
+        "number": "8230",
+        "voice": "male_calm",
+        "phrases": {
+          "greeting": "Да, слушаю.",
+          "ack": "Хорошо, я побуду рядом с ней."
+        }
+      }
+    ],
+    "events": [
+      {
+        "key": "e1",
+        "at_s": 15,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "notice",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Бригада 21 выехала к клинике на Ленинском.",
+        "expects": {
+          "status": "responding",
+          "within_s": 30,
+          "action": "set_status"
+        }
+      },
+      {
+        "key": "e2",
+        "at_s": 40,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "phone_incoming",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Диспетчер, бригада 21 на месте, пожарные работают, осматриваем женщину.",
+        "expects": {
+          "status": "arrived",
+          "within_s": 30,
+          "action": "set_status"
+        }
+      },
+      {
+        "key": "e3",
+        "at_s": 60,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "notice",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "У женщины лёгкое отравление дымом, даём кислород.",
+        "expects": {
+          "status": "working",
+          "within_s": 30,
+          "action": "set_status",
+          "comment_facts": [
+            "лёгкое отравление дымом"
+          ]
+        }
+      },
+      {
+        "key": "e4",
+        "at_s": 85,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "notice",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Помощь оказана на месте, от госпитализации женщина отказалась, вызов завершён.",
+        "expects": {
+          "status": "completed",
+          "within_s": 30,
+          "action": "set_status",
+          "comment_facts": [
+            "помощь оказана на месте",
+            "от госпитализации отказалась"
+          ]
+        }
+      }
+    ],
+    "reference": {
+      "primary_decision": {
+        "status": "accepted",
+        "comment_required": false
+      },
+      "expected_chain": [
+        "responding",
+        "arrived",
+        "working",
+        "completed"
+      ],
+      "call": {
+        "required": true,
+        "to": "crew_leader",
+        "must_mention": [
+          "address",
+          "incident_type"
+        ],
+        "before_status": "responding"
+      },
+      "guide_refs": [
+        "Памятка ДДС, стр. 21–23: статусы реагирования; служба 103 не ставит «Не принята» и «Отказ»"
+      ],
+      "notes": "Пожар с пострадавшей: карточка пришла 03 по признаку «мед. помощь — Да». «Принята», звонок старшему бригады; в итоговом комментарии — помощь на месте и отказ от госпитализации. Сценарий переведён из кейса 112 «112-fire-clinic-leninsky-01»: заявитель, суть и описание — из его эталона.",
+      "field_corrections": []
+    },
+    "difficulty": 4,
+    "exercise_type": "dds_processing"
+  }
+}

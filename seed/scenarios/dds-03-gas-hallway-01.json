@@ -1,0 +1,192 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "dds-03-gas-hallway-01",
+  "version": 1,
+  "title": "ДДС скорой (03): запах газа в квартире, пенсионеру плохо",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "target_service": "dds_ambulance_03",
+    "card": {
+      "number": "883104",
+      "registered_at_offset_s": -30,
+      "applicant": {
+        "name": "Лебедев Виктор Семёнович",
+        "phone": "+74953184467",
+        "status": "victim"
+      },
+      "address": {
+        "country": "Россия",
+        "city": "Москва",
+        "okrug": "ЮАО",
+        "district": "Чертаново Южное",
+        "street": "Россошанская улица",
+        "house": "7",
+        "building": "2",
+        "entrance": "3",
+        "floor": "9",
+        "flat": "115",
+        "text": "Россия, Москва, (ЮАО, Чертаново Южное), Россошанская улица, 7, к. 2, под. 3, эт. 9, кв. 115"
+      },
+      "incident": {
+        "type_code": "13020600",
+        "type_name": "Запах бытового газа (прочее, в помещении)",
+        "features": {
+          "где": "В помещении (в квартире, в доме)",
+          "от чего": "Прочее",
+          "пострадавшие": "Да",
+          "пол": "Мужчина",
+          "угроза людям": "Да",
+          "мед. помощь": "Да"
+        },
+        "description": "Пенсионер 67 лет, живёт один: в прихожей пахнет газом, темнеет в глазах и кружится голова. Источник запаха неизвестен.",
+        "victims": 1
+      },
+      "notification_list": [
+        {
+          "service": "dds_ambulance_03",
+          "status": "added",
+          "mine": true
+        }
+      ],
+      "phones": {
+        "aon": "+74953184467",
+        "provided": "+7 (495) 318-44-67"
+      }
+    },
+    "contacts": [
+      {
+        "key": "crew_leader",
+        "role": "crew",
+        "label": "Старший бригады СМП",
+        "number": "0332",
+        "voice": "crew_leader_recorded",
+        "phrases": {
+          "greeting": "Диспетчерская, руководитель бригады, слушаю вас.",
+          "ack": "Информация принята. Бригада направлена по указанному адресу."
+        }
+      },
+      {
+        "key": "control",
+        "role": "control_112",
+        "label": "Отдел контроля реагирования 112",
+        "number": "0112",
+        "voice": "female_calm",
+        "phrases": {
+          "greeting": "Отдел контроля реагирования Службы 112, слушаю.",
+          "ack": "Информацию приняли, спасибо."
+        }
+      },
+      {
+        "key": "applicant",
+        "role": "applicant",
+        "label": "Заявитель Лебедев",
+        "number": "4467",
+        "voice": "male_calm",
+        "phrases": {
+          "greeting": "Алло… Лебедев слушает.",
+          "ack": "Хорошо, открою дверь."
+        }
+      }
+    ],
+    "events": [
+      {
+        "key": "e1",
+        "at_s": 15,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "notice",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Бригада 32 выехала, запах газа, пациенту 67 лет.",
+        "expects": {
+          "status": "responding",
+          "within_s": 30,
+          "action": "set_status"
+        }
+      },
+      {
+        "key": "e2",
+        "at_s": 40,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "phone_incoming",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Диспетчер, бригада 32 на месте, газовая служба уже в квартире, выводим пациента на улицу.",
+        "expects": {
+          "status": "arrived",
+          "within_s": 30,
+          "action": "set_status",
+          "comment_facts": [
+            "пациент выведен на улицу"
+          ]
+        }
+      },
+      {
+        "key": "e3",
+        "at_s": 60,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "notice",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Подозрение на отравление бытовым газом, оказываем помощь в машине.",
+        "expects": {
+          "status": "working",
+          "within_s": 30,
+          "action": "set_status",
+          "comment_facts": [
+            "подозрение на отравление газом"
+          ]
+        }
+      },
+      {
+        "key": "e4",
+        "at_s": 85,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "notice",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Пациент госпитализирован в ГКБ им. Юдина, вызов завершён.",
+        "expects": {
+          "status": "completed",
+          "within_s": 30,
+          "action": "set_status",
+          "comment_facts": [
+            "госпитализирован в ГКБ им. Юдина"
+          ]
+        }
+      }
+    ],
+    "reference": {
+      "primary_decision": {
+        "status": "accepted",
+        "comment_required": false
+      },
+      "expected_chain": [
+        "responding",
+        "arrived",
+        "working",
+        "completed"
+      ],
+      "call": {
+        "required": true,
+        "to": "crew_leader",
+        "must_mention": [
+          "address",
+          "incident_type"
+        ],
+        "before_status": "responding"
+      },
+      "guide_refs": [
+        "Памятка ДДС, стр. 21–23: статусы реагирования; служба 103 не ставит «Не принята» и «Отказ»"
+      ],
+      "notes": "Вызов 03 по карточке «запах газа» с пострадавшим. «Принята», звонок старшему бригады; статусы по докладам, в комментариях — вывод пациента, диагноз и место госпитализации. Сценарий переведён из кейса 112 «112-gas-hallway-chertanovo-01»: заявитель, суть и описание — из его эталона.",
+      "field_corrections": []
+    },
+    "difficulty": 5,
+    "exercise_type": "dds_processing"
+  }
+}

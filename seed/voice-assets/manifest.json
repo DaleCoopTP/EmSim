@@ -48,6 +48,78 @@
     {
       "scenario_key": "dds-district-pipe-burst-01", "version": 1, "contact_key": "crew_leader", "phrase": "ack",
       "file": "crew_leader_ack.wav", "sha256": "413c1c6b96aefe1df54d271f19ee669d584309ecb0adceb0bb5f1e60e4bd78d3", "size": 154362, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-03-eye-playground-01", "version": 1, "contact_key": "crew_leader", "phrase": "greeting",
+      "file": "crew_leader_greeting.wav", "sha256": "7d0578ccac10fd83a7a00f727afd47100a697d8c8282ecae182212ab7ad3074f", "size": 178254, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-03-eye-playground-01", "version": 1, "contact_key": "crew_leader", "phrase": "ack",
+      "file": "crew_leader_ack.wav", "sha256": "413c1c6b96aefe1df54d271f19ee669d584309ecb0adceb0bb5f1e60e4bd78d3", "size": 154362, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-03-hockey-bleeding-01", "version": 1, "contact_key": "crew_leader", "phrase": "greeting",
+      "file": "crew_leader_greeting.wav", "sha256": "7d0578ccac10fd83a7a00f727afd47100a697d8c8282ecae182212ab7ad3074f", "size": 178254, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-03-hockey-bleeding-01", "version": 1, "contact_key": "crew_leader", "phrase": "ack",
+      "file": "crew_leader_ack.wav", "sha256": "413c1c6b96aefe1df54d271f19ee669d584309ecb0adceb0bb5f1e60e4bd78d3", "size": 154362, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-03-clinic-smoke-01", "version": 1, "contact_key": "crew_leader", "phrase": "greeting",
+      "file": "crew_leader_greeting.wav", "sha256": "7d0578ccac10fd83a7a00f727afd47100a697d8c8282ecae182212ab7ad3074f", "size": 178254, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-03-clinic-smoke-01", "version": 1, "contact_key": "crew_leader", "phrase": "ack",
+      "file": "crew_leader_ack.wav", "sha256": "413c1c6b96aefe1df54d271f19ee669d584309ecb0adceb0bb5f1e60e4bd78d3", "size": 154362, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-03-gas-hallway-01", "version": 1, "contact_key": "crew_leader", "phrase": "greeting",
+      "file": "crew_leader_greeting.wav", "sha256": "7d0578ccac10fd83a7a00f727afd47100a697d8c8282ecae182212ab7ad3074f", "size": 178254, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-03-gas-hallway-01", "version": 1, "contact_key": "crew_leader", "phrase": "ack",
+      "file": "crew_leader_ack.wav", "sha256": "413c1c6b96aefe1df54d271f19ee669d584309ecb0adceb0bb5f1e60e4bd78d3", "size": 154362, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-03-bakery-burns-01", "version": 1, "contact_key": "crew_leader", "phrase": "greeting",
+      "file": "crew_leader_greeting.wav", "sha256": "7d0578ccac10fd83a7a00f727afd47100a697d8c8282ecae182212ab7ad3074f", "size": 178254, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-03-bakery-burns-01", "version": 1, "contact_key": "crew_leader", "phrase": "ack",
+      "file": "crew_leader_ack.wav", "sha256": "413c1c6b96aefe1df54d271f19ee669d584309ecb0adceb0bb5f1e60e4bd78d3", "size": 154362, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-district-gas-hallway-01", "version": 1, "contact_key": "crew_leader", "phrase": "greeting",
+      "file": "crew_leader_greeting.wav", "sha256": "7d0578ccac10fd83a7a00f727afd47100a697d8c8282ecae182212ab7ad3074f", "size": 178254, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-district-gas-hallway-01", "version": 1, "contact_key": "crew_leader", "phrase": "ack",
+      "file": "crew_leader_ack.wav", "sha256": "413c1c6b96aefe1df54d271f19ee669d584309ecb0adceb0bb5f1e60e4bd78d3", "size": 154362, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-district-urn-fire-01", "version": 1, "contact_key": "crew_leader", "phrase": "greeting",
+      "file": "crew_leader_greeting.wav", "sha256": "7d0578ccac10fd83a7a00f727afd47100a697d8c8282ecae182212ab7ad3074f", "size": 178254, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-district-urn-fire-01", "version": 1, "contact_key": "crew_leader", "phrase": "ack",
+      "file": "crew_leader_ack.wav", "sha256": "413c1c6b96aefe1df54d271f19ee669d584309ecb0adceb0bb5f1e60e4bd78d3", "size": 154362, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-district-hotel-alarm-01", "version": 1, "contact_key": "crew_leader", "phrase": "greeting",
+      "file": "crew_leader_greeting.wav", "sha256": "7d0578ccac10fd83a7a00f727afd47100a697d8c8282ecae182212ab7ad3074f", "size": 178254, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-district-hotel-alarm-01", "version": 1, "contact_key": "crew_leader", "phrase": "ack",
+      "file": "crew_leader_ack.wav", "sha256": "413c1c6b96aefe1df54d271f19ee669d584309ecb0adceb0bb5f1e60e4bd78d3", "size": 154362, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-district-ebus-fire-01", "version": 1, "contact_key": "crew_leader", "phrase": "greeting",
+      "file": "crew_leader_greeting.wav", "sha256": "7d0578ccac10fd83a7a00f727afd47100a697d8c8282ecae182212ab7ad3074f", "size": 178254, "mime": "audio/wav"
+    },
+    {
+      "scenario_key": "dds-district-ebus-fire-01", "version": 1, "contact_key": "crew_leader", "phrase": "ack",
+      "file": "crew_leader_ack.wav", "sha256": "413c1c6b96aefe1df54d271f19ee669d584309ecb0adceb0bb5f1e60e4bd78d3", "size": 154362, "mime": "audio/wav"
     }
   ]
 }

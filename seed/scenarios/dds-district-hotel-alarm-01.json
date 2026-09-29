@@ -1,0 +1,172 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "dds-district-hotel-alarm-01",
+  "version": 1,
+  "title": "ДДС района: сработала пожарная сигнализация в гостинице — ложное срабатывание",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "target_service": "dds_district_chertanovo",
+    "card": {
+      "number": "883203",
+      "registered_at_offset_s": -30,
+      "applicant": {
+        "name": "Гаврилова Алина Руслановна",
+        "phone": "+74952340012",
+        "status": "witness"
+      },
+      "address": {
+        "country": "Россия",
+        "city": "Москва",
+        "okrug": "ЮАО",
+        "district": "Чертаново Южное",
+        "street": "Россошанская улица",
+        "house": "13",
+        "floor": "9",
+        "landmark": "гостиница «Южная»",
+        "text": "Россия, Москва, (ЮАО, Чертаново Южное), Россошанская улица, 13, эт. 9"
+      },
+      "incident": {
+        "type_code": "01061300",
+        "type_name": "пожарная сигнализация на объекте",
+        "features": {
+          "где": "Здание / объект",
+          "признак": "Сработала пожарная сигнализация",
+          "объект": "Гостиница",
+          "угроза людям": "Да",
+          "мед. помощь": "Неизвестно",
+          "эвакуация": "Неизвестно"
+        },
+        "description": "Администратор ресепшена гостиницы: на пульте сработала пожарная сигнализация 9 этажа, охранник ушёл проверять. Про дым, огонь, пострадавших и эвакуацию пока неизвестно.",
+        "victims": 0
+      },
+      "notification_list": [
+        {
+          "service": "dds_district_chertanovo",
+          "status": "added",
+          "mine": true
+        }
+      ],
+      "phones": {
+        "aon": "+74952340012",
+        "provided": "+7 (495) 234-00-12"
+      }
+    },
+    "contacts": [
+      {
+        "key": "crew_leader",
+        "role": "crew",
+        "label": "Мобильная группа управы района Чертаново Южное",
+        "number": "4155",
+        "voice": "crew_leader_recorded",
+        "phrases": {
+          "greeting": "Диспетчерская, руководитель бригады, слушаю вас.",
+          "ack": "Информация принята. Группа выезжает в гостиницу."
+        }
+      },
+      {
+        "key": "control",
+        "role": "control_112",
+        "label": "Отдел контроля реагирования 112",
+        "number": "0112",
+        "voice": "female_calm",
+        "phrases": {
+          "greeting": "Отдел контроля реагирования Службы 112, слушаю.",
+          "ack": "Информацию приняли, спасибо."
+        }
+      },
+      {
+        "key": "applicant",
+        "role": "applicant",
+        "label": "Заявитель Гаврилова",
+        "number": "0012",
+        "voice": "female_calm",
+        "phrases": {
+          "greeting": "Гостиница «Южная», ресепшен, слушаю.",
+          "ack": "Спасибо, передам охране."
+        }
+      }
+    ],
+    "events": [
+      {
+        "key": "e1",
+        "at_s": 15,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "notice",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Мобильная группа выехала в гостиницу на Россошанской.",
+        "expects": {
+          "status": "responding",
+          "within_s": 30,
+          "action": "set_status"
+        }
+      },
+      {
+        "key": "e2",
+        "at_s": 40,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "phone_incoming",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Диспетчер, мы на месте вместе с пожарными. Пожара нет: ложное срабатывание датчика в коридоре 9 этажа. Эвакуация не проводилась.",
+        "expects": {
+          "status": "arrived",
+          "within_s": 30,
+          "action": "set_status",
+          "comment_facts": [
+            "ложное срабатывание датчика"
+          ]
+        }
+      },
+      {
+        "key": "e3",
+        "at_s": 65,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "notice",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Сигнализация перезапущена, неисправный датчик заменён. Уезжаем.",
+        "expects": {
+          "status": "completed",
+          "within_s": 30,
+          "action": "set_status",
+          "comment_facts": [
+            "пожара нет",
+            "датчик заменён"
+          ]
+        }
+      }
+    ],
+    "reference": {
+      "primary_decision": {
+        "status": "accepted",
+        "comment_required": false
+      },
+      "expected_chain": [
+        "responding",
+        "arrived",
+        "completed"
+      ],
+      "call": {
+        "required": true,
+        "to": "crew_leader",
+        "must_mention": [
+          "address",
+          "incident_type"
+        ],
+        "before_status": "responding"
+      },
+      "guide_refs": [
+        "Памятка ДДС, стр. 21–26: статусы реагирования и правила их проставления"
+      ],
+      "notes": "Ложное срабатывание: «Проведения работ» нет — после «Прибытия» сразу «Работы завершены». В комментариях — что пожара нет и датчик заменён. Адрес и название гостиницы перенесены в Чертаново Южное. Сценарий переведён из кейса 112 «112-fire-alarm-hotel-kosmos-01»: заявитель, суть и описание — из его эталона.",
+      "field_corrections": []
+    },
+    "difficulty": 3,
+    "exercise_type": "dds_processing"
+  }
+}

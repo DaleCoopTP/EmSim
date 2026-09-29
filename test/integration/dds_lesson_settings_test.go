@@ -167,8 +167,15 @@ func TestDDSLessonSettingsThroughAPIAndWorker(t *testing.T) {
 			Easy int `json:"easy"`
 		} `json:"count_by_level"`
 	}
-	if response := jsonRequest(t, f.ctx, instructor, f.baseURL, http.MethodGet, "/api/v1/scenarios/categories?service=dds_district_chertanovo", nil, &categories); response.StatusCode != http.StatusOK || len(categories) == 0 || categories[0].Code != "14" || categories[0].CountByLevel.Easy < 1 {
-		t.Fatalf("categories = %d %+v", response.StatusCode, categories)
+	response := jsonRequest(t, f.ctx, instructor, f.baseURL, http.MethodGet, "/api/v1/scenarios/categories?service=dds_district_chertanovo", nil, &categories)
+	housingEasy := -1
+	for _, c := range categories {
+		if c.Code == "14" {
+			housingEasy = c.CountByLevel.Easy
+		}
+	}
+	if response.StatusCode != http.StatusOK || housingEasy < 1 {
+		t.Fatalf("categories = %d %+v, want section 14 with an easy scenario", response.StatusCode, categories)
 	}
 
 	// The drawn queue is saved like any other; the cycle below then plays a

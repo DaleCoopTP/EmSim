@@ -1,0 +1,94 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "dds-district-not-ours-gas-01",
+  "version": 1,
+  "title": "ДДС района: запах газа в Бибиреве — чужая территория",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "target_service": "dds_district_chertanovo",
+    "card": {
+      "number": "883211",
+      "registered_at_offset_s": -30,
+      "applicant": {
+        "name": "Соколова Марина Андреевна",
+        "phone": "+79035550147",
+        "status": "participant"
+      },
+      "address": {
+        "country": "Россия",
+        "city": "Москва",
+        "okrug": "СВАО",
+        "district": "Бибирево",
+        "street": "Белозерская улица",
+        "house": "1",
+        "building": "3",
+        "entrance": "1",
+        "floor": "4",
+        "flat": "47",
+        "text": "Россия, Москва, (СВАО, Бибирево), Белозерская улица, 1, к. 3, под. 1, эт. 4, кв. 47"
+      },
+      "incident": {
+        "type_code": "13020100",
+        "type_name": "Запах бытового газа в кухне",
+        "features": {
+          "где": "В помещении (в квартире, в доме)",
+          "от чего": "Прочее",
+          "признаки": "Нарушение в работе газового оборудования",
+          "пострадавшие": "Да"
+        },
+        "description": "Мать с четырьмя детьми в квартире: сильный запах газа на кухне, у всех детей кружится голова, других взрослых нет. Перед запахом газовая колонка хлопала и гасла.",
+        "victims": 4
+      },
+      "notification_list": [
+        {
+          "service": "dds_district_chertanovo",
+          "status": "added",
+          "mine": true
+        }
+      ],
+      "phones": {
+        "aon": "+79035550147",
+        "provided": "+7 (903) 555-01-47"
+      }
+    },
+    "contacts": [
+      {
+        "key": "control",
+        "role": "control_112",
+        "label": "Отдел контроля реагирования 112",
+        "number": "0112",
+        "voice": "female_calm",
+        "phrases": {
+          "greeting": "Отдел контроля реагирования Службы 112, слушаю.",
+          "ack": "Информацию приняли, спасибо."
+        }
+      }
+    ],
+    "events": [],
+    "reference": {
+      "primary_decision": {
+        "status": "not_accepted",
+        "reason_tags": [
+          "territory"
+        ],
+        "comment_required": true,
+        "comment_must_mention": [
+          "не наша территория",
+          "передано в ДДС района Бибирево"
+        ]
+      },
+      "expected_chain": [],
+      "call": {
+        "required": false
+      },
+      "guide_refs": [
+        "Памятка ДДС, стр. 24–25: «Не принята» — комментарий обязателен; стр. 28–29: карточка чужой территории"
+      ],
+      "notes": "Адрес в Бибиреве (СВАО) — не территория района Чертаново Южное. Верное решение: «Не принята» с комментарием, что территория не наша и карточка передана в ДДС района Бибирево. Комментарий проверяет ИИ-судья (dds/rubric-v3). «Не принята» не финальный статус — карточка остаётся открытой до остановки занятия. Сценарий переведён из кейса 112 «112-gas-kitchen-bibirevo-01»: заявитель, суть и описание — из его эталона.",
+      "field_corrections": []
+    },
+    "difficulty": 2,
+    "exercise_type": "dds_processing"
+  }
+}

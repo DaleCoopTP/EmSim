@@ -1,0 +1,185 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "dds-03-hockey-bleeding-01",
+  "version": 1,
+  "title": "ДДС скорой (03): порез бедра коньком, обильное кровотечение",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "target_service": "dds_ambulance_03",
+    "card": {
+      "number": "883102",
+      "registered_at_offset_s": -30,
+      "applicant": {
+        "name": "Гусев Игорь Валентинович",
+        "phone": "+74992680133",
+        "status": "witness"
+      },
+      "address": {
+        "country": "Россия",
+        "city": "Москва",
+        "okrug": "ВАО",
+        "district": "Сокольники",
+        "street": "улица Сокольнический Вал",
+        "house": "1Б",
+        "landmark": "ледовый дворец «Легенды хоккея — Сокольники», служебный вход со стороны Сокольнического Вала",
+        "text": "Россия, Москва, (ВАО, Сокольники), улица Сокольнический Вал, 1Б"
+      },
+      "incident": {
+        "type_code": "22230000",
+        "type_name": "Кровотечение",
+        "features": {
+          "признак": "Кровотечение",
+          "место": "Общественное место",
+          "пол": "Мужчина",
+          "угроза людям": "Да",
+          "мед. помощь": "Да"
+        },
+        "description": "Спортивный врач команды: на тренировке хоккеисту 19 лет порезали бедро коньком, обильное кровотечение. Наложен жгут в 19:22, пострадавший в сознании, бледный. Встретят у служебного входа.",
+        "victims": 1
+      },
+      "notification_list": [
+        {
+          "service": "dds_ambulance_03",
+          "status": "added",
+          "mine": true
+        }
+      ],
+      "phones": {
+        "aon": "+74992680133",
+        "provided": "+7 (499) 268-01-33"
+      }
+    },
+    "contacts": [
+      {
+        "key": "crew_leader",
+        "role": "crew",
+        "label": "Старший бригады СМП",
+        "number": "0314",
+        "voice": "crew_leader_recorded",
+        "phrases": {
+          "greeting": "Диспетчерская, руководитель бригады, слушаю вас.",
+          "ack": "Информация принята. Бригада направлена по указанному адресу."
+        }
+      },
+      {
+        "key": "control",
+        "role": "control_112",
+        "label": "Отдел контроля реагирования 112",
+        "number": "0112",
+        "voice": "female_calm",
+        "phrases": {
+          "greeting": "Отдел контроля реагирования Службы 112, слушаю.",
+          "ack": "Информацию приняли, спасибо."
+        }
+      },
+      {
+        "key": "applicant",
+        "role": "applicant",
+        "label": "Заявитель Гусев",
+        "number": "0133",
+        "voice": "male_calm",
+        "phrases": {
+          "greeting": "Гусев, слушаю.",
+          "ack": "Понял, встречаем у служебного входа."
+        }
+      }
+    ],
+    "events": [
+      {
+        "key": "e1",
+        "at_s": 10,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "notice",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Бригада 14 выехала, кровотечение, время наложения жгута знаем.",
+        "expects": {
+          "status": "responding",
+          "within_s": 30,
+          "action": "set_status"
+        }
+      },
+      {
+        "key": "e2",
+        "at_s": 35,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "phone_incoming",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Диспетчер, бригада 14 на месте, пострадавший в сознании, работаем.",
+        "expects": {
+          "status": "arrived",
+          "within_s": 30,
+          "action": "set_status"
+        }
+      },
+      {
+        "key": "e3",
+        "at_s": 55,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "notice",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Кровотечение остановлено, наложена давящая повязка, жгут снят.",
+        "expects": {
+          "status": "working",
+          "within_s": 30,
+          "action": "set_status",
+          "comment_facts": [
+            "кровотечение остановлено"
+          ]
+        }
+      },
+      {
+        "key": "e4",
+        "at_s": 80,
+        "since": "call_ended",
+        "since_contact": "crew_leader",
+        "delivery": "phone_incoming",
+        "from": "crew_leader",
+        "voice": false,
+        "text": "Диспетчер, пострадавший госпитализирован в НИИ Склифосовского, вызов завершён.",
+        "expects": {
+          "status": "completed",
+          "within_s": 30,
+          "action": "set_status",
+          "comment_facts": [
+            "госпитализирован в НИИ Склифосовского"
+          ]
+        }
+      }
+    ],
+    "reference": {
+      "primary_decision": {
+        "status": "accepted",
+        "comment_required": false
+      },
+      "expected_chain": [
+        "responding",
+        "arrived",
+        "working",
+        "completed"
+      ],
+      "call": {
+        "required": true,
+        "to": "crew_leader",
+        "must_mention": [
+          "address",
+          "incident_type"
+        ],
+        "before_status": "responding"
+      },
+      "guide_refs": [
+        "Памятка ДДС, стр. 21–23: статусы реагирования; служба 103 не ставит «Не принята» и «Отказ»"
+      ],
+      "notes": "Экстренный вызов 03 (угроза жизни): «Принята», звонок старшему бригады; статусы по докладам, в комментариях — остановка кровотечения и место госпитализации. Сценарий переведён из кейса 112 «112-injury-hockey-sokolniki-01»: заявитель, суть и описание — из его эталона.",
+      "field_corrections": []
+    },
+    "difficulty": 4,
+    "exercise_type": "dds_processing"
+  }
+}

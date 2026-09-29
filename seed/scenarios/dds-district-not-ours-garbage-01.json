@@ -1,0 +1,93 @@
+{
+  "schema": "emsim/scenario-file/v1",
+  "key": "dds-district-not-ours-garbage-01",
+  "version": 1,
+  "title": "ДДС района: горит мусорный контейнер на улице Космонавтов — чужая территория",
+  "origin": "manual",
+  "body": {
+    "schema": "emsim/scenario/v1",
+    "target_service": "dds_district_chertanovo",
+    "card": {
+      "number": "883212",
+      "registered_at_offset_s": -30,
+      "applicant": {
+        "name": "Кузнецов Андрей Петрович",
+        "phone": "+79265031288",
+        "status": "witness"
+      },
+      "address": {
+        "country": "Россия",
+        "city": "Москва",
+        "okrug": "СВАО",
+        "district": "Алексеевский",
+        "street": "улица Космонавтов",
+        "house": "1",
+        "building": "3",
+        "landmark": "двор, напротив спортивной коробки",
+        "text": "Россия, Москва, (СВАО, Алексеевский), улица Космонавтов, 1, к. 3"
+      },
+      "incident": {
+        "type_code": "01010101",
+        "type_name": "пожар: мусор",
+        "features": {
+          "где": "Улица",
+          "признак": "Открытое пламя / Дым",
+          "объект": "Мусор",
+          "угроза людям": "Нет",
+          "газификация": "Да"
+        },
+        "description": "Мужчина с балкона видит: во дворе интенсивно горит мусорный контейнер напротив спортивной коробки. Людей и машин рядом нет, пострадавших нет, дом газифицирован.",
+        "victims": 0
+      },
+      "notification_list": [
+        {
+          "service": "dds_district_chertanovo",
+          "status": "added",
+          "mine": true
+        }
+      ],
+      "phones": {
+        "aon": "+79265031288",
+        "provided": "+7 (926) 503-12-88"
+      }
+    },
+    "contacts": [
+      {
+        "key": "control",
+        "role": "control_112",
+        "label": "Отдел контроля реагирования 112",
+        "number": "0112",
+        "voice": "female_calm",
+        "phrases": {
+          "greeting": "Отдел контроля реагирования Службы 112, слушаю.",
+          "ack": "Информацию приняли, спасибо."
+        }
+      }
+    ],
+    "events": [],
+    "reference": {
+      "primary_decision": {
+        "status": "not_accepted",
+        "reason_tags": [
+          "territory"
+        ],
+        "comment_required": true,
+        "comment_must_mention": [
+          "не наша территория",
+          "передано в ДДС района Алексеевский"
+        ]
+      },
+      "expected_chain": [],
+      "call": {
+        "required": false
+      },
+      "guide_refs": [
+        "Памятка ДДС, стр. 24–25: «Не принята» — комментарий обязателен; стр. 28–29: карточка чужой территории"
+      ],
+      "notes": "Адрес на улице Космонавтов (Алексеевский район, СВАО) — не территория района Чертаново Южное. Верное решение: «Не принята» с комментарием, что территория не наша и карточка передана в ДДС района Алексеевский. Сценарий переведён из кейса 112 «112-garbage-fire-kosmonavtov-01»: заявитель, суть и описание — из его эталона.",
+      "field_corrections": []
+    },
+    "difficulty": 2,
+    "exercise_type": "dds_processing"
+  }
+}
